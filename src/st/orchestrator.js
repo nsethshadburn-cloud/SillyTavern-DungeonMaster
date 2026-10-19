@@ -10,7 +10,9 @@ import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
 import { makeSpeak, refreshStandingPrompt, speakerCandidates } from './actors.js';
 import { postNarration, postOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName } from './sheets.js';
-import { pickNpcVoice, speak, stopVoices } from './voices.js';
+import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
+import { normalizeMap, applyPositions, placeMissing } from '../core/grid.js';
+import { openMap, refreshMap, closeMap } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun } from '../core/pacing.js';
@@ -169,18 +171,18 @@ async function turnBody(c, opts, status, signal) {
         rollResolution = await resolvePlayerRoll(c, triage.roll, status);
     }
 
-    // ---------- 3. Random event ----------
+    // ---------- 3. Random event (Claude decides whether one fits) ----------
     const b = budget();
-    let event = null;
+    let events = [];
     if (!pacing.inCombat && b.level !== 'blocked' && opts.force !== 'opening') {
-        event = await maybeDrawEvent(c, status, b.level === 'tight');
+        events = await maybeDrawEvents(c, status, b.level === 'tight');
     }
 
     // ---------- 4. Does the DM step in? ----------
     let reasons = dmReasons({
         pacing,
         triage,
-        eventDue: Boolean(event),
+        eventDue: events.length > 0,
         checkinEvery: Number(s.checkinEvery) || 10,
         budgetBlocked: b.level === 'blocked',
         budgetTight: b.level === 'tight',
@@ -200,7 +202,7 @@ async function turnBody(c, opts, status, signal) {
                 reasons,
                 playerMessage: playerText,
                 rollResolution,
-                event,
+                events,
                 oocText: opts.oocText || triage.oocText || '',
             }, { signal });
             step.done(summarizeTurn(result.turn), result.usd);
@@ -213,7 +215,7 @@ async function turnBody(c, opts, status, signal) {
             return;
         }
         if (reasons.includes('drift')) meta.lastDriftStageCalled = pacing.driftStage;
-        await applyDmTurn(c, result.turn, status, signal, { event });
+        await applyDmTurn(c, result.turn, status, signal, { events });
         meta.stats.lastTurnUsd = turnUsd;
         if (Math.random() < 0.15) {
             maybeCondenseNotes().catch(err => console.warn('[Dungeon Master] notes condense failed', err));
@@ -247,13 +249,12 @@ async function localReplies(c, triage, playerText, status, signal) {
         const addressed = [...speakerCandidates()].filter(n => new RegExp(`\\b${nameKey(n).split(' ')[0]}\\b`, 'i').test(playerText));
         speakers = addressed.length ? addressed.slice(0, 2) : [partyNames[Math.floor(random01() * partyNames.length)]];
     }
-    // Even without the DM, keep companions reacting rather than writing new plot.
-    const localDirection = `React in character to ${c.meta.persona.name}'s last message. Don't introduce new plot developments, places or people.`;
+    // Plain roleplay: no brief, the bot plays the character freely (it still gets the scene note).
     for (const sp of speakers.filter(Boolean)) {
         if (signal.aborted) throw new Error('aborted');
         const step = status.step(`${sp} is responding`);
         try {
-            await makeSpeak(sp, localDirection, { signal });
+            await makeSpeak(sp, '', { signal });
             step.done();
         } catch (error) {
             step.fail(error);
@@ -296,15 +297,14 @@ async function resolvePlayerRoll(c, parsed, status) {
     return `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
 }
 
-async function maybeDrawEvent(c, status, tight) {
+/**
+ * Maybe offer random events. Code decides WHEN one could happen; Claude decides whether one
+ * fits the moment at all (no traders in a prison cell), picks one, invents one, or declines.
+ * @returns {Promise<object[]>} up to 3 candidate events ([] = no event this turn)
+ */
+async function maybeDrawEvents(c, status, tight) {
     const meta = c.meta;
     const s = settings();
-    // A delayed event comes back after a few turns.
-    if (meta.pendingEvent) {
-        meta.pendingEvent.wait = (meta.pendingEvent.wait ?? 0) - 1;
-        if (meta.pendingEvent.wait <= 0) return meta.pendingEvent.event;
-        return null;
-    }
     const chance = eventChance({
         turnsSinceEvent: meta.pacing.turnsSinceEvent,
         inCombat: meta.pacing.inCombat,
@@ -312,42 +312,55 @@ async function maybeDrawEvent(c, status, tight) {
         fun: meta.pacing.fun,
         frequency: tight ? 'rare' : (meta.options.eventFrequency || 'normal'),
     }, { base: Number(s.eventBase), growth: Number(s.eventGrowth), cap: Number(s.eventCap) });
-    if (chance <= 0 || random01() >= chance) return null;
+    if (chance <= 0 || random01() >= chance) return [];
     const all = await loadDeck();
     const world = c.docs.world;
-    const candidates = eligibleEvents(all, {
+    let pool = eligibleEvents(all, {
         setting: guessSetting(world.location, world.setting),
         danger: Math.max(1, Math.min(5, Math.round(meta.pacing.tension / 2) + 1)),
         flags: worldFlags(world),
         turn: meta.turn,
         history: meta.eventHistory,
     });
-    const ev = pickEvent(candidates, meta.recentEventTypes);
-    if (!ev) return null;
-    status.note(`Random event drawn: ${ev.title}`);
-    meta.pendingEvent = { event: ev, delays: 0, wait: 0 };
-    return ev;
+    const picks = [];
+    for (let i = 0; i < 3 && pool.length; i++) {
+        const ev = pickEvent(pool, [...meta.recentEventTypes, ...picks.map(p => p.type)]);
+        if (!ev) break;
+        picks.push(ev);
+        pool = pool.filter(e => e.id !== ev.id);
+    }
+    if (picks.length) status.note(`Random event possible: asking the DM if one fits`);
+    return picks;
 }
 
-function markEventUsed(c, ev, how) {
+function recordEvent(c, { id, title, type }, how) {
     const meta = c.meta;
-    const h = meta.eventHistory[ev.id] ?? { lastTurn: 0, count: 0 };
-    h.lastTurn = meta.turn;
-    h.count++;
-    meta.eventHistory[ev.id] = h;
-    meta.recentEventTypes.push(ev.type);
-    if (meta.recentEventTypes.length > 6) meta.recentEventTypes.shift();
+    if (id) {
+        const h = meta.eventHistory[id] ?? { lastTurn: 0, count: 0 };
+        h.lastTurn = meta.turn;
+        h.count++;
+        meta.eventHistory[id] = h;
+    }
+    if (type) {
+        meta.recentEventTypes.push(type);
+        if (meta.recentEventTypes.length > 6) meta.recentEventTypes.shift();
+    }
     meta.pacing.turnsSinceEvent = 0;
     meta.pendingEvent = null;
-    c.docs.events_log.push({ at: new Date().toISOString(), turn: meta.turn, id: ev.id, title: ev.title, how });
+    c.docs.events_log.push({ at: new Date().toISOString(), turn: meta.turn, id: id || null, title, how });
     saveDoc('events_log');
 }
 
+/** Plain-words outcome line for a dice card. */
+function outcomeText(r, judged) {
+    const text = judged.success === false ? r.on_fail : r.on_success;
+    return text ? ` → ${text}` : '';
+}
+
 /** Apply everything the DM decided, in a sensible order. */
-export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
+export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
-    const s = settings();
 
     // New NPCs (with voices).
     if (t.new_npcs.length) {
@@ -368,7 +381,7 @@ export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
             world.time = t.scene.time;
         }
     }
-    // NPCs who get directions are "here".
+    // NPCs who get briefs are "here".
     for (const d of t.directions) {
         const npc = c.docs.npcs.find(n => nameKey(n.name) === nameKey(d.speaker));
         if (npc) npc.lastSeen = world.location;
@@ -377,13 +390,30 @@ export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name));
     let initiativeCard = '';
+    let mapChanged = false;
     if (t.start_combat && !world.combat) {
         const companions = meta.party.map(p => ({ name: p.name, stats: statsForName(p.name, meta) }));
         const combat = startCombat(world, t.start_combat, companions);
+        combat.map = normalizeMap(t.start_combat.map || {});
+        combat.positions = {};
+        mapChanged = true;
         initiativeCard = `⚔️ **Initiative**\n${combat.order.map(o => `- ${o.name}: **${o.init}**`).join('\n')}\n*(${meta.persona.name}: roll your own initiative when asked)*`;
+    }
+    if (world.combat?.map) {
+        const friends = [meta.persona.name, ...meta.party.map(p => p.name)];
+        const foes = Object.keys(world.combat.enemies || {});
+        const { positions, rejected } = applyPositions(world.combat.map, world.combat.positions, t.positions);
+        world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
+        // Downed enemies leave the board.
+        for (const [name, e] of Object.entries(world.combat.enemies || {})) {
+            if (e.hp <= 0) delete world.combat.positions[name];
+        }
+        if (rejected.length) console.warn('[Dungeon Master] Ignored invalid map moves:', rejected);
+        mapChanged = true;
     }
     if (t.end_combat && world.combat) {
         endCombat(world);
+        closeMap();
         status.note('Combat over');
     }
     applyDmPacing(meta.pacing, t);
@@ -404,13 +434,19 @@ export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
         c.docs.story = `${c.docs.story ? c.docs.story + '\n\n' : ''}${t.story_add}`;
         saveDoc('story');
     }
-    if (event) {
-        if (t.event.delay && meta.pendingEvent && meta.pendingEvent.delays < 2) {
-            meta.pendingEvent.delays++;
-            meta.pendingEvent.wait = 4;
-            status.note(`DM delayed the event: ${event.title}`);
+    if (events.length) {
+        const use = t.event?.use || '';
+        const chosen = events.find(e => e.id === use);
+        if (chosen) {
+            recordEvent(c, chosen, 'used');
+            status.note(`Random event: ${chosen.title}`);
+        } else if (use === 'custom') {
+            recordEvent(c, { title: t.event.text || 'Custom event', type: 'custom' }, 'custom');
+            status.note('Random event: the DM made one up to fit');
         } else {
-            markEventUsed(c, event, t.event.used ? 'used' : 'offered');
+            // Nothing fit right now. Reset the clock so we don't ask again next turn.
+            recordEvent(c, { title: `(declined: ${events.map(e => e.title).join(', ')})` }, 'declined');
+            status.note('No random event: nothing fit the moment');
         }
     }
     if (t.standing_direction) meta.standing = t.standing_direction;
@@ -422,14 +458,13 @@ export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
     if (t.ooc) await postOoc(t.ooc);
     if (t.narration) {
         await postNarration(t.narration);
-        if (s.dmVoice) speak(t.narration, s.dmVoice);
+        voiceLine({ kind: 'dm', text: t.narration });
     }
     if (initiativeCard) await postDiceCard(initiativeCard, { combat: true });
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
 
-    // NPC/companion rolls (code-rolled, shown openly).
+    // Companion/NPC/enemy rolls: code-rolled, shown openly WITH what happened.
     const outcomesBySpeaker = {};
-    const outcomeLines = [];
     for (const r of t.npc_rolls) {
         if (signal.aborted) throw new Error('aborted');
         const result = roll(r.notation);
@@ -444,40 +479,41 @@ export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
             }
             if (dmg) {
                 const line = changeHp(world, r.target, -dmg.total, [...meta.party.map(p => p.name), meta.persona.name]);
-                damageText = ` → **${dmg.total}** damage${line ? ` (${line})` : ''}`;
+                damageText = ` · **${dmg.total}** damage${line ? ` (${line})` : ''}`;
             }
         }
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
+        const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';
+        const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';
         const card = r.hidden
             ? `🎲 Someone rolls in secret…`
-            : `🎲 **${r.who}** — ${r.what}: ${result.detail} = **${result.total}** ${mark}${r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : ''}${result.natural === 20 ? ' — natural 20!' : result.natural === 1 ? ' — natural 1…' : ''}${damageText}`;
+            : `🎲 **${r.who}** · ${r.what}: ${result.detail} = **${result.total}** ${mark}${vs}${nat}${damageText}${outcomeText(r, judged)}`;
         await postDiceCard(card, { roll: { ...r, total: result.total, natural: result.natural, success: judged.success } });
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
         const outcome = judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {
-            outcomeLines.push(outcome);
             const key = matchName(r.who, [...meta.party.map(p => p.name), ...c.docs.npcs.map(n => n.name)]) || r.who;
-            outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'succeeded'}: ${outcome}`;
+            outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'}: ${outcome}`;
         }
     }
     if (t.npc_rolls.length) {
         saveDoc('rolls_log');
         saveDoc('world');
     }
-    if (outcomeLines.length) {
-        const text = outcomeLines.join(' ');
-        await postNarration(text);
-        if (s.dmVoice) speak(text, s.dmVoice);
+    if (mapChanged && world.combat) {
+        if (t.start_combat) openMap();
+        else refreshMap();
     }
 
-    // Actors speak, in order.
+    // Companions and NPCs speak, in order, each with only their brief.
     for (const d of t.directions) {
         if (signal.aborted) throw new Error('aborted');
         const speaker = d.speaker;
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
+        const length = meta.pacing.inCombat ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);
         try {
-            await makeSpeak(speaker, [d.direction, extra].filter(Boolean).join(' '), { signal });
+            await makeSpeak(speaker, [d.direction, extra].filter(Boolean).join(' '), { signal, length });
             step.done();
         } catch (error) {
             step.fail(error);

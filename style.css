@@ -114,3 +114,95 @@
 @media (max-width: 1000px) {
     .dm-screen { width: 100vw; }
 }
+
+/* ---------- Battle map ---------- */
+/* Anchored from the TOP: some themes put a transform on <html>, which breaks bottom-anchored fixed panels. */
+.dm-map {
+    position: fixed;
+    right: 12px;
+    top: calc(var(--topBarBlockSize, 40px) + 12px);
+    width: min(460px, calc(100vw - 24px));
+    max-height: calc(100dvh - var(--topBarBlockSize, 40px) - 120px);
+    z-index: 3001;
+    display: flex;
+    flex-direction: column;
+    background: var(--SmartThemeBlurTintColor);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 12px;
+    color: var(--SmartThemeBodyColor);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.dm-map-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
+.dm-map-head b { flex: 1; }
+.dm-map-btn { cursor: pointer; opacity: 0.7; padding: 4px 6px; }
+.dm-map-btn:hover { opacity: 1; }
+.dm-map-body { overflow: auto; padding: 8px 10px 10px; }
+.dm-map.dm-map-min .dm-map-body { display: none; }
+.dm-map-grid { display: grid; gap: 1px; user-select: none; touch-action: manipulation; }
+.dm-map-label { font-size: 0.7em; opacity: 0.7; display: flex; align-items: center; justify-content: center; }
+.dm-cell {
+    aspect-ratio: 1 / 1;
+    position: relative;
+    border-radius: 3px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+}
+.dm-cell.t-floor { background: rgba(160, 150, 130, 0.22); }
+.dm-cell.t-wall { background: rgba(60, 60, 66, 0.95); cursor: not-allowed; }
+.dm-cell.t-water { background: rgba(50, 120, 200, 0.55); }
+.dm-cell.t-rough { background: repeating-linear-gradient(45deg, rgba(150, 120, 80, 0.35) 0 4px, rgba(150, 120, 80, 0.15) 4px 8px); }
+.dm-cell.t-cover { background: rgba(60, 130, 70, 0.75); cursor: not-allowed; }
+.dm-cell.t-door { background: rgba(150, 100, 50, 0.7); }
+.dm-cell.t-pit { background: radial-gradient(circle, #000 35%, rgba(40, 30, 20, 0.9) 70%); cursor: not-allowed; }
+.dm-cell.dm-in-range { box-shadow: inset 0 0 0 2px rgba(120, 200, 255, 0.45); }
+.dm-cell.dm-selected { box-shadow: inset 0 0 0 3px #ffd54a; }
+.dm-token {
+    position: relative;
+    width: 86%;
+    height: 86%;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: clamp(8px, 2.6vw, 13px);
+    color: #fff;
+    border: 2px solid #ccc;
+    background: #555;
+}
+.dm-token img { width: 100%; height: 100%; object-fit: cover; }
+.dm-token.dm-me { border-color: #ffd54a; }
+.dm-token.dm-friend { border-color: #4caf50; }
+.dm-token.dm-foe { border-color: #e53935; background: #7a1f1f; }
+.dm-token.dm-npc { border-color: #9e9e9e; }
+.dm-token-hp { position: absolute; left: 0; bottom: 0; height: 3px; background: #4caf50; }
+.dm-foe .dm-token-hp { background: #ff5252; }
+.dm-map-roster { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 4px; }
+.dm-map-chip { font-size: 0.8em; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--SmartThemeBorderColor); }
+.dm-map-chip.foe { border-color: #e53935; }
+.dm-map-chip.friend { border-color: #4caf50; }
+.dm-map-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.dm-map-pending { flex: 1; font-size: 0.85em; opacity: 0.85; min-width: 140px; }
+.dm-map-actions .menu_button { margin: 0; padding: 4px 10px; }
+.dm-map-actions .menu_button[disabled] { opacity: 0.4; pointer-events: none; }
+.dm-map-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 0.75em; opacity: 0.85; }
+.dm-map-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.dm-map-legend i.dm-cell { width: 12px; height: 12px; display: inline-block; aspect-ratio: auto; cursor: default; }
+
+@media (max-width: 700px) {
+    /* Phone: a sheet across the bottom 70% of the screen, still anchored from the top. */
+    .dm-map { left: 0; right: 0; top: 30dvh; width: 100vw; max-height: 70dvh; border-radius: 12px 12px 0 0; }
+    .dm-map.dm-map-min { top: calc(100dvh - 44px); }
+}
+
+/* ---------- Template editors ---------- */
+.dm-template { margin: 6px 0 10px; }
+.dm-template textarea { width: 100%; min-height: 90px; font-family: var(--monoFontFamily, monospace); font-size: 0.85em; }
+.dm-template-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dm-template-head .menu_button { margin: 0; padding: 2px 8px; font-size: 0.85em; }
+.dm-preview { white-space: pre-wrap; text-align: left; font-family: var(--monoFontFamily, monospace); font-size: 0.85em; }

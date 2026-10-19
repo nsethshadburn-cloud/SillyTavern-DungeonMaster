@@ -2,6 +2,17 @@
 
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
+import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
+
+/** Surprise types Claude may add, each with its own toggle. */
+export const SURPRISES = Object.freeze({
+    traps: 'Traps (tripwires, pressure plates, snares)',
+    hazards: 'Environmental hazards (collapsing floors, fire, flooding, bad weather)',
+    puzzles: 'Puzzles and locks (riddles, mechanisms, locked doors)',
+    secretDoors: 'Secret doors and hidden passages',
+    treasure: 'Hidden treasure and stashes',
+    ambushes: 'Ambushes',
+});
 
 export const DEFAULTS = Object.freeze({
     enabled: true,
@@ -33,13 +44,24 @@ export const DEFAULTS = Object.freeze({
     eventGrowth: 0.025,
     eventCap: 0.45,
     recentMessages: 24,         // transcript messages sent to the DM
-    injectionMaxTokens: 450,    // budget for directions added to the local model's prompt
 
-    // Voices (Chatterbox)
+    // What the roleplay model is told (editable, each with "reset to default")
+    templates: { ...DEFAULT_TEMPLATES },
+    lengths: { ...DEFAULT_LENGTHS },
+    noteDepth: 0,               // 0 = right before the reply; higher = further back in the chat
+    noteRole: 'system',         // 'system' | 'user': how the note is formatted in your instruct template
+    hideNarration: true,        // the bot never sees "Dungeon Master" messages; it gets briefs instead
+
+    // Surprises Claude may add
+    surprises: { traps: true, hazards: true, puzzles: true, secretDoors: true, treasure: true, ambushes: true },
+    surpriseFrequency: 'occasional', // rare | occasional | often
+
+    // Voices (Chatterbox). In campaign chats the plugin voices everyone and SillyTavern's TTS is paused.
     voicesEnabled: true,
     dmVoice: '',
     npcVoicePool: {},           // voiceId -> {enabled:boolean, gender:'male'|'female'|'any', label:string}
     voiceSpeed: 1,
+    ttsPausedByPlugin: false,   // true while the plugin has SillyTavern's TTS switched off
 
     // UI
     showStatus: true,
@@ -61,6 +83,10 @@ export function settings() {
     for (const [k, v] of Object.entries(DEFAULTS)) {
         if (s[k] === undefined) s[k] = structuredClone(v);
     }
+    // Nested defaults added in later versions.
+    for (const [k, v] of Object.entries(DEFAULT_TEMPLATES)) if (typeof s.templates[k] !== 'string') s.templates[k] = v;
+    for (const [k, v] of Object.entries(DEFAULT_LENGTHS)) if (typeof s.lengths[k] !== 'string') s.lengths[k] = v;
+    for (const k of Object.keys(SURPRISES)) if (typeof s.surprises[k] !== 'boolean') s.surprises[k] = true;
     return s;
 }
 

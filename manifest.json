@@ -5,7 +5,8 @@
     "optional": [],
     "js": "index.js",
     "css": "style.css",
+    "generate_interceptor": "dungeonMasterInterceptor",
     "author": "nsethshadburn-cloud",
-    "version": "0.2.1-beta",
+    "version": "0.3.0-beta",
     "homePage": "https://github.com/nsethshadburn-cloud/SillyTavern-DungeonMaster"
 }

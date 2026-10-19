@@ -1,7 +1,7 @@
 // Talking to the DM (Claude): building its prompt and reading its decisions.
 
 import { ST } from './st.js';
-import { settings } from './settings.js';
+import { settings, SURPRISES } from './settings.js';
 import { callClaude } from './llm.js';
 import { campaign, saveDoc } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
@@ -9,6 +9,7 @@ import { dmType } from './messages.js';
 import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary } from '../core/world.js';
+import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
 
 let stableCache = { key: '', text: '' };
@@ -20,10 +21,11 @@ export async function stableSystem() {
         personaSheet(c.meta.persona.avatar)?.file,
         ...c.meta.party.map(p => characterSheet(p.avatar)?.file),
     ]);
-    const key = `${c.meta.id}|${c.docs.bible.length}|${sheetsKey}`;
+    const surprises = surprisesText();
+    const key = `${c.meta.id}|${c.docs.bible.length}|${sheetsKey}|${surprises}`;
     if (stableCache.key === key) return stableCache.text;
 
-    const parts = [DM_RULES, '', '# CAMPAIGN BIBLE', c.docs.bible || '(none yet)'];
+    const parts = [DM_RULES, '', '# SURPRISES YOU MAY ADD', surprises, '', '# CAMPAIGN BIBLE', c.docs.bible || '(none yet)'];
     parts.push('', '# THE PLAYER CHARACTER');
     parts.push(`Name: ${c.meta.persona.name}`);
     const pSheet = personaSheet(c.meta.persona.avatar);
@@ -39,6 +41,15 @@ export async function stableSystem() {
     const text = parts.join('\n');
     stableCache = { key, text };
     return text;
+}
+
+/** The player's surprise toggles, as an instruction. */
+function surprisesText() {
+    const s = settings();
+    const on = Object.entries(SURPRISES).filter(([k]) => s.surprises?.[k]).map(([, label]) => `- ${label}`);
+    if (!on.length) return 'None. Do not add traps, hazards, puzzles, secret doors, hidden treasure or ambushes unless the plot requires it.';
+    const freq = { rare: 'Rarely (a few times per campaign act)', occasional: 'Occasionally (now and then, when it fits the place)', often: 'Often (most new locations have something)' }[s.surpriseFrequency] || 'Occasionally';
+    return `${freq}, and only where it makes sense for the place and moment, you may add:\n${on.join('\n')}\nGive the player a fair chance to notice or avoid them (Perception, Investigation, etc.).`;
 }
 
 export function resetStableCache() {
@@ -85,9 +96,9 @@ const REASON_TEXT = {
     roll_result: 'The player rolled for your last request. The result is below. Narrate the outcome.',
     risky_action: 'The player attempted something with an uncertain outcome. Rule on it: ask for a roll (player_roll) or narrate the result if no roll is needed.',
     scene_move: 'The player wants to move the scene (travel, rest, leave, time skip). Handle the transition with good pacing.',
-    combat_action: 'Combat action. Resolve it fairly and keep the fight moving.',
-    combat_round: 'Combat is ongoing. Run this round: enemies act (npc_rolls), keep it tense and readable.',
-    event: 'A random event was drawn (below). Weave it in now, reshape it to fit, or set event.delay=true if the timing would ruin the moment.',
+    combat_action: 'Combat action. Resolve the player\'s action fairly (they may name a square to move to, like "d4"; update "positions").',
+    combat_round: 'Combat is ongoing. You run this round: decide what each companion and enemy does, roll for them (npc_rolls), move them ("positions"), and narrate. Companions get only a "short" brief for a quick line.',
+    event: 'The dice say a random event COULD happen now. Candidates are below. First decide if any event fits this exact moment and place. Set event.use to a candidate id, to "custom" (and describe yours in event.text) for a small event that fits better, or to "none" if nothing should happen right now.',
     stalled: 'The scene seems stuck going in circles. Nudge it forward from inside the world.',
     drift: 'The player has been off the main plot for a while. Follow the drift-stage guidance in the pacing report.',
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
@@ -98,9 +109,9 @@ const REASON_TEXT = {
 
 /**
  * Build the volatile part of a DM call.
- * @param {{reasons:string[], playerMessage?:string, rollResolution?:string, event?:object|null, extraFiles?:string[], oocText?:string}} p
+ * @param {{reasons:string[], playerMessage?:string, rollResolution?:string, events?:object[], extraFiles?:string[], oocText?:string}} p
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', event = null, extraFiles = [], oocText = '' }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '' }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
@@ -113,7 +124,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(`Gold: ${w.gold ?? 0}. Items: ${w.items?.length ? w.items.join(', ') : 'none noted'}.`);
     if (Object.keys(w.flags || {}).length) sections.push(`Flags: ${JSON.stringify(w.flags)}`);
     sections.push(combatSummary(w));
-    sections.push(`Last standing direction you gave: ${c.meta.standing || '(none)'}`);
+    if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
+    sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
     sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90 }));
@@ -137,7 +149,10 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     for (const r of reasons) sections.push(`- ${REASON_TEXT[r] ?? r}`);
     if (oocText) sections.push('', `Player's out-of-character question: ${oocText}`);
     if (rollResolution) sections.push('', `ROLL RESULT: ${rollResolution}`);
-    if (event) sections.push('', `RANDOM EVENT DRAWN: "${event.title}" (${event.type}, danger ${event.danger}/5): ${event.seed}`);
+    if (events.length) {
+        sections.push('', 'RANDOM EVENT CANDIDATES (use one by id, "custom", or "none"):');
+        for (const ev of events) sections.push(`- [${ev.id}] ${ev.title} (${ev.type}, danger ${ev.danger}/5): ${ev.seed}`);
+    }
     if (playerMessage && !reasons.includes('checkin')) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
 
     const companions = c.meta.party.map(p => p.name);

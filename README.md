@@ -46,9 +46,19 @@ A new group chat opens with the opening scene. Takes about 30–40 seconds and r
 Just roleplay. Behind the scenes, each message goes through:
 
 - **The helper** (your local model, under a second) reads your move.
-- **Talking and roleplay** → your companions answer on the local model. **Free.**
+- **Talking and roleplay** → your companions answer on the local model, playing freely. **Free.**
 - **Risky things** (sneaking, lying, climbing, attacking), **travel**, **talking to someone new**, or a **random event** → the **DM (Claude)** steps in. About 2¢ per call.
 - Every ~10 local turns the DM does a quick **check-in** to keep pacing on track.
+
+**What the bot sees.** The DM's narration is for you only; the bot never reads it (that's what made it chase random details and drive the plot). Instead, when Claude handles a turn it gives each companion a short private **brief**: only what they need to know and want, never their words. Every reply also gets a short **scene note** (where you are, who's here, the goal, and a 3-4 sentence length target). You can read and edit all of this in **Settings → What the bot is told**, with **Reset to default** on each part and a **Preview** of exactly what the bot gets in the current chat.
+
+**Combat.** Claude runs fights: it decides what companions and enemies do, rolls for them and narrates; companions only get a quick line. A **battle map** pops up (also in the wand menu, or `/dmmap`): chess-style squares (a1 is bottom-left), portraits, terrain, HP. Tap a square to move and an enemy to target, then **Add to message** and say what you do. On phones it's a sheet across the bottom of the screen.
+
+**Random events** only happen when they fit: when the dice say "maybe", Claude looks at a few candidates and the situation, and picks one, invents a better-fitting one, or skips it.
+
+**Surprises.** Settings → **Surprises**: toggles for traps, hazards, puzzles and locks, secret doors, hidden treasure and ambushes, plus how often.
+
+**Voices.** In D&D chats the plugin voices everyone (DM, NPCs, and Judy with the voice from SillyTavern's TTS panel) one at a time, in chat order. SillyTavern's own TTS is switched off while a D&D chat is open and back on when you leave.
 
 | You want to… | Do this |
 |---|---|
@@ -63,13 +73,13 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **The status bar** above the chat box shows each step live (helper → DM → who's responding) with time and estimated cost. Click the arrow to expand it, and the ✕ to hide it.
 
-**Dice cards** (🎲) are visible to you but hidden from the local model. The DM narrates the results.
+**Dice cards** (🎲) show every roll and, in plain words, what happened, e.g. `🎲 Bandit 1 · Crossbow at Judy: 1d20 (18) + 4 = 22 ✔ vs AC 15 · 5 damage → The bolt grazes Judy's arm.` They're hidden from the local model; the character it affects gets the result in their brief.
 
 ## Deleting, editing and swiping messages
 
 - **Deleting or editing messages** works like normal SillyTavern: the chat changes, and the DM reads the chat as it is now on its next turn. But **the campaign's bookkeeping does not rewind**: HP, gold and items, ticked plot beats, NPCs met, DM notes, the event and roll logs, and pacing counters stay as they were. If you delete something that changed those, fix it in the **DM Screen** (Files) or just tell the DM: `((I deleted that last scene, ignore it))`.
 - **Deleting a 🎲 roll request** doesn't cancel it. Use **DM Screen → Cancel** next to "Waiting for your roll".
-- **Swiping a party member's reply** (e.g. Judy) works: she gets the same hidden direction from the DM as the first time.
+- **Swiping a party member's reply** (e.g. Judy) works: she gets the same brief from the DM as the first time (or none, if it was free roleplay).
 - **Don't swipe Dungeon Master or NPC messages.** They aren't characters, so SillyTavern can't regenerate them. Delete the message and use **DM: step in now** instead.
 
 ## Where your stuff lives
@@ -82,8 +92,9 @@ Just roleplay. Behind the scenes, each message goes through:
 ## Good to know
 
 - **Costs are estimates.** SillyTavern doesn't pass Claude's real token counts back to extensions. Your Anthropic console shows the true spend. In testing, a DM turn was about 2¢ and a campaign build about 3–5¢.
-- **Your settings are never changed.** The extension uses whatever instruct, system prompt and samplers you have selected. The one exception: while a party member replies right after DM narration, it pauses TTS's "speak while streaming" for that reply only (otherwise TTS errors on the DM's name), then restores it.
+- **Your settings are never changed** apart from SillyTavern's TTS on/off switch, which the plugin turns off in D&D chats (so voices don't overlap) and back on when you leave. The extension uses whatever instruct, system prompt and samplers you have selected.
 - **NPCs get voices** from the NPC voice pool, matched by gender, and keep them for the whole campaign.
+- **Pick "Current connection" for Actors** unless you really need a different server: a connection profile there switches your whole setup (including formatting) for every companion reply.
 - **Claude won't write explicit sexual content.** The DM will cut away or steer if a scene heads there.
 
 ## Troubleshooting

@@ -312,6 +312,17 @@ Each phase ends with something you can actually test in SillyTavern.
 - **Swipes (v0.2.1):** each party reply stores the direction it was written with (`extra.dm_direction`); swiping that reply re-injects exactly that direction. (v0.2 re-used the character's latest direction, which could be stale.)
 - **Deleting messages:** chat changes are picked up by the DM, but campaign bookkeeping (HP, items, plot ticks, logs) doesn't rewind. Documented in the README.
 
+### v0.3 changes (from real play on the server)
+- **The bot never sees the DM's narration.** A SillyTavern generation interceptor (`generate_interceptor` in manifest.json) removes narration/OOC/dice/note messages from the per-generation copy of the chat; the visible chat is untouched. NPC prompts skip them too. Reason: the local model latched onto random narration details and drove the plot.
+- **Briefs replace stage directions.** Claude writes only what that companion needs to know and wants, never their words, plus a length (short/normal/long). Plain roleplay turns get no brief at all.
+- **One note per reply**, built from four user-editable templates (scene, brief, combat, NPC) with reset-to-default, configurable position (depth) and role (system/user), and a preview. Default length target: 3-4 sentences, mostly dialogue. (Previously two separate system messages: a scene note 3 messages back and a direction at depth 0.)
+- **Voices:** one queue for everyone in chat order; audio prefetches but plays in order. SillyTavern's TTS is switched off in campaign chats via its own UI switch (and back on, with its Refresh, when leaving) so the two players can't overlap.
+- **Combat:** Claude runs it (companions get a "short" brief). Battle map: Claude sends text rows of terrain characters and chess-style positions; never images. Map panel is anchored from the top because some themes put a transform on `<html>`, which breaks bottom-anchored fixed panels.
+- **Events:** code decides "maybe now"; Claude gets up to 3 candidates and picks one, invents a fitting one, or declines.
+- **Surprises:** six toggles + frequency, added to the DM's stable prompt.
+- **DM style:** plain simple English, usually 1-3 sentences of narration.
+- Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
+
 ### Verified in a live test (isolated copy of SillyTavern, port 8011)
 Wizard → campaign build (Judy's sheet + bible/plot/opening) → group chat with no greetings → banter turn (local only, helper 0.7 s) → risky action (DM asks Stealth, hidden DC) → typed roll resolves → DM narrates → Judy follows her direction → new NPC registered with a voice and voiced locally → random event woven in → combat (initiative, attack, damage, HP) → persona PDF form fields read and converted → DM Screen. About $0.20 of Claude estimated for all testing.
 

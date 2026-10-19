@@ -5,7 +5,9 @@ import { ST, MODULE } from './src/st/st.js';
 import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
 import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll } from './src/st/orchestrator.js';
-import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply } from './src/st/actors.js';
+import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, briefForMessage } from './src/st/actors.js';
+import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig } from './src/st/voices.js';
+import { toggleMap, refreshMap, closeMap } from './src/ui/map.js';
 import { postDiceCard } from './src/st/messages.js';
 import { forgetAll } from './src/st/storage.js';
 import { recap } from './src/st/dm.js';
@@ -21,6 +23,8 @@ const BREAK_HOURS = 6;
 
 async function onChatChanged() {
     pendingUserMessage = false;
+    stopVoices();
+    closeMap();
     forgetAll();
     clearActive();
     clearPrompts();
@@ -41,6 +45,9 @@ async function onChatChanged() {
         console.error('[Dungeon Master] Could not load the campaign', error);
         toastr.error('Could not load this chat\'s campaign files. See the console.', 'Dungeon Master');
     }
+    const active = campaign();
+    syncTtsTakeover(Boolean(active && !active.meta.paused));
+    if (active?.docs.world.combat?.map) refreshMap();
     renderScreen();
     updateMenuState();
 }
@@ -87,6 +94,7 @@ function updateMenuState() {
     const c = campaign();
     $('#dm-menu-screen').toggle(true);
     $('#dm-menu-step-in').toggle(Boolean(c));
+    $('#dm-menu-map').toggle(Boolean(c));
 }
 
 function addWandMenu() {
@@ -96,6 +104,7 @@ function addWandMenu() {
         ['dm-menu-start', 'fa-dice-d20', 'Start D&D campaign', () => openWizard()],
         ['dm-menu-screen', 'fa-scroll', 'DM Screen', () => toggleScreen()],
         ['dm-menu-step-in', 'fa-hat-wizard', 'DM: step in now', () => runTurn({ force: 'manual' })],
+        ['dm-menu-map', 'fa-chess-board', 'Battle map', () => toggleMap()],
     ];
     for (const [id, icon, label, fn] of items) {
         const el = document.createElement('div');
@@ -144,6 +153,14 @@ function registerSlashCommands() {
         },
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmmap',
+        helpString: 'Open or close the battle map.',
+        callback: async () => {
+            toggleMap();
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmstart',
         helpString: 'Start a new D&D campaign.',
         callback: async () => {
@@ -152,6 +169,11 @@ function registerSlashCommands() {
         },
     }));
 }
+
+// SillyTavern generation interceptor (named in manifest.json): hides the DM's narration from the bot.
+globalThis.dungeonMasterInterceptor = async (chat) => {
+    hideNarrationFromBot(chat);
+};
 
 jQuery(async () => {
     settings();
@@ -176,24 +198,42 @@ jQuery(async () => {
         }
     });
     // Swipes/regenerates of a party member's reply happen outside the turn loop:
-    // give the character the same stage direction that reply was written with.
+    // give the character the same brief that reply was written with (or none, for free roleplay).
     eventSource.on(eventTypes.GROUP_MEMBER_DRAFTED, (chId) => {
         const c = campaign();
         if (!c || c.meta.paused || isRunning()) return;
         const name = ST.characters[chId]?.name;
         const last = ST.chat[ST.chat.length - 1];
-        const direction = name && last && !last.is_user && last.name === name ? last.extra?.dm_direction : '';
-        if (direction) injectDirection(name, direction);
+        const saved = name && last && !last.is_user && last.name === name ? briefForMessage(last) : null;
+        if (saved) injectDirection(saved.brief, saved.length);
     });
     // Group chats prefix the reply with "Name:", which breaks thinking models. Campaign chats only.
     eventSource.on(eventTypes.GENERATE_AFTER_COMBINE_PROMPTS, stripReplyNamePrefix);
-    // Remove an echoed "Name:" from party replies, swipes included (registered before TTS reads it).
-    eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, (id) => cleanPartyReply(id).catch(() => { }));
+    // Party replies (swipes included): remove an echoed "Name:", then voice them in order.
+    eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, async (id) => {
+        try {
+            await cleanPartyReply(id);
+            const c = campaign();
+            const msg = ST.chat[Number(id)];
+            if (c && !c.meta.paused && msg && !msg.is_user && c.meta.party.some(p => p.name === msg.name)) {
+                voiceLine({ kind: 'party', name: msg.name, text: msg.mes });
+            }
+        } catch (error) {
+            console.warn('[Dungeon Master] party reply handling failed', error);
+        }
+    });
+    eventSource.on(eventTypes.USER_MESSAGE_RENDERED, (id) => {
+        const c = campaign();
+        const msg = ST.chat[Number(id)];
+        if (c && !c.meta.paused && msg?.is_user && ttsConfig().rules.narrate_user) voiceLine({ kind: 'party', name: msg.name, text: msg.mes });
+    });
+    eventSource.on(eventTypes.MESSAGE_SWIPED, () => { if (campaign()) stopVoices(); });
     eventSource.on(eventTypes.GENERATION_ENDED, () => { if (!isRunning()) clearDirection(); });
     if (eventTypes.CONNECTION_PROFILE_LOADED) eventSource.on(eventTypes.CONNECTION_PROFILE_LOADED, refreshProfileSelects);
     if (eventTypes.SETTINGS_UPDATED) eventSource.on(eventTypes.SETTINGS_UPDATED, () => renderSpend());
 
-    // A chat may already be open.
+    // A chat may already be open. If not, make sure SillyTavern's TTS isn't left paused by us.
     if (ST.chatMetadata && Object.keys(ST.chatMetadata).length) await onChatChanged();
+    else syncTtsTakeover(false);
     console.log(`[Dungeon Master] Ready (${MODULE}).`);
 });

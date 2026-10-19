@@ -1,6 +1,8 @@
-// Voices for the DM and NPCs, played through your Chatterbox server.
-// SillyTavern's TTS only voices real characters, so DM/NPC lines are spoken here,
-// using the same Chatterbox endpoint and settings you configured in SillyTavern's TTS panel.
+// Voices, played through your Chatterbox server.
+// In campaign chats the plugin voices EVERYONE (DM, NPCs and party members like Judy) through one
+// queue, in chat order, one line at a time. SillyTavern's own TTS is switched off while a campaign
+// chat is open (and switched back on when you leave), so two players can never talk over each other.
+// Endpoint, voice settings and text rules come from SillyTavern's TTS panel.
 
 import { ST } from './st.js';
 import { settings, saveSettings } from './settings.js';
@@ -24,8 +26,56 @@ export function ttsConfig() {
         endpoint: String(cfg.provider_endpoint || '').replace(/\/+$/, ''),
         settings: cfg,
         voiceMap: (typeof cfg.voiceMap === 'object' && cfg.voiceMap) ? cfg.voiceMap : {},
+        rules: tts,
     };
 }
+
+// ---------------- Taking over from SillyTavern's TTS ----------------
+
+/**
+ * Called whenever the open chat changes. In an active campaign chat (with plugin voices on),
+ * switch SillyTavern's TTS off; anywhere else, switch it back on if the plugin switched it off.
+ */
+export function syncTtsTakeover(campaignActive) {
+    const s = settings();
+    const tts = ST.extensionSettings.tts;
+    if (!tts) return;
+    const want = Boolean(campaignActive && s.voicesEnabled && ttsConfig().isChatterbox);
+    if (want && tts.enabled) {
+        setSillyTavernTts(false);
+        s.ttsPausedByPlugin = true;
+        saveSettings();
+    } else if (!want && s.ttsPausedByPlugin) {
+        s.ttsPausedByPlugin = false;
+        saveSettings();
+        stopVoices();
+        setSillyTavernTts(true);
+    }
+}
+
+/**
+ * Flip SillyTavern's TTS through its own switch, so it runs its own setup (and, when turning on,
+ * reloads its voice list via its Refresh button). Falls back to the setting if the panel isn't there.
+ */
+function setSillyTavernTts(on) {
+    const box = /** @type {HTMLInputElement|null} */ (document.getElementById('tts_enabled'));
+    if (box) {
+        if (box.checked !== on) $(box).trigger('click');
+        if (on) setTimeout(() => $('#tts_refresh').trigger('click'), 50);
+    } else {
+        ST.extensionSettings.tts.enabled = on;
+        ST.saveSettingsDebounced();
+    }
+}
+
+/** Plugin voices are on when SillyTavern TTS is set up for Chatterbox (on, or paused by us). */
+export function voicesActive() {
+    const s = settings();
+    const cfg = ttsConfig();
+    return Boolean(s.voicesEnabled && cfg.isChatterbox && cfg.endpoint && (cfg.enabled || s.ttsPausedByPlugin));
+}
+
+// ---------------- Voice lists ----------------
 
 /** Voices offered by the Chatterbox server: [{id, name, kind}] */
 export async function fetchVoices(force = false) {
@@ -115,42 +165,98 @@ export function pickNpcVoice(npc, roster = []) {
     return options[Math.floor(random01() * options.length)][0];
 }
 
-// ---------------- Playback ----------------
+/**
+ * The voice SillyTavern's voice map gives a character (e.g. Judy). The map stores voice NAMES;
+ * Chatterbox wants file ids. Returns '' when the character is disabled or unmapped.
+ */
+export async function voiceForCharacter(name) {
+    const map = ttsConfig().voiceMap;
+    let v = map[name];
+    if (v === '[Default Voice]' || v === undefined) v = map['[Default Voice]'];
+    if (!v || v === 'disabled' || v === '[Default Voice]') return '';
+    const voices = await fetchVoices();
+    const hit = voices.find(x => x.name === v || x.id === v);
+    return hit ? hit.id : String(v);
+}
 
-let chain = Promise.resolve();
+// ---------------- Speaking ----------------
+
+/** Clean text the same way SillyTavern's TTS does, following your TTS panel's options. */
+export function speechText(text, { kind = 'party' } = {}) {
+    const rules = ttsConfig().rules;
+    let t = String(text ?? '').replace(/\(\(.*?\)\)/gs, '');
+    if (rules.skip_codeblocks) t = t.replace(/```.*?```/gs, '').replace(/~~~.*?~~~/gs, '');
+    if (rules.skip_tags) t = t.replace(/<.*?>[\s\S]*?<\/.*?>/g, '');
+    if (kind !== 'dm') {
+        if (!rules.pass_asterisks) {
+            t = rules.narrate_dialogues_only ? t.replace(/\*[^*]*?(\*|$)/g, '') : t.replaceAll('*', '');
+        }
+        if (rules.narrate_quoted_only) {
+            const quotes = t.match(/"[^"]*"|“[^”]*”/g);
+            t = quotes ? quotes.join(' ... ') : '';
+        }
+    }
+    return t.replace(/[*_~`#>]/g, '').replace(/\[(.*?)\]\(.*?\)/g, '$1').replace(/\s+/g, ' ').trim();
+}
+
+const queue = [];
+let playing = false;
 let currentAudio = null;
+let generation = 0; // bumps on stop, so stale requests don't play
 
 export function stopVoices() {
-    chain = Promise.resolve();
+    generation++;
+    queue.length = 0;
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
     }
+    playing = false;
 }
 
-/** Clean text for speech: drop markdown, OOC bits and dice notation. */
-export function speechText(text) {
-    return String(text ?? '')
-        .replace(/\(\(.*?\)\)/gs, '')
-        .replace(/[*_~`#>]/g, '')
-        .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-        .replace(/\s+/g, ' ')
-        .trim();
+/**
+ * Queue one line. kind: 'dm' (DM voice), 'npc' (voice given), 'party' (SillyTavern voice map).
+ * Audio starts generating right away, but lines always PLAY in the order they were queued.
+ */
+export function voiceLine({ kind, name = '', text, voice = '' }) {
+    if (!voicesActive()) return;
+    const clean = speechText(text, { kind });
+    if (!clean) return;
+    const gen = generation;
+    const item = { gen, audio: null };
+    item.audio = (async () => {
+        let id = voice;
+        if (kind === 'dm') id = settings().dmVoice;
+        else if (kind === 'party') id = await voiceForCharacter(name);
+        if (!id) return null;
+        return fetchAudio(clean, id);
+    })().catch(error => {
+        console.warn('[Dungeon Master] Voice failed', error);
+        return null;
+    });
+    queue.push(item);
+    if (!playing) playQueue();
 }
 
-/** Queue a line to be spoken. voiceId: Chatterbox file name or 'ref_<file>'. */
-export function speak(text, voiceId) {
-    const s = settings();
+async function playQueue() {
+    playing = true;
+    try {
+        while (queue.length) {
+            const item = queue.shift();
+            const url = await item.audio;
+            if (!url || item.gen !== generation) {
+                if (url) URL.revokeObjectURL(url);
+                continue;
+            }
+            await playUrl(url);
+        }
+    } finally {
+        playing = false;
+    }
+}
+
+async function fetchAudio(text, voiceId) {
     const cfg = ttsConfig();
-    if (!s.voicesEnabled || !cfg.enabled || !cfg.isChatterbox || !cfg.endpoint || !voiceId) return Promise.resolve();
-    const clean = speechText(text);
-    if (!clean) return Promise.resolve();
-    const run = chain.then(() => playOne(cfg, clean, voiceId));
-    chain = run.catch(() => { });
-    return run;
-}
-
-async function playOne(cfg, text, voiceId) {
     const c = cfg.settings;
     const isRef = voiceId.startsWith('ref_');
     const body = {
@@ -168,38 +274,33 @@ async function playOne(cfg, text, voiceId) {
     };
     if (isRef) body.reference_audio_filename = voiceId.slice(4);
     else body.predefined_voice_id = voiceId;
-
     const res = await fetch(`${cfg.endpoint}/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
         body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`Chatterbox ${res.status}`);
-    const blob = await res.blob();
-    await waitForSillyTavernAudio();
-    const url = URL.createObjectURL(blob);
-    try {
-        await new Promise((resolve) => {
-            const audio = new Audio(url);
-            currentAudio = audio;
-            const rate = Number(ST.extensionSettings.tts?.playback_rate) || 1;
-            audio.playbackRate = rate;
-            audio.onended = resolve;
-            audio.onerror = resolve;
-            audio.play().catch(resolve);
-        });
-    } finally {
-        currentAudio = null;
-        URL.revokeObjectURL(url);
-    }
+    return URL.createObjectURL(await res.blob());
 }
 
-/** Don't talk over SillyTavern's own TTS (party members' voices). */
-async function waitForSillyTavernAudio(maxMs = 60000) {
-    const el = document.getElementById('tts_audio');
-    if (!el) return;
-    const start = Date.now();
-    while (!el.paused && !el.ended && Date.now() - start < maxMs) {
-        await new Promise(r => setTimeout(r, 200));
-    }
+function playUrl(url) {
+    return new Promise((resolve) => {
+        const audio = new Audio(url);
+        currentAudio = audio;
+        audio.playbackRate = Number(ST.extensionSettings.tts?.playback_rate) || 1;
+        const done = () => {
+            if (currentAudio === audio) currentAudio = null;
+            URL.revokeObjectURL(url);
+            resolve();
+        };
+        audio.onended = done;
+        audio.onerror = done;
+        audio.onpause = () => { if (!audio.ended && currentAudio !== audio) done(); };
+        audio.play().catch(done);
+    });
+}
+
+/** Back-compat for older call sites: speak a DM line with a specific voice. */
+export function speak(text, voiceId) {
+    voiceLine({ kind: 'npc', text, voice: voiceId });
 }

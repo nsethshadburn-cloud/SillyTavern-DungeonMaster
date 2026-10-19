@@ -7,7 +7,8 @@ import { askDmNow, runTurn, resetCaches } from '../st/orchestrator.js';
 import { recap } from '../st/dm.js';
 import { postNarration } from '../st/messages.js';
 import { refreshStandingPrompt, clearPrompts } from '../st/actors.js';
-import { speak } from '../st/voices.js';
+import { voiceLine, syncTtsTakeover } from '../st/voices.js';
+import { toggleMap } from './map.js';
 import { turnHistory } from './status.js';
 import { escapeHtml } from '../core/text.js';
 import { formatUsd } from '../core/budget.js';
@@ -84,9 +85,9 @@ export function renderScreen() {
     <div class="menu_button" id="dm-scr-ask" title="Ask the DM something out of character">Ask the DM</div>
     <div class="menu_button" id="dm-scr-force" title="Have the DM step in now">DM step in</div>
     <div class="menu_button" id="dm-scr-recap" title="Previously on…">Recap</div>
+    ${w.combat ? '<div class="menu_button" id="dm-scr-map" title="Battle map">Battle map</div>' : ''}
     <div class="menu_button" id="dm-scr-pause">${m.paused ? 'Resume' : 'Pause'}</div>
   </div>
-  ${m.pendingEvent ? `<div class="dm-scr-note">Event waiting: <b>${escapeHtml(m.pendingEvent.event.title)}</b> <span class="menu_button" id="dm-scr-skip">Skip</span></div>` : ''}
   ${m.pendingRoll ? `<div class="dm-scr-note">Waiting for your roll: <b>${escapeHtml(m.pendingRoll.skill)}</b> <span class="menu_button" id="dm-scr-cancel-roll">Cancel</span></div>` : ''}
   <h5>Pacing</h5>
   <div class="dm-kv"><span>Scene</span><b>${escapeHtml(p.sceneType)}</b></div>
@@ -122,7 +123,7 @@ export function renderScreen() {
         try {
             const r = await recap();
             await postNarration(`**Previously…** ${r.text}`);
-            if (settings().dmVoice) speak(r.text, settings().dmVoice);
+            voiceLine({ kind: 'dm', text: r.text });
         } catch (error) {
             toastr.error(String(error?.message || error), 'Dungeon Master');
         }
@@ -132,9 +133,11 @@ export function renderScreen() {
         saveMeta();
         if (m.paused) clearPrompts();
         else refreshStandingPrompt();
+        syncTtsTakeover(!m.paused);
         renderScreen();
         toastr.info(m.paused ? 'D&D mode paused: this chat behaves like a normal group chat.' : 'D&D mode resumed.', 'Dungeon Master');
     });
+    panel.querySelector('#dm-scr-map')?.addEventListener('click', () => toggleMap());
     panel.querySelector('#dm-scr-skip')?.addEventListener('click', () => {
         m.pendingEvent = null;
         saveMeta();

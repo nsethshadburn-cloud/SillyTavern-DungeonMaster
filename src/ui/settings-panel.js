@@ -1,7 +1,11 @@
 // Settings drawer in SillyTavern's Extensions panel.
 
 import { ST } from '../st/st.js';
-import { settings, saveSettings, connectionProfiles, currentSpend } from '../st/settings.js';
+import { settings, saveSettings, connectionProfiles, currentSpend, SURPRISES } from '../st/settings.js';
+import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
+import { buildNote, refreshStandingPrompt } from '../st/actors.js';
+import { campaign } from '../st/campaign.js';
+import { resetCaches } from '../st/orchestrator.js';
 import { fetchVoices, syncVoicePool, speak, ttsConfig } from '../st/voices.js';
 import { sheetMarkdown } from '../st/sheets.js';
 import { escapeHtml } from '../core/text.js';
@@ -21,6 +25,15 @@ function profileOptions(selected, { emptyLabel, filter = () => true }) {
         opts.push(`<option value="${escapeHtml(p.id)}" ${p.id === selected ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.api || p.mode)}${escapeHtml(where)})</option>`);
     }
     return opts.join('');
+}
+
+function templateEditor(key, title, help) {
+    const s = settings();
+    return `<div class="dm-template">
+  <div class="dm-template-head"><b>${escapeHtml(title)}</b><div class="menu_button" data-reset-template="${key}">Reset to default</div></div>
+  ${help ? `<small>${escapeHtml(help)}</small>` : ''}
+  <textarea class="text_pole" data-template="${key}" rows="5">${escapeHtml(s.templates[key])}</textarea>
+</div>`;
 }
 
 function panelHtml() {
@@ -87,9 +100,43 @@ function panelHtml() {
         <label>Max tokens added to local prompts<input id="dm-inject" type="number" min="100" max="2000" class="text_pole" value="${s.injectionMaxTokens}"></label>
       </div>
 
+      <h4>What the bot is told</h4>
+      <small>This works like a small system prompt for your roleplay model in D&amp;D chats. Your own system prompt, formatting and samplers are always used as they are; this is added on top.</small>
+      <label class="checkbox_label"><input id="dm-hide-narration" type="checkbox" ${s.hideNarration ? 'checked' : ''}> Hide the DM's narration from the bot (it only gets the DM's private briefs)</label>
+      <div class="dm-grid2">
+        <label>Note position (0 = right before the reply)<input id="dm-note-depth" type="number" min="0" max="10" class="text_pole" value="${s.noteDepth}"></label>
+        <label>Note sent as
+          <select id="dm-note-role" class="text_pole">
+            <option value="system" ${s.noteRole !== 'user' ? 'selected' : ''}>System message</option>
+            <option value="user" ${s.noteRole === 'user' ? 'selected' : ''}>User message</option>
+          </select></label>
+      </div>
+      ${templateEditor('scene', 'Scene note (every reply in a D&D chat)', 'Fill-ins: {{player}} {{party}} {{location}} {{present}} {{situation}} {{goal}} and SillyTavern macros like {{char}}. A line whose fill-in is empty is left out.')}
+      ${templateEditor('brief', 'DM brief (only when Claude handles the turn)', 'Fill-ins: {{brief}} (what Claude says the character needs to know) and {{length}}.')}
+      ${templateEditor('combat', 'Combat note (added during fights)', '')}
+      ${templateEditor('npc', 'NPC note (side characters the bot voices)', 'Fill-ins: {{npc}} {{description}} {{pronouns}} {{attitude}} {{player}} {{party}}.')}
+      <div class="dm-template">
+        <div class="dm-template-head"><b>Reply lengths</b><div class="menu_button" data-reset-lengths>Reset to default</div></div>
+        <div class="dm-grid2">
+          <label>Short<input class="text_pole" data-length="short" value="${escapeHtml(s.lengths.short)}"></label>
+          <label>Normal<input class="text_pole" data-length="normal" value="${escapeHtml(s.lengths.normal)}"></label>
+          <label>Long<input class="text_pole" data-length="long" value="${escapeHtml(s.lengths.long)}"></label>
+        </div>
+      </div>
+      <div class="dm-row"><div id="dm-preview-note" class="menu_button">Preview what the bot gets in this chat</div></div>
+
+      <h4>Surprises</h4>
+      <small>Things Claude may add to the world, only where they make sense.</small>
+      ${Object.entries(SURPRISES).map(([k, label]) => `<label class="checkbox_label"><input type="checkbox" data-surprise="${k}" ${s.surprises[k] ? 'checked' : ''}> ${escapeHtml(label)}</label>`).join('')}
+      <label>How often
+        <select id="dm-surprise-freq" class="text_pole">
+          ${['rare', 'occasional', 'often'].map(f => `<option value="${f}" ${f === s.surpriseFrequency ? 'selected' : ''}>${f}</option>`).join('')}
+        </select></label>
+
       <h4>Voices (Chatterbox)</h4>
       <div id="dm-tts-note" class="dm-muted"></div>
-      <label class="checkbox_label"><input id="dm-voices" type="checkbox" ${s.voicesEnabled ? 'checked' : ''}> Voice the DM and NPCs</label>
+      <label class="checkbox_label"><input id="dm-voices" type="checkbox" ${s.voicesEnabled ? 'checked' : ''}> Voice everyone in D&amp;D chats (DM, NPCs and party, one at a time, in order)</label>
+      <small>While a D&amp;D chat is open, SillyTavern's own TTS is switched off so voices never overlap. It switches back on when you leave the chat. Party members use the voices you picked in SillyTavern's TTS panel.</small>
       <label>DM voice <select id="dm-dm-voice" class="text_pole"><option value="">(none)</option></select></label>
       <div class="dm-row"><div id="dm-voice-test" class="menu_button">Test DM voice</div><div id="dm-voice-refresh" class="menu_button">Refresh voices</div></div>
       <details><summary>NPC voice pool</summary>
@@ -223,7 +270,62 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindNumber('dm-session', 'usualSessionMinutes');
     bindNumber('dm-recent', 'recentMessages');
     bindNumber('dm-inject', 'injectionMaxTokens');
-    bindCheck('dm-voices', 'voicesEnabled');
+    bindCheck('dm-voices', 'voicesEnabled', async () => {
+        const { syncTtsTakeover } = await import('../st/voices.js');
+        syncTtsTakeover(Boolean(campaign() && !campaign().meta.paused));
+    });
+    bindCheck('dm-hide-narration', 'hideNarration');
+    bindNumber('dm-note-depth', 'noteDepth');
+    $('#dm-note-depth').on('change', () => refreshStandingPrompt());
+    $('#dm-note-role').on('change', function () {
+        settings().noteRole = String($(this).val());
+        saveSettings();
+        refreshStandingPrompt();
+    });
+    $('#dm-settings [data-template]').on('input', function () {
+        settings().templates[$(this).data('template')] = String($(this).val());
+        saveSettings();
+        refreshStandingPrompt();
+    });
+    $('#dm-settings [data-reset-template]').on('click', async function () {
+        const key = $(this).data('reset-template');
+        const ok = await ST.callGenericPopup('Reset this template to the default text? Your edits to it will be lost.', ST.POPUP_TYPE.CONFIRM);
+        if (ok !== ST.POPUP_RESULT.AFFIRMATIVE) return;
+        settings().templates[key] = DEFAULT_TEMPLATES[key];
+        $(`#dm-settings [data-template="${key}"]`).val(DEFAULT_TEMPLATES[key]);
+        saveSettings();
+        refreshStandingPrompt();
+    });
+    $('#dm-settings [data-length]').on('input', function () {
+        settings().lengths[$(this).data('length')] = String($(this).val());
+        saveSettings();
+    });
+    $('#dm-settings [data-reset-lengths]').on('click', () => {
+        settings().lengths = { ...DEFAULT_LENGTHS };
+        for (const [k, v] of Object.entries(DEFAULT_LENGTHS)) $(`#dm-settings [data-length="${k}"]`).val(v);
+        saveSettings();
+    });
+    $('#dm-preview-note').on('click', async () => {
+        if (!campaign()) return toastr.info('Open a D&D chat to preview what the bot gets there.', 'Dungeon Master');
+        const char = campaign().meta.party[0]?.name || '{{char}}';
+        const fill = (t) => t.replaceAll('{{char}}', char);
+        const base = fill(buildNote());
+        const withBrief = fill(buildNote({ brief: '(example) The riders are closing in. She wants Amber to give up before anyone gets hurt.', length: 'normal' }));
+        await ST.callGenericPopup(
+            `<h3>What ${escapeHtml(char)} gets in this chat</h3><p>Plain roleplay turns:</p><div class="dm-preview">${escapeHtml(base)}</div><p>When Claude handles the turn (example brief):</p><div class="dm-preview">${escapeHtml(withBrief)}</div><small>Position: ${settings().noteDepth === 0 ? 'right before the reply' : `${settings().noteDepth} message(s) back`}, as a ${settings().noteRole === 'user' ? 'user' : 'system'} message. ${settings().hideNarration ? 'The DM\'s narration is hidden from the bot.' : 'The DM\'s narration is visible to the bot.'}</small>`,
+            ST.POPUP_TYPE.TEXT, '', { wide: true, allowVerticalScrolling: true },
+        );
+    });
+    $('#dm-settings [data-surprise]').on('change', function () {
+        settings().surprises[$(this).data('surprise')] = $(this).is(':checked');
+        saveSettings();
+        resetCaches();
+    });
+    $('#dm-surprise-freq').on('change', function () {
+        settings().surpriseFrequency = String($(this).val());
+        saveSettings();
+        resetCaches();
+    });
     bindSelect('dm-dm-voice', 'dmVoice');
     bindCheck('dm-show-status', 'showStatus');
     bindCheck('dm-collapse-status', 'statusAutoCollapse');
