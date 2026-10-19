@@ -1,11 +1,11 @@
 {
-    "display_name": "Dungeon Master",
+    "display_name": "Dungeon Master (BETA, experimental)",
     "loading_order": 100,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "nsethshadburn-cloud",
-    "version": "0.1.0",
+    "version": "0.2.0-beta",
     "homePage": "https://github.com/nsethshadburn-cloud/SillyTavern-DungeonMaster"
 }

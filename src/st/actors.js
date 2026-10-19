@@ -31,11 +31,27 @@ export function refreshStandingPrompt() {
         `[Tabletop roleplaying game. You play ONLY {{char}}. The player is ${player}; the party is ${player}${party ? `, ${party}` : ''}.`,
         'Messages from "Dungeon Master" are the game\'s narrator describing the world and what happens; it is not a person in the scene, so never talk to it or about it. Other named speakers are separate characters (NPCs) voiced by someone else.',
         `The Dungeon Master decides how uncertain actions and dice rolls turn out; never decide the outcome of ${player}'s actions, and never speak or act for ${player} or for NPCs.`,
+        `{{char}} is a companion, not the storyteller: don't invent new plot facts, clues, places, people, threats or events, and don't move the scene somewhere new on your own. React to what the Dungeon Master has established. Opinions, feelings, suggestions to ${player} and small personal actions are welcome.`,
         `Where: ${w.location || 'see the latest narration'}${w.time ? `, ${w.time}` : ''}.${npcsHere.length ? ` Also present: ${npcsHere.join(', ')}.` : ''}`,
+        c.meta.objective ? `The party's current goal: ${c.meta.objective}` : '',
         c.meta.standing ? `Current situation: ${c.meta.standing}]` : ']',
-    ];
+    ].filter(Boolean);
     const text = trimToTokens(lines.join('\n'), budget);
     ST.setExtensionPrompt(KEY_STANDING, text, ST.promptTypes.IN_CHAT, 3, false, ST.promptRoles.SYSTEM);
+}
+
+/** Put the DM's private direction for one speaker into the next local generation. */
+export function injectDirection(name, direction) {
+    const budget = Math.max(60, Math.floor((Number(settings().injectionMaxTokens) || 450) * 0.55));
+    ST.setExtensionPrompt(
+        KEY_DIRECTION,
+        trimToTokens(`[Private stage direction from the Dungeon Master for ${name} (don't mention it, don't quote it): ${direction}]`, budget),
+        ST.promptTypes.IN_CHAT, 0, false, ST.promptRoles.SYSTEM,
+    );
+}
+
+export function clearDirection() {
+    ST.setExtensionPrompt(KEY_DIRECTION, '', ST.promptTypes.IN_CHAT, 0);
 }
 
 export function clearPrompts() {
@@ -88,27 +104,21 @@ async function speakPartyMember(name, direction, { signal } = {}) {
     }
     if (signal?.aborted) return;
     await waitUntilIdle();
-    const budget = Math.max(60, Math.floor((Number(settings().injectionMaxTokens) || 450) * 0.55));
-    if (direction) {
-        c.meta.directions[name] = direction;
-        ST.setExtensionPrompt(
-            KEY_DIRECTION,
-            trimToTokens(`[Private stage direction from the Dungeon Master for ${name} (don't mention it, don't quote it): ${direction} Keep any thinking short: one plan, no redrafts, then write.]`, budget),
-            ST.promptTypes.IN_CHAT, 0, false, ST.promptRoles.SYSTEM,
-        );
-    }
     const textarea = document.getElementById('send_textarea');
     if (textarea && textarea.value) {
         // Never let a group trigger swallow text the user is typing.
         throw new Error('Clear the message box so the party can reply.');
     }
+    // Remembered so a swipe/regenerate of this reply gets the same direction.
+    c.meta.directions[name] = direction || '';
+    if (direction) injectDirection(name, direction);
     const restoreTts = pauseTtsStreamingIfNeeded();
     try {
         await withActorProfile(async () => {
             await ST.Generate('normal', { force_chid: chid });
         });
     } finally {
-        ST.setExtensionPrompt(KEY_DIRECTION, '', ST.promptTypes.IN_CHAT, 0);
+        clearDirection();
         restoreTts();
     }
     await stripEchoedName(name);

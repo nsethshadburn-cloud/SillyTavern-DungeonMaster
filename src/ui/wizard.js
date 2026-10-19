@@ -262,6 +262,7 @@ async function buildCampaign(form) {
             world.time = String(json.scene.time || 'morning');
         }
         meta.standing = String(json.standing_direction || '');
+        meta.objective = String(json.objective || '');
         meta.pacing.tension = Number(json.tension) || 2;
         if (json.scene?.type) meta.pacing.sceneType = json.scene.type;
 

@@ -247,11 +247,13 @@ async function localReplies(c, triage, playerText, status, signal) {
         const addressed = [...speakerCandidates()].filter(n => new RegExp(`\\b${nameKey(n).split(' ')[0]}\\b`, 'i').test(playerText));
         speakers = addressed.length ? addressed.slice(0, 2) : [partyNames[Math.floor(random01() * partyNames.length)]];
     }
+    // Even without the DM, keep companions reacting rather than writing new plot.
+    const localDirection = `React in character to ${c.meta.persona.name}'s last message. Don't introduce new plot developments, places or people.`;
     for (const sp of speakers.filter(Boolean)) {
         if (signal.aborted) throw new Error('aborted');
         const step = status.step(`${sp} is responding`);
         try {
-            await makeSpeak(sp, '', { signal });
+            await makeSpeak(sp, localDirection, { signal });
             step.done();
         } catch (error) {
             step.fail(error);
@@ -412,6 +414,7 @@ export async function applyDmTurn(c, t, status, signal, { event = null } = {}) {
         }
     }
     if (t.standing_direction) meta.standing = t.standing_direction;
+    if (t.objective) meta.objective = t.objective;
     refreshStandingPrompt();
     saveDoc('world');
 

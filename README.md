@@ -1,5 +1,8 @@
 # 🎲 Dungeon Master for SillyTavern
 
+> [!WARNING]
+> **BETA: experimental and unstable.** This is an early test build made for one person's setup. It can break, change without notice, behave strangely, or misbehave alongside other extensions. It spends real money on the Claude API (there's a budget cap, but costs are estimates). It creates group chats, lorebooks and files in your SillyTavern data. **Use it at your own risk, back up your SillyTavern data first, and please don't expect support.** No warranty of any kind.
+
 Claude runs your campaign as the Dungeon Master. Your local model (Orion, or whatever you load) plays Judy and every NPC. Dice, events and bookkeeping are handled by code.
 
 For how it works under the hood, see [DESIGN.md](DESIGN.md).
@@ -24,8 +27,9 @@ Settings, character sheets and campaigns are stored per SillyTavern install, so 
    - **Budget:** $20/month is set. The nightly soft cap ($0.65) makes the DM check in less often once it's reached.
    - **Voices:** pick a **DM voice** and press **Test DM voice**. Open **NPC voice pool** to switch voices on or off and fix any wrong genders.
 3. **Your character sheet:** open the **Persona** panel and click the new **📜 scroll** button. Pick your 5e PDF; Claude converts it once (about 1¢) and then it's locked.
-4. Optional: lower your **Response length** to about 2048 in the left sliders panel, so the story has room in the context.
-5. Optional, saves money: in SillyTavern's `config.yaml`, set `claude: enableSystemPromptCache: true`, restart SillyTavern, then tick **"I turned on Claude prompt caching"** in the extension settings.
+4. **Thinking models (Gemma 4 / Orion):** in group chats SillyTavern starts each reply with the character's name, which makes these models skip thinking. Fix: **AI Response Formatting** (the "A" icon) → **Miscellaneous** → **Start Reply With**: `<|channel>thought` followed by a new line. The extension warns you if this looks missing.
+5. Optional: lower your **Response length** to about 2048 in the left sliders panel, so the story has room in the context.
+6. Optional, saves money: in SillyTavern's `config.yaml`, set `claude: enableSystemPromptCache: true`, restart SillyTavern, then tick **"I turned on Claude prompt caching"** in the extension settings.
 
 ## Starting a campaign
 
@@ -60,6 +64,13 @@ Just roleplay. Behind the scenes, each message goes through:
 **The status bar** above the chat box shows each step live (helper → DM → who's responding) with time and estimated cost. Click the arrow to expand it, and the ✕ to hide it.
 
 **Dice cards** (🎲) are visible to you but hidden from the local model. The DM narrates the results.
+
+## Deleting, editing and swiping messages
+
+- **Deleting or editing messages** works like normal SillyTavern: the chat changes, and the DM reads the chat as it is now on its next turn. But **the campaign's bookkeeping does not rewind**: HP, gold and items, ticked plot beats, NPCs met, DM notes, the event and roll logs, and pacing counters stay as they were. If you delete something that changed those, fix it in the **DM Screen** (Files) or just tell the DM: `((I deleted that last scene, ignore it))`.
+- **Deleting a 🎲 roll request** doesn't cancel it. Use **DM Screen → Cancel** next to "Waiting for your roll".
+- **Swiping a party member's reply** (e.g. Judy) works: she gets the same hidden direction from the DM as the first time.
+- **Don't swipe Dungeon Master or NPC messages.** They aren't characters, so SillyTavern can't regenerate them. Delete the message and use **DM: step in now** instead.
 
 ## Where your stuff lives
 

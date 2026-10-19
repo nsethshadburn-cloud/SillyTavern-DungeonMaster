@@ -5,7 +5,7 @@ import { ST, MODULE } from './src/st/st.js';
 import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
 import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll } from './src/st/orchestrator.js';
-import { refreshStandingPrompt, clearPrompts } from './src/st/actors.js';
+import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection } from './src/st/actors.js';
 import { postDiceCard } from './src/st/messages.js';
 import { forgetAll } from './src/st/storage.js';
 import { recap } from './src/st/dm.js';
@@ -36,6 +36,7 @@ async function onChatChanged() {
                 offerRecap(away);
             }
             if (!c.meta.paused) refreshStandingPrompt();
+            checkThinkingSetup();
         }
     } catch (error) {
         console.error('[Dungeon Master] Could not load the campaign', error);
@@ -43,6 +44,26 @@ async function onChatChanged() {
     }
     renderScreen();
     updateMenuState();
+}
+
+/**
+ * Thinking models like Gemma 4 / Orion only think if the reply starts with the thinking marker.
+ * In GROUP chats SillyTavern starts each reply with "Name:", which makes them skip thinking,
+ * unless "Start Reply With" opens the thinking block. Warn once per session; never change settings.
+ */
+let thinkingWarned = false;
+function checkThinkingSetup() {
+    if (thinkingWarned) return;
+    const pu = ST.powerUser;
+    const prompt = pu.sysprompt?.enabled === false ? '' : String(pu.sysprompt?.content || '');
+    const namesInGroups = pu.instruct?.enabled && ['force', 'always'].includes(String(pu.instruct?.names_behavior));
+    if (!prompt.includes('<|think|>') || !namesInGroups || String(pu.user_prompt_bias || '').trim()) return;
+    thinkingWarned = true;
+    toastr.warning(
+        'Your system prompt turns on thinking, but in group chats SillyTavern starts each reply with the character\'s name, so the model skips thinking. Fix: AI Response Formatting (the "A" icon) → Miscellaneous → "Start Reply With": <|channel>thought followed by a new line.',
+        'Dungeon Master: thinking is off in group chats',
+        { timeOut: 0, extendedTimeOut: 0, closeButton: true },
+    );
 }
 
 function offerRecap(hours) {
@@ -169,7 +190,22 @@ jQuery(async () => {
     eventSource.on(eventTypes.CHAT_CHANGED, onChatChanged);
     eventSource.on(eventTypes.MESSAGE_SENT, onMessageSent);
     eventSource.on(eventTypes.GROUP_WRAPPER_FINISHED, onGroupWrapperFinished);
-    eventSource.on(eventTypes.GENERATION_STOPPED, () => { if (!isRunning()) stopAll(); });
+    eventSource.on(eventTypes.GENERATION_STOPPED, () => {
+        if (!isRunning()) {
+            stopAll();
+            clearDirection();
+        }
+    });
+    // Swipes/regenerates of a party member's reply happen outside the turn loop:
+    // give the character the same stage direction they had the first time.
+    eventSource.on(eventTypes.GROUP_MEMBER_DRAFTED, (chId) => {
+        const c = campaign();
+        if (!c || c.meta.paused || isRunning()) return;
+        const name = ST.characters[chId]?.name;
+        const direction = name ? c.meta.directions?.[name] : '';
+        if (direction) injectDirection(name, direction);
+    });
+    eventSource.on(eventTypes.GENERATION_ENDED, () => { if (!isRunning()) clearDirection(); });
     if (eventTypes.CONNECTION_PROFILE_LOADED) eventSource.on(eventTypes.CONNECTION_PROFILE_LOADED, refreshProfileSelects);
     if (eventTypes.SETTINGS_UPDATED) eventSource.on(eventTypes.SETTINGS_UPDATED, () => renderSpend());
 

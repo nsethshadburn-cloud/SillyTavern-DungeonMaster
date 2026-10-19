@@ -55,6 +55,7 @@ export function newMeta({ id, title, persona, party, options }) {
         recentEventTypes: [],
         lastDriftStageCalled: 0,
         standing: '',
+        objective: '',       // party's immediate goal (set by the DM)
         directions: {},      // speaker -> last direction from the DM
         session: { startedAt: Date.now(), lastActivity: Date.now() },
         stats: { dmCalls: 0, localTurns: 0, usd: 0 },

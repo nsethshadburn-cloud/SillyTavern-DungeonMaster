@@ -35,6 +35,8 @@
 .dm-step-skip, .dm-step-info { opacity: 0.8; }
 
 /* ---------- Settings ---------- */
+.dm-beta { font-size: 0.7em; padding: 1px 6px; border-radius: 6px; background: #b8860b; color: #fff; vertical-align: middle; }
+.dm-beta-note { margin: 4px 0 8px; padding: 6px 8px; border-radius: 6px; border: 1px solid #b8860b; font-size: 0.9em; }
 .dm-settings h4 { margin: 12px 0 4px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
 .dm-settings label { display: block; margin: 4px 0; }
 .dm-settings label.checkbox_label { display: flex; }

@@ -114,6 +114,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     if (Object.keys(w.flags || {}).length) sections.push(`Flags: ${JSON.stringify(w.flags)}`);
     sections.push(combatSummary(w));
     sections.push(`Last standing direction you gave: ${c.meta.standing || '(none)'}`);
+    sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
     sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90 }));
 

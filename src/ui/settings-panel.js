@@ -30,10 +30,11 @@ function panelHtml() {
 <div id="dm-settings" class="dm-settings">
   <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
-      <b>🎲 Dungeon Master</b>
+      <b>🎲 Dungeon Master <span class="dm-beta">BETA</span></b>
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
+      <div class="dm-beta-note">⚠️ Experimental and unstable. It can break things, spends real Claude credit, and creates chats, lorebooks and files. Back up your data. Use at your own risk.</div>
       <div class="dm-row">
         <div id="dm-start" class="menu_button menu_button_icon"><i class="fa-solid fa-dice-d20"></i> Start D&amp;D campaign</div>
         <div id="dm-open-screen" class="menu_button menu_button_icon"><i class="fa-solid fa-scroll"></i> DM Screen</div>

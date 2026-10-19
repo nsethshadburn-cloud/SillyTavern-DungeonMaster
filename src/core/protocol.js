@@ -53,8 +53,10 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "story_add": "1-3 sentence summary for the long-term log, ONLY when a scene or chapter ends",
   "event": {"used": false, "delay": false},
   "standing_direction": "<=60 words: current situation and mood for ALL actors until you speak again",
+  "objective": "<=20 words: the party's immediate goal right now, so companions pull the right way (only when it changes)",
   "need_files": ["rolls_log", "events_log"]
 }
+- Companions are told not to invent plot, but they sometimes do. YOU decide what's canon: if a companion invented a fact, clue, person or event that doesn't fit, quietly overrule it in your narration or their next direction; if it's genuinely good, you may adopt it. If a companion keeps pulling the story the wrong way, give them a direction that redirects them.
 - In each direction, name the speaker's pronouns when they're not "she" (the actors' base prompt defaults to "she").
 - "directions" order = speaking order. Usually 0–2 speakers. Speakers must be party members or NPCs present in the scene. Leave empty if your narration fully covers the moment and the player should act next.
 - Always include "scene", "tension" and "standing_direction".
@@ -69,6 +71,7 @@ Return ONE JSON object and nothing else:
   "opening": "The opening narration for the first scene (1-2 short paragraphs, second person, present tense). End on a moment that invites the player to act. Do not speak or act for the player character.",
   "scene": {"type": "exploration|social|tension|downtime", "location": "short place name", "setting": "road|town|wild|dungeon|sea", "time": "morning|afternoon|evening|night"},
   "standing_direction": "<=60 words of situation and mood for all actors",
+  "objective": "<=20 words: the party's immediate goal at the start",
   "directions": [{"speaker": "party member name", "direction": "optional hidden stage direction for an opening line"}],
   "new_npcs": [{"name": "every NPC who appears in the opening", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile"}],
   "tension": 2
@@ -131,6 +134,7 @@ export function normalizeDmTurn(raw) {
         story_add: str(d.story_add),
         event: { used: d.event?.used === true, delay: d.event?.delay === true },
         standing_direction: str(d.standing_direction),
+        objective: str(d.objective),
         need_files: arr(d.need_files).map(String).filter(Boolean),
     };
     if (d.player_roll && typeof d.player_roll === 'object' && (d.player_roll.skill || d.player_roll.kind)) {
