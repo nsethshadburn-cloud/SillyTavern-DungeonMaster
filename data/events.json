@@ -1,0 +1,3794 @@
+{
+  "about": "Random event deck for the Dungeon Master extension. Edit freely: add events, change weight (0 disables), cooldown (player turns before it can repeat), once (never repeats), requires (flags like night, day, has_gold, injured, has_mounts; prefix ! to negate). settings: road, town, wild, dungeon, sea, any. danger: 1-5.",
+  "events": [
+    {
+      "id": "combat-001",
+      "title": "Highway ambush",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "road"
+      ],
+      "seed": "Armed robbers block the way and demand a toll; one of them is clearly new to this and nervous.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-002",
+      "title": "Wolves at dusk",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "A hungry pack circles the camp, testing for the weakest member.",
+      "weight": 1,
+      "cooldown": 60,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "combat-003",
+      "title": "Bar brawl spills over",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A fight breaks out nearby and someone shoves a party member into the middle of it.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-004",
+      "title": "Cornered beast",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A wounded animal guarding its den attacks anyone who comes too close.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-005",
+      "title": "Hired thugs",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone the party annoyed has paid a few heavies to \"teach them a lesson\".",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-006",
+      "title": "Grave robbers",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "town"
+      ],
+      "seed": "Diggers at a cemetery panic at being seen and turn their shovels into weapons.",
+      "weight": 1,
+      "cooldown": 60,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "combat-007",
+      "title": "Ambush at the ford",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "Attackers wait where the party must cross water, slow and exposed.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-008",
+      "title": "Mistaken identity",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "Bounty hunters are certain one of the party is their target and won't listen.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-009",
+      "title": "Patrol gone bad",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A corrupt patrol decides the party looks like an easy shakedown.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-010",
+      "title": "Trap trigger",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "A pressure plate wakes something mechanical that was built to guard this place.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-011",
+      "title": "Something in the walls",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "Scratching inside the stonework becomes many small, sharp shapes pouring out.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-012",
+      "title": "Pirate boarding",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "sea"
+      ],
+      "seed": "Grappling hooks bite the rail; raiders want the cargo and anyone worth ransoming.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-013",
+      "title": "Bridge troll toll",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A huge creature claims the bridge and wants payment, or a meal.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-014",
+      "title": "Rival adventurers",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "Another party wants the same prize and has decided talking is over.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-015",
+      "title": "Cult ambush",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "Robed figures who've been following the party finally make their move.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-016",
+      "title": "Feral pack in the alleys",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Starving strays, desperate and territorial, corner the party in a dead end.",
+      "weight": 1,
+      "cooldown": 60,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "combat-017",
+      "title": "Animated armor",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "The decorative armor in the hall turns its helm toward the party.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-018",
+      "title": "Swarm",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "dungeon"
+      ],
+      "seed": "Insects, bats or rats pour out in a cloud; it's more chaos than danger, unless someone panics.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-019",
+      "title": "Duel challenge",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A proud local challenges a party member to a formal duel over an insult, real or imagined.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-020",
+      "title": "Escaped prisoner",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A shackled fugitive fights to steal the party's supplies and run.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-021",
+      "title": "Caravan raid",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "road"
+      ],
+      "seed": "Riders hit a caravan just ahead; the party can intervene or hide.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-022",
+      "title": "Ghoul in the crypt",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "Something that used to be a person is still hungry.",
+      "weight": 1,
+      "cooldown": 60,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "combat-023",
+      "title": "Sea serpent",
+      "type": "combat",
+      "danger": 5,
+      "settings": [
+        "sea"
+      ],
+      "seed": "A massive shape rises beside the ship and coils toward the deck.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-024",
+      "title": "Kidnapping in progress",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone is being dragged into a cart; the kidnappers are armed and in a hurry.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-025",
+      "title": "Bandit camp stumble",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild"
+      ],
+      "seed": "The party walks straight into the edge of an outlaw camp; sentries shout.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-026",
+      "title": "Constructs on patrol",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "Old guardian constructs still follow their last orders: no one passes.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-027",
+      "title": "Mercenary double-cross",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "any"
+      ],
+      "seed": "A hired sword traveling with the party (or met recently) was paid more by the other side.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-028",
+      "title": "Spider nest",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "dungeon"
+      ],
+      "seed": "Webs everywhere, and the eggs are hatching.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-029",
+      "title": "Sinkhole lair",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild"
+      ],
+      "seed": "The ground collapses into the den of something that does not like guests.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-030",
+      "title": "Revenge of the beaten",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone the party defeated earlier comes back with friends and a grudge.",
+      "weight": 1,
+      "cooldown": 60,
+      "once": true
+    },
+    {
+      "id": "combat-031",
+      "title": "Panicked mob",
+      "type": "combat",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A rumor turns a crowd violent and the party is in its way.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-032",
+      "title": "Stampede",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Spooked herd animals thunder toward the party with no time to think.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-033",
+      "title": "Assassin in the crowd",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "town"
+      ],
+      "seed": "A blade flashes toward a party member in a busy street.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-034",
+      "title": "Hunting party",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Hunters mistake the party for quarry, or decide they make better quarry.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-035",
+      "title": "Shadow stalker",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "dungeon",
+        "wild"
+      ],
+      "seed": "Something that hunts in darkness has been pacing the party for hours.",
+      "weight": 1,
+      "cooldown": 60,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "combat-036",
+      "title": "Raiders at the farm",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "A farmstead is under attack; smoke rises and someone screams for help.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-037",
+      "title": "Collapsing fight",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "A fight breaks out on unstable ground that is falling apart under everyone.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-038",
+      "title": "Smugglers' dock",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "sea",
+        "town"
+      ],
+      "seed": "The party sees a contraband handoff and the smugglers see them.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-039",
+      "title": "Zealots' purge",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "town"
+      ],
+      "seed": "Zealous enforcers are rounding up \"undesirables\" and one of the party fits the description.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-040",
+      "title": "Golem gatekeeper",
+      "type": "combat",
+      "danger": 4,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "A guardian blocks the only way forward and asks a question before attacking.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-041",
+      "title": "Barfight champion",
+      "type": "combat",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A friendly arm-wrestling contest escalates into a full, mostly good-natured brawl.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-042",
+      "title": "Escaped beast",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "A creature from a menagerie or arena has broken loose in the streets.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "combat-043",
+      "title": "Night raid on camp",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Shadows move between the trees while the party sleeps.",
+      "weight": 1,
+      "cooldown": 60,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "combat-044",
+      "title": "Turf war crossfire",
+      "type": "combat",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "Two gangs clash in the street and both assume the party is with the other side.",
+      "weight": 1,
+      "cooldown": 60
+    },
+    {
+      "id": "social-001",
+      "title": "Too-good trader",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A smiling merchant offers exactly what the party needs at a price that's suspiciously low.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-002",
+      "title": "Lost child",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A scared kid has lost their parent and latches onto the friendliest-looking party member.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-003",
+      "title": "Wandering bard",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A traveling musician wants to hear the party's story; it'll end up in a song, accurate or not.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-004",
+      "title": "Old acquaintance",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone from a party member's past recognizes them and wants to catch up, or settle something.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-005",
+      "title": "Pilgrims",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A group of pilgrims asks to travel with the party for safety.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-006",
+      "title": "Fortune teller",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A fortune teller insists on reading for one party member and says something unsettlingly accurate.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-007",
+      "title": "Proposal of marriage",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A smitten local makes a grand, public, very awkward declaration to a party member.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-008",
+      "title": "Drunken noble",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A drunk aristocrat takes offense, then takes a liking, then wants to hire the party on a whim.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-009",
+      "title": "Recruiting sergeant",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A recruiter tries hard to sign up the strongest-looking party member for the army.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-010",
+      "title": "Tax collector",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "An official demands a tax nobody's heard of, backed by two bored guards.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-011",
+      "title": "Rival flirts",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A charming stranger flirts openly with a party member, maybe to make someone else jealous.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-012",
+      "title": "Street preacher",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A preacher singles out the party as an example of sin, or of salvation.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-013",
+      "title": "Gossiping innkeeper",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "The innkeeper shares rumors, one of which concerns the party's current goal.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-014",
+      "title": "Refugees",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "road"
+      ],
+      "seed": "A column of refugees fleeing something; they're hungry and they know what's coming.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-015",
+      "title": "Merchant's plea",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A merchant begs for escorts; their last guards quit, and they won't say why.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-016",
+      "title": "Lost traveler",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "A traveler is hopelessly lost and offers a reward to be guided somewhere.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-017",
+      "title": "The informant",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone whispers that they have information, for a price, and they're being watched.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-018",
+      "title": "Festival invitation",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Locals invite the party to tonight's festival: food, music, games, and someone's eye on them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-019",
+      "title": "Jealous spouse",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "An angry spouse accuses a party member of something they absolutely did not do.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-020",
+      "title": "Card game",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A card game with high stakes and at least one cheater at the table.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-021",
+      "title": "Apprentice wants a mentor",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "An eager youngster begs to become a party member's apprentice and won't take no.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-022",
+      "title": "Crying in the rain",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone sits alone in the rain clutching a letter; they could use a kind word.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-023",
+      "title": "The debt collector",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A collector arrives looking for someone who borrowed money and named a party member as reference.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-024",
+      "title": "Talent scout",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A performer spots raw talent in a party member and offers them a stage tonight.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-025",
+      "title": "Hermit's wisdom",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A hermit offers cryptic advice, tea and something that might be useful later.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-026",
+      "title": "Shipboard gossip",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "sea"
+      ],
+      "seed": "The crew has theories about the captain, the cargo and why they're really sailing.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-027",
+      "title": "Local hero",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Townsfolk mistake the party for famous heroes and throw a celebration they can't easily escape.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-028",
+      "title": "Bureaucratic maze",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "The party needs a permit, and getting it means navigating a ridiculous office.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-029",
+      "title": "Missing pet",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A distraught owner offers a reward for their missing pet, last seen somewhere strange.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-030",
+      "title": "Old soldier",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A veteran shares war stories that turn out to be relevant to where the party is heading.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-031",
+      "title": "Hostile local",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town",
+        "wild"
+      ],
+      "seed": "Someone here hates outsiders, and they're stirring up the neighbors.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-032",
+      "title": "The matchmaker",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A busybody decides two party members (or a member and a local) are meant to be together.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-033",
+      "title": "Envoy's request",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A noble's envoy delivers a formal invitation that isn't really optional.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-034",
+      "title": "Bragging contest",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Patrons start trading tall tales and dare the party to top them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-035",
+      "title": "Healer needs hands",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "An overwhelmed healer asks for help with the sick and injured.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-036",
+      "title": "Smitten guard",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A guard is clearly sweet on a party member and might bend rules for them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-037",
+      "title": "Rumor of treasure",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A drunk swears there's treasure nearby and draws a map on a napkin.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-038",
+      "title": "Child prodigy",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A clever kid asks sharp, uncomfortable questions about what the party is really doing.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-039",
+      "title": "Family dinner",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A local family insists on feeding the party and gets curious about their lives.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-040",
+      "title": "Shady recruiter",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone offers well-paid work, no questions asked, for people \"with flexible morals\".",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-041",
+      "title": "Missionary",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A missionary wants to share their faith and won't be deterred easily.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-042",
+      "title": "Lovers' quarrel",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A couple's very public fight drags the party in as judges.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-043",
+      "title": "Wanted poster",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "One of the party's faces is on a wanted poster. It's a bad likeness, but people are looking.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-044",
+      "title": "The messenger",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A breathless messenger finds the party with a letter that changes their plans.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-045",
+      "title": "Superstitious villagers",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "town"
+      ],
+      "seed": "Villagers believe the party brought bad luck and want them gone by sundown.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-046",
+      "title": "Cook-off",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A cooking contest needs one more entrant and the prize is genuinely useful.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-047",
+      "title": "Retired adventurer",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A retired adventurer offers advice, an old map and a warning about a past mistake.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-048",
+      "title": "Language barrier",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone urgently needs to say something, but nobody shares a language.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-049",
+      "title": "Fan club",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone has heard of the party's exploits and is a little too enthusiastic.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-050",
+      "title": "Crowded inn",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "The only room left must be shared, with the party or with a stranger.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-051",
+      "title": "Desperate parent",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A parent begs the party to find a child who went somewhere dangerous.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-052",
+      "title": "The impostor",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone is going around pretending to be one of the party, and running up debts.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-053",
+      "title": "Stranded performers",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A theater troupe's wagon broke down; they'll put on a show for help.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-054",
+      "title": "Ex-lover",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A party member's old flame shows up, and it's complicated.",
+      "weight": 1,
+      "cooldown": 40,
+      "once": true
+    },
+    {
+      "id": "social-055",
+      "title": "Philosopher",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A wandering thinker challenges the party with a question about what they're fighting for.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-056",
+      "title": "Night watch",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A lonely night watchman wants company and knows the city's secrets.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "social-057",
+      "title": "Bored royal",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A minor royal in disguise wants to tag along for an adventure.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-058",
+      "title": "The bet",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone bets the party can't do something silly, and the stakes are oddly high.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-059",
+      "title": "Rival party's taunt",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A rival group mocks the party publicly, daring them to prove themselves.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-060",
+      "title": "Sick traveler",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "road"
+      ],
+      "seed": "A traveler collapses with a fever; helping risks catching it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-061",
+      "title": "Smuggler's offer",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "sea",
+        "town"
+      ],
+      "seed": "A smuggler offers cheap, fast passage, with a small favor on the side.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-062",
+      "title": "Forgiveness",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone the party wronged (or think they did) approaches, ready to talk.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-063",
+      "title": "Guild dues",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "The local guild insists the party pay dues to work here.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-064",
+      "title": "Witness",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "The party is the only witness to a crime, and the culprit saw them see it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-065",
+      "title": "Elder's story",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "town"
+      ],
+      "seed": "An elder tells a legend around the fire that turns out to be literally true.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "social-066",
+      "title": "The lonely ghost",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "A harmless spirit just wants someone to hear its story.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-067",
+      "title": "Shipwrecked sailor",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "sea",
+        "wild"
+      ],
+      "seed": "A half-drowned sailor washes up, raving about what sank their ship.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-068",
+      "title": "Spoiled heir",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A spoiled heir hires the party for something ridiculous, and pays very well.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-069",
+      "title": "Cultural misunderstanding",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A party member accidentally commits a serious local faux pas.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-070",
+      "title": "Unexpected ally",
+      "type": "social",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone from the enemy's side quietly approaches with an offer.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-071",
+      "title": "Pickpocket caught",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "The party catches a young pickpocket red-handed; they have a sad story.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "social-072",
+      "title": "Rumor mill",
+      "type": "social",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Everyone in town has heard a wildly exaggerated version of what the party did.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-001",
+      "title": "Abandoned wagon",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "An overturned wagon, its owner nowhere to be seen; some cargo remains.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-002",
+      "title": "Hidden cache",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "dungeon"
+      ],
+      "seed": "A loose stone hides someone's emergency stash and a note.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-003",
+      "title": "Dead adventurer",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "dungeon",
+        "wild"
+      ],
+      "seed": "The remains of an unlucky adventurer, with gear and a journal of their last days.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-004",
+      "title": "Market bargain",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A stall owner who doesn't know what they have is selling something valuable for pennies.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-005",
+      "title": "Washed ashore",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "sea"
+      ],
+      "seed": "A sealed chest bobs in on the tide.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-006",
+      "title": "Payment in kind",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone the party helped earlier sends a gift: useful, odd, or both.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-007",
+      "title": "Lucky find",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Something glints in the dirt: coins, a ring, or something stranger.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-008",
+      "title": "Treasure map fragment",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A torn piece of a map, one of several, with a symbol the party recognizes.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-009",
+      "title": "Old armory",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "A forgotten armory, mostly rust, but one piece is very well preserved.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-010",
+      "title": "Bounty board",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "The bounty board has a job that pays well and fits the party's skills.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-011",
+      "title": "Collector's offer",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A collector offers good money for something the party carries.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-012",
+      "title": "Gambling windfall",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A party member's bet pays off big, and the loser is a sore loser.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-013",
+      "title": "Herb patch",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A patch of rare medicinal herbs, if someone knows how to harvest them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-014",
+      "title": "Shrine offering",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "dungeon"
+      ],
+      "seed": "A roadside shrine holds offerings; taking them might be a mistake.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-015",
+      "title": "Sunken boat",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "sea",
+        "wild"
+      ],
+      "seed": "A small sunken boat in clear water, something still aboard.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-016",
+      "title": "Merchant's thanks",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A merchant rewards the party for earlier help with a discount, or a secret.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-017",
+      "title": "Abandoned camp",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Someone left in a hurry: food still warm, supplies scattered. Why did they run?",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-018",
+      "title": "The heirloom",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "An heirloom turns up that belongs to an important family, and they'll want it back.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-019",
+      "title": "Strange coin",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "An old coin from a place that shouldn't exist.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-020",
+      "title": "Smuggler's stash",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "sea",
+        "town"
+      ],
+      "seed": "A smuggling hidey-hole full of contraband; someone will come for it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-021",
+      "title": "Bird's nest trinket",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A magpie's nest is full of shiny things, including one that hums faintly.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-022",
+      "title": "Tip-off",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A grateful local shares where to find something useful cheaply.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-023",
+      "title": "Locked strongbox",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A heavy locked strongbox with no key and a faint ticking inside.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-024",
+      "title": "Prize from a contest",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A local contest's prize is exactly what the party needs.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-025",
+      "title": "Forgotten library",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "Dusty shelves with one book that answers a question the party has.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-026",
+      "title": "Supply drop",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A cache left by an ally (or someone pretending to be one) with supplies and a message.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-027",
+      "title": "Dragon's dropped scale",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A huge shed scale, valuable, and a sign of what lives nearby.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-028",
+      "title": "Inheritance",
+      "type": "loot",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A lawyer finds the party: someone left one of them something, with strings attached.",
+      "weight": 1,
+      "cooldown": 40,
+      "once": true
+    },
+    {
+      "id": "loot-029",
+      "title": "Overlooked reward",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone pays what they owe the party, with interest and an apology.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "loot-030",
+      "title": "Pawn shop gem",
+      "type": "loot",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A pawn shop has an item tied to the party's current goal.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-001",
+      "title": "Time slip",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "For a moment everything repeats: the same words, the same gestures. Then it doesn't.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-002",
+      "title": "Talking animal",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "An animal speaks, briefly and rudely, then acts like nothing happened.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-003",
+      "title": "Strange lights",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "sea"
+      ],
+      "seed": "Floating lights drift through the dark, leading somewhere.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "weird-004",
+      "title": "Doppelganger glimpse",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "town",
+        "dungeon"
+      ],
+      "seed": "A party member sees their own face in the crowd, smiling at them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-005",
+      "title": "Silent village",
+      "type": "weird",
+      "danger": 3,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A village where everyone has vanished mid-task. Meals on tables, doors open.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-006",
+      "title": "Dream sharing",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Two party members wake up having had the same dream.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "weird-007",
+      "title": "Singing stones",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "dungeon"
+      ],
+      "seed": "Stones hum when touched, together forming a melody someone recognizes.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-008",
+      "title": "Ghost procession",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "road",
+        "town"
+      ],
+      "seed": "A silent procession of translucent figures crosses the road and ignores the living.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "weird-009",
+      "title": "Mirror message",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "A message appears in a fogged mirror, written from the other side.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-010",
+      "title": "Unseasonal snow",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Snow falls in summer, only here, only now, and it's warm to the touch.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-011",
+      "title": "Wishing well",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "town",
+        "wild"
+      ],
+      "seed": "A well that grants small wishes with uncomfortable literal twists.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-012",
+      "title": "Lost hours",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "The party loses track of an hour; nobody remembers what happened in it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-013",
+      "title": "The watcher",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A figure on a hill watches the party for days, always at the same distance.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-014",
+      "title": "Reversed shadows",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "Everyone's shadow points the wrong way in this room.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-015",
+      "title": "Animal gathering",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Animals of every kind gather in a clearing, silent, waiting for something.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-016",
+      "title": "Possessed object",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "An ordinary object starts acting with a will of its own.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-017",
+      "title": "Stopped clocks",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Every clock in town stopped at the same minute last night.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-018",
+      "title": "Prophetic graffiti",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Fresh graffiti describes what the party will do tomorrow.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-019",
+      "title": "Ghost ship",
+      "type": "weird",
+      "danger": 3,
+      "settings": [
+        "sea"
+      ],
+      "seed": "A ship with tattered sails and no crew drifts alongside in the fog.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-020",
+      "title": "Tiny folk",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Tiny mischievous creatures steal small items and leave stranger ones behind.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-021",
+      "title": "Echoing voice",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "An echo answers questions it shouldn't know the answers to.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-022",
+      "title": "Gravity hiccup",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "dungeon"
+      ],
+      "seed": "For a few seconds, down isn't down anymore.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-023",
+      "title": "Old letter",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A letter addressed to a party member arrives, dated decades ago.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-024",
+      "title": "Starfall",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A falling star lands nearby. It's still warm, and something is moving inside.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "weird-025",
+      "title": "Living statue",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "town",
+        "dungeon"
+      ],
+      "seed": "A statue's head turns slowly to follow the party.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-026",
+      "title": "Familiar stranger",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A stranger knows all the party's names and seems surprised they don't know theirs.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-027",
+      "title": "Blood moon",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "The moon rises red and every animal goes quiet. Locals bar their doors.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "weird-028",
+      "title": "Painting that changes",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "town",
+        "dungeon"
+      ],
+      "seed": "A painting's scene changes each time someone looks away.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-029",
+      "title": "Floating island",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A chunk of land drifts overhead, trailing roots and waterfalls.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-030",
+      "title": "Cursed coin",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A coin keeps returning to a party member's pocket, no matter what they do.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-031",
+      "title": "The invitation",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A black-edged invitation to a masquerade, with the party's names already on it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-032",
+      "title": "Whispering wind",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "The wind carries whispers of a conversation happening miles away.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-033",
+      "title": "Mushroom ring",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A perfect ring of mushrooms; stepping inside goes somewhere else.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-034",
+      "title": "Frozen moment",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A bird hangs motionless in the air, mid-flight, and the party can walk around it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-035",
+      "title": "Underwater bells",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "sea"
+      ],
+      "seed": "Bells ring from beneath the waves where no town should be.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-036",
+      "title": "Map that redraws",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "The party's map has changed overnight, showing a new path.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-037",
+      "title": "Memory thief",
+      "type": "weird",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "People here keep forgetting important things, and the party starts to as well.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-038",
+      "title": "Haunted lullaby",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "A lullaby drifts through empty halls, sung by no one.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-039",
+      "title": "Eclipse",
+      "type": "weird",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "The sun darkens at midday and something stirs in the shadow.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weird-040",
+      "title": "Fortune cookie truth",
+      "type": "weird",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A trivial fortune turns out to be precisely, eerily true.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-001",
+      "title": "Sudden storm",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild",
+        "sea"
+      ],
+      "seed": "A violent storm rolls in fast; shelter is needed now.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-002",
+      "title": "Thick fog",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild",
+        "sea"
+      ],
+      "seed": "Fog so thick the party can barely see each other; sounds come from odd directions.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-003",
+      "title": "Heat wave",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "Brutal heat drains everyone; water becomes a real concern.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-004",
+      "title": "Flash flood",
+      "type": "weather",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Water roars down a dry gully toward the party.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-005",
+      "title": "Blizzard",
+      "type": "weather",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Snow and wind turn the world white; stopping might mean freezing.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-006",
+      "title": "Rockslide",
+      "type": "weather",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Rocks tumble down the slope, blocking the path and threatening anyone below.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-007",
+      "title": "Earthquake",
+      "type": "weather",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "The ground shakes; buildings creak and something long-buried cracks open.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-008",
+      "title": "Wildfire",
+      "type": "weather",
+      "danger": 4,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Smoke on the horizon, then flames racing through dry brush toward the party.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-009",
+      "title": "Rainbow omen",
+      "type": "weather",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A double rainbow over the road; locals swear it means luck, or a wedding.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-010",
+      "title": "Calm sea",
+      "type": "weather",
+      "danger": 1,
+      "settings": [
+        "sea"
+      ],
+      "seed": "The wind dies completely; the ship drifts and tempers fray.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-011",
+      "title": "Hailstorm",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild",
+        "town"
+      ],
+      "seed": "Hail the size of eggs pounds down; everyone scrambles for cover.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-012",
+      "title": "Mudslide road",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "road"
+      ],
+      "seed": "The road is a river of mud; wagons and travelers are stuck.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-013",
+      "title": "Lightning strike",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Lightning hits a tree right beside the party and sets it ablaze.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-014",
+      "title": "Frozen river",
+      "type": "weather",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "The only way across is over thin ice.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-015",
+      "title": "Sandstorm",
+      "type": "weather",
+      "danger": 3,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A wall of sand blots out the sun.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-016",
+      "title": "Tidal surge",
+      "type": "weather",
+      "danger": 3,
+      "settings": [
+        "sea",
+        "town"
+      ],
+      "seed": "The sea rises unnaturally fast, flooding the docks.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-017",
+      "title": "Beautiful night",
+      "type": "weather",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "road",
+        "sea"
+      ],
+      "seed": "A perfectly clear, warm night under a sky full of stars: a moment for quiet talk.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "weather-018",
+      "title": "Morning mist",
+      "type": "weather",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Silver mist lifts slowly to reveal a view of something new.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "day"
+      ]
+    },
+    {
+      "id": "weather-019",
+      "title": "Spring bloom",
+      "type": "weather",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "Wildflowers everywhere; the world feels hopeful for a moment.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "weather-020",
+      "title": "Aurora",
+      "type": "weather",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "sea"
+      ],
+      "seed": "Ribbons of colored light dance across the sky.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "moral-001",
+      "title": "Starving thief",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A starving thief steals food from the party; catching them is easy, but then what?",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-002",
+      "title": "Bribe offer",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone offers the party a generous bribe to look the other way, just this once.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-003",
+      "title": "Wounded enemy",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A wounded enemy begs for mercy and offers information in return.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-004",
+      "title": "Injustice in the square",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "A public punishment for a minor crime is about to go too far.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-005",
+      "title": "Two calls for help",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "Two people need help in different places at the same time; the party can't reach both.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-006",
+      "title": "Poacher's family",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "A poacher is caught; they're feeding a family the law doesn't care about.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-007",
+      "title": "Loyalty test",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "An ally asks a party member to keep a secret that could hurt someone else.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-008",
+      "title": "Monster's child",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "dungeon"
+      ],
+      "seed": "The creature the party was sent to kill is protecting its young.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-009",
+      "title": "Cheating merchant",
+      "type": "moral",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "A merchant shortchanges a poor customer right in front of the party.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-010",
+      "title": "Desperate deserter",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A deserter from an army begs not to be turned in; the reward is tempting.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-011",
+      "title": "False accusation",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "An innocent person is about to hang, and the party knows who really did it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-012",
+      "title": "Blackmail material",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "The party finds evidence that could ruin a powerful person who is not entirely bad.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-013",
+      "title": "Plague quarantine",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "town",
+        "road"
+      ],
+      "seed": "A sealed-off village begs for supplies; guards say no one goes in or out.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-014",
+      "title": "Stolen goods",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "The party realizes something they bought (or received) was stolen from someone who needs it.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-015",
+      "title": "Revenge request",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A grieving parent asks the party to kill the person who hurt their child.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-016",
+      "title": "Slaver caravan",
+      "type": "moral",
+      "danger": 4,
+      "settings": [
+        "road"
+      ],
+      "seed": "A caravan carrying captives passes by, heavily guarded.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-017",
+      "title": "The easy lie",
+      "type": "moral",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A small lie would make everything easier, and hurt someone who'd never know.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-018",
+      "title": "Divided village",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "town",
+        "wild"
+      ],
+      "seed": "Two factions in a village each ask the party to side with them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-019",
+      "title": "Sacrifice tradition",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "wild",
+        "town"
+      ],
+      "seed": "A village tradition demands an offering, and this year it's someone young.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-020",
+      "title": "Abandoned infant",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A basket, a baby, and no one around. The nearest town is a day away.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-021",
+      "title": "Rigged trial",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "A trial is clearly rigged; speaking up would make powerful enemies.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-022",
+      "title": "Overdue debt",
+      "type": "moral",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Someone who owes the party money is obviously broke and ashamed.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-023",
+      "title": "The cursed volunteer",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone offers to carry a curse so the party doesn't have to.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-024",
+      "title": "Mercy kill",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "A dying stranger begs to be put out of their misery.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-025",
+      "title": "Truth or comfort",
+      "type": "moral",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone asks a party member a question where the truth will break their heart.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-026",
+      "title": "Shortcut through sacred land",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "The fastest route goes through land locals consider sacred.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-027",
+      "title": "Defector's price",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "An enemy wants to defect but demands protection for their whole family.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-028",
+      "title": "Hoarder in a famine",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A merchant hoards grain while people go hungry, all perfectly legal.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "moral-029",
+      "title": "Old promise",
+      "type": "moral",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone calls in a promise a party member made long ago, at the worst possible time.",
+      "weight": 1,
+      "cooldown": 40,
+      "once": true
+    },
+    {
+      "id": "moral-030",
+      "title": "Ally's dark secret",
+      "type": "moral",
+      "danger": 3,
+      "settings": [
+        "any"
+      ],
+      "seed": "The party discovers an ally did something terrible in the past.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-001",
+      "title": "Broken wheel",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A wheel cracks or a strap snaps; repairs cost time.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-002",
+      "title": "Wrong turn",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "The party realizes they've been going the wrong way for hours.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-003",
+      "title": "Toll gate",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A new toll gate stands across the road, manned by someone with a ledger and a bad attitude.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-004",
+      "title": "Washed-out bridge",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "The bridge is gone; the river is high and fast.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-005",
+      "title": "Shortcut offer",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A local offers a shortcut, and it would save days. It's also through somewhere unpleasant.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-006",
+      "title": "Mount goes lame",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "A mount or pack animal is injured and can't go on at full pace.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "has_mounts"
+      ]
+    },
+    {
+      "id": "travel-007",
+      "title": "Supplies spoiled",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild",
+        "sea"
+      ],
+      "seed": "Food has spoiled or been ruined; rationing starts now.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-008",
+      "title": "Ferry crossing",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "The ferry operator is drunk, asleep, or charging three times the posted price.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-009",
+      "title": "Caravan company",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A merchant caravan heading the same way invites the party to join.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-010",
+      "title": "Border checkpoint",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "road"
+      ],
+      "seed": "Soldiers check papers at a border; the party's papers aren't quite right.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-011",
+      "title": "Mountain pass",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "The pass is narrow, icy and long; it's slow going and something echoes above.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-012",
+      "title": "Ruins on the horizon",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "Ruins not on any map are visible off the road.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-013",
+      "title": "Roadside inn",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A cozy roadside inn appears just as night falls, maybe too conveniently.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "travel-014",
+      "title": "Swamp crossing",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "The way forward is through leech-filled, fog-bound swamp.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-015",
+      "title": "Signpost vandalized",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "Someone has turned the signposts around.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-016",
+      "title": "Long quiet road",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "Hours of quiet travel: a chance for the party to talk about something real.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-017",
+      "title": "Campfire stories",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "Around the campfire, someone asks a party member about their past.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "travel-018",
+      "title": "Stowaway",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "sea",
+        "road"
+      ],
+      "seed": "A stowaway is discovered among the gear, and they have a reason.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-019",
+      "title": "Ship takes on water",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "sea"
+      ],
+      "seed": "A leak below deck needs fixing before it gets worse.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-020",
+      "title": "Becalmed and bored",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "sea"
+      ],
+      "seed": "Nothing to do aboard for days; crew boredom turns into games and bets.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-021",
+      "title": "Port of call",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "sea",
+        "town"
+      ],
+      "seed": "An unplanned stop at a port with its own trouble.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-022",
+      "title": "Following tracks",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Fresh tracks cross the path: big, recent, heading where the party is going.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-023",
+      "title": "Fork in the road",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "Two roads, one longer and safer, one shorter with bad rumors.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-024",
+      "title": "Hitchhiker",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "A traveler asks for a ride and is good company, maybe too good.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-025",
+      "title": "Lost supplies",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A pack is missing: fallen, forgotten, or stolen during the night.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-026",
+      "title": "Scenic overlook",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "A breathtaking view and a perfect place to stop for a quiet moment.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "day"
+      ]
+    },
+    {
+      "id": "travel-027",
+      "title": "Detour",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "The main road is closed by order of someone important; the detour adds a day.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-028",
+      "title": "River travel",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "The party can travel by boat for a stretch, with a chatty boatman.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-029",
+      "title": "Caught in the open",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "road"
+      ],
+      "seed": "No cover for miles and something is circling high above.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-030",
+      "title": "Night march",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "Traveling at night to make up time; every sound feels bigger.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "travel-031",
+      "title": "Fellow travelers' feud",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "Two groups traveling alongside the party are feuding loudly.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-032",
+      "title": "Strange tracks in the snow",
+      "type": "travel",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Footprints in fresh snow appear and disappear without explanation.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-033",
+      "title": "Abandoned watchtower",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road",
+        "wild"
+      ],
+      "seed": "An old watchtower offers shelter, and a view of what's following the party.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-034",
+      "title": "Crossroads shrine",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "road"
+      ],
+      "seed": "Travelers leave offerings at a crossroads shrine; legend says the god listens.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "travel-035",
+      "title": "Exhaustion",
+      "type": "travel",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Everyone is bone-tired; tempers are short and mistakes are coming unless they rest.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-001",
+      "title": "Missing persons",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "People have been disappearing from one street, always on the same night of the week.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-002",
+      "title": "Coded message",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A coded note is found on a body, in a book, or under a door.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-003",
+      "title": "Locked room",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town",
+        "dungeon"
+      ],
+      "seed": "Someone was found dead in a room locked from the inside.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-004",
+      "title": "Poisoned well",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town",
+        "wild"
+      ],
+      "seed": "Villagers are falling sick; the water seems fine, but something is wrong.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-005",
+      "title": "Stolen relic",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A temple's relic was stolen during services, with everyone watching.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-006",
+      "title": "Secret door",
+      "type": "mystery",
+      "danger": 1,
+      "settings": [
+        "dungeon",
+        "town"
+      ],
+      "seed": "A draft from behind a bookshelf hints at a hidden passage.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-007",
+      "title": "Forged letter",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A letter with an important seal is a forgery, and a good one.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-008",
+      "title": "The informant's body",
+      "type": "mystery",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "The person who was going to talk is found dead before they could.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-009",
+      "title": "Strange symbol",
+      "type": "mystery",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "The same symbol appears chalked on walls everywhere the party goes.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-010",
+      "title": "Haunted house",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A house nobody will enter; lights go on inside at night.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "mystery-011",
+      "title": "Missing shipment",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "sea",
+        "town",
+        "road"
+      ],
+      "seed": "A shipment vanished between two checkpoints with no sign of theft.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-012",
+      "title": "The mute witness",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "The only witness can't or won't speak, but can draw.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-013",
+      "title": "Disguised visitor",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A visitor in town is not who they claim; small details give them away.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-014",
+      "title": "Animal deaths",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "wild"
+      ],
+      "seed": "Livestock are found dead without a mark on them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-015",
+      "title": "Unmarked grave",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "wild",
+        "town"
+      ],
+      "seed": "A fresh, unmarked grave where no one has died.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-016",
+      "title": "Rumors of a tunnel",
+      "type": "mystery",
+      "danger": 1,
+      "settings": [
+        "town"
+      ],
+      "seed": "Kids talk about a tunnel under the old mill that adults pretend not to know about.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-017",
+      "title": "Two stories",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Two witnesses tell completely different stories, and both seem honest.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-018",
+      "title": "The deal overheard",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Through a thin wall, the party overhears a deal that involves them.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-019",
+      "title": "The missing page",
+      "type": "mystery",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "A crucial page has been cut from a ledger, a diary or a holy book.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-020",
+      "title": "Shadow organization",
+      "type": "mystery",
+      "danger": 3,
+      "settings": [
+        "town"
+      ],
+      "seed": "The same small pin is worn by several powerful people in town.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-021",
+      "title": "Mysterious benefactor",
+      "type": "mystery",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Someone anonymously pays the party's bills and leaves no name.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-022",
+      "title": "Burned archive",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A records office burned last night; one drawer was emptied before the fire.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-023",
+      "title": "Sleepwalker",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A local sleepwalks to the same spot every night and digs.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    },
+    {
+      "id": "mystery-024",
+      "title": "Changed testimony",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "A witness suddenly changes their story, and they look terrified.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-025",
+      "title": "Counterfeit coins",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Fake coins are flooding the market; some are in the party's purse.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-026",
+      "title": "Trail of clues",
+      "type": "mystery",
+      "danger": 1,
+      "settings": [
+        "any"
+      ],
+      "seed": "Small clues lead somewhere, almost as if someone wants the party to follow.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-027",
+      "title": "Watched room",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "The party's room was searched while they were out; nothing taken, everything moved.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-028",
+      "title": "Familiar handwriting",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "any"
+      ],
+      "seed": "A note is in the handwriting of someone who should be dead, or far away.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-029",
+      "title": "The vanished guard",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town",
+        "dungeon"
+      ],
+      "seed": "A guard post is empty, the fire still burning and the meal half-eaten.",
+      "weight": 1,
+      "cooldown": 40
+    },
+    {
+      "id": "mystery-030",
+      "title": "Secret meeting",
+      "type": "mystery",
+      "danger": 2,
+      "settings": [
+        "town"
+      ],
+      "seed": "Hooded figures gather at midnight; the party can follow, listen, or crash it.",
+      "weight": 1,
+      "cooldown": 40,
+      "requires": [
+        "night"
+      ]
+    }
+  ]
+}

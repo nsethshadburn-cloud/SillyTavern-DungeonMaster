@@ -1,0 +1,114 @@
+/* Dungeon Master: uses SillyTavern's theme variables so it matches your theme. */
+
+.dm-hidden { display: none !important; }
+.dm-muted { opacity: 0.75; font-size: 0.9em; }
+
+/* ---------- Live status bar ---------- */
+.dm-status {
+    margin: 4px auto;
+    width: calc(100% - 10px);
+    max-width: var(--sheldWidth, 100%);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    background: var(--SmartThemeBlurTintColor);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
+    color: var(--SmartThemeBodyColor);
+    font-size: 0.9em;
+    padding: 4px 10px;
+    box-sizing: border-box;
+}
+.dm-status-head { display: flex; align-items: center; gap: 8px; }
+.dm-status-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-status-meta { opacity: 0.7; white-space: nowrap; }
+.dm-status-toggle, .dm-status-close { cursor: pointer; opacity: 0.6; padding: 2px 4px; }
+.dm-status-toggle:hover, .dm-status-close:hover { opacity: 1; }
+.dm-status.dm-collapsed .dm-status-steps { display: none; }
+.dm-status.dm-collapsed .dm-status-toggle { transform: rotate(-90deg); }
+.dm-status.dm-done { border-color: color-mix(in srgb, var(--SmartThemeBorderColor) 60%, #4caf50); }
+.dm-status.dm-error { border-color: #c0392b; }
+.dm-status-steps { margin: 4px 0 2px; padding-left: 4px; list-style: none; max-height: 30vh; overflow-y: auto; }
+.dm-step { padding: 1px 0; }
+.dm-step-icon { display: inline-block; width: 1.2em; text-align: center; }
+.dm-step-detail { opacity: 0.65; font-size: 0.92em; }
+.dm-step-run .dm-step-label { font-style: italic; }
+.dm-step-fail { color: #e57373; }
+.dm-step-skip, .dm-step-info { opacity: 0.8; }
+
+/* ---------- Settings ---------- */
+.dm-settings h4 { margin: 12px 0 4px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
+.dm-settings label { display: block; margin: 4px 0; }
+.dm-settings label.checkbox_label { display: flex; }
+.dm-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0; }
+.dm-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 10px; }
+.dm-pool { max-height: 260px; overflow-y: auto; margin-top: 4px; }
+.dm-pool-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.dm-pool-row select { width: auto; min-width: 90px; margin: 0; }
+.dm-sheet-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.dm-sheet-view { text-align: left; }
+
+/* ---------- Wizard ---------- */
+.dm-wizard { text-align: left; }
+.dm-wizard h3 { margin-top: 0; }
+.dm-wiz-section { margin: 10px 0 14px; }
+.dm-wiz-section h4 { margin: 0 0 6px; }
+.dm-wiz-chars {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+}
+.dm-wiz-char { display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 3px; border-radius: 6px; }
+.dm-wiz-char:hover { background: var(--white20a, rgba(255, 255, 255, 0.08)); }
+.dm-wiz-char img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.dm-wiz-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dm-wiz-row select { width: auto; }
+.dm-wiz-pitches { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.dm-wiz-pitch { display: block; padding: 6px 8px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; cursor: pointer; }
+.dm-wiz-pitch:has(input:checked) { outline: 2px solid var(--SmartThemeQuoteColor); }
+.dm-wiz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px 12px; }
+
+/* ---------- DM Screen ---------- */
+.dm-screen {
+    position: fixed;
+    top: var(--topBarBlockSize, 40px);
+    right: 0;
+    width: min(380px, 100vw);
+    height: calc(100dvh - var(--topBarBlockSize, 40px));
+    z-index: 3000;
+    display: flex;
+    flex-direction: column;
+    background: var(--SmartThemeBlurTintColor);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px));
+    border-left: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.35);
+}
+.dm-screen-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
+.dm-screen-close { cursor: pointer; opacity: 0.7; }
+.dm-screen-body { overflow-y: auto; padding: 8px 12px 24px; font-size: 0.92em; }
+.dm-screen-body h5 { margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.8; }
+.dm-screen-body ul { margin: 0; padding-left: 18px; }
+.dm-scr-title { font-size: 1.15em; font-weight: 700; }
+.dm-scr-buttons { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.dm-scr-buttons .menu_button { padding: 3px 8px; font-size: 0.9em; }
+.dm-scr-note { margin: 6px 0; padding: 4px 8px; border-radius: 6px; background: var(--white20a, rgba(255, 255, 255, 0.08)); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dm-scr-note .menu_button { padding: 1px 8px; margin: 0; }
+.dm-badge { font-size: 0.7em; padding: 1px 6px; border-radius: 6px; background: #b8860b; color: #fff; vertical-align: middle; }
+.dm-kv { display: grid; grid-template-columns: 80px 1fr auto; gap: 6px; align-items: center; margin: 2px 0; }
+.dm-hp-row { display: grid; grid-template-columns: minmax(70px, 120px) 1fr auto; gap: 6px; align-items: center; margin: 2px 0; }
+.dm-hp-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-meter { height: 7px; border-radius: 4px; background: rgba(127, 127, 127, 0.25); overflow: hidden; }
+.dm-meter-fill { height: 100%; background: var(--SmartThemeQuoteColor, #e8c46a); }
+.dm-enemy .dm-meter-fill { background: #c0392b; }
+.dm-plot { max-height: 240px; overflow-y: auto; }
+.dm-plot-act { font-weight: 700; margin-top: 4px; }
+.dm-plot-beat { padding-left: 6px; }
+.dm-done-beat { opacity: 0.55; text-decoration: line-through; }
+
+@media (max-width: 1000px) {
+    .dm-screen { width: 100vw; }
+}
