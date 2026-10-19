@@ -122,11 +122,60 @@ async function speakPartyMember(name, direction, { signal } = {}) {
         restoreTts();
     }
     await stripEchoedName(name);
+    rememberDirectionOnReply(name, direction);
 }
 
-/** Models sometimes start a reply with "Name:"; remove it from the last message. */
-async function stripEchoedName(name) {
-    const id = ST.chat.length - 1;
+/** Store the direction on the reply itself, so swiping THAT reply reuses the right direction. */
+function rememberDirectionOnReply(name, direction) {
+    const msg = ST.chat[ST.chat.length - 1];
+    if (!msg || msg.is_user || msg.name !== name) return;
+    msg.extra = msg.extra || {};
+    msg.extra.dm_direction = direction || '';
+    ST.saveChat();
+}
+
+/**
+ * In group chats SillyTavern starts the requested reply with "Name:". Thinking models like
+ * Gemma 4 / Orion then skip thinking and garble words (tested: 2-3 of 6 replies mangled with the
+ * prefix, 0 of 6 without). In campaign chats only, drop that one prefix; names on earlier
+ * messages stay, so the model still knows who said what.
+ * @param {{prompt: string}} eventData from GENERATE_AFTER_COMBINE_PROMPTS
+ */
+export function stripReplyNamePrefix(eventData) {
+    const c = campaign();
+    if (!c || c.meta.paused || !ST.selectedGroup || typeof eventData?.prompt !== 'string') return;
+    const instruct = ST.powerUser.instruct;
+    if (!instruct?.enabled || !['force', 'always'].includes(String(instruct.names_behavior))) return;
+    const name = ST.context().name2;
+    if (!name) return;
+    const bias = ST.substituteParams(String(ST.powerUser.user_prompt_bias || ''));
+    const prompt = eventData.prompt;
+    const withBias = `${name}:${bias}`;
+    if (bias && prompt.endsWith(withBias)) {
+        eventData.prompt = prompt.slice(0, prompt.length - withBias.length) + bias;
+        return;
+    }
+    const trimmed = prompt.replace(/[ \t]+$/, '');
+    if (trimmed.endsWith(`${name}:`)) {
+        eventData.prompt = trimmed.slice(0, trimmed.length - name.length - 1);
+    }
+}
+
+/**
+ * Any party member's reply in a campaign chat (including swipes): remove an echoed "Name:" start.
+ * Runs on CHARACTER_MESSAGE_RENDERED, before SillyTavern's TTS reads the message.
+ */
+export async function cleanPartyReply(messageId) {
+    const c = campaign();
+    if (!c || c.meta.paused) return;
+    const msg = ST.chat[Number(messageId)];
+    if (!msg || msg.is_user || !c.meta.party.some(p => p.name === msg.name)) return;
+    await stripEchoedName(msg.name, Number(messageId));
+}
+
+/** Models sometimes start a reply with "Name:"; remove it from the message. */
+async function stripEchoedName(name, messageId = ST.chat.length - 1) {
+    const id = messageId;
     const msg = ST.chat[id];
     if (!msg || msg.is_user || msg.name !== name) return;
     const cleaned = stripSpeakerPrefix(msg.mes, name);

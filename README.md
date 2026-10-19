@@ -27,7 +27,7 @@ Settings, character sheets and campaigns are stored per SillyTavern install, so 
    - **Budget:** $20/month is set. The nightly soft cap ($0.65) makes the DM check in less often once it's reached.
    - **Voices:** pick a **DM voice** and press **Test DM voice**. Open **NPC voice pool** to switch voices on or off and fix any wrong genders.
 3. **Your character sheet:** open the **Persona** panel and click the new **📜 scroll** button. Pick your 5e PDF; Claude converts it once (about 1¢) and then it's locked.
-4. **Thinking models (Gemma 4 / Orion):** in group chats SillyTavern starts each reply with the character's name, which makes these models skip thinking. Fix: **AI Response Formatting** (the "A" icon) → **Miscellaneous** → **Start Reply With**: `<|channel>thought` followed by a new line. The extension warns you if this looks missing.
+4. **Thinking models (Gemma 4 / Orion):** nothing to do. In group chats SillyTavern starts each reply with "Name:", which makes these models skip thinking and garble words. In campaign chats the extension removes that one prefix automatically (other chats are untouched).
 5. Optional: lower your **Response length** to about 2048 in the left sliders panel, so the story has room in the context.
 6. Optional, saves money: in SillyTavern's `config.yaml`, set `claude: enableSystemPromptCache: true`, restart SillyTavern, then tick **"I turned on Claude prompt caching"** in the extension settings.
 
