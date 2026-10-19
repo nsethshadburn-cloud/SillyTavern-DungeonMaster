@@ -6,6 +6,14 @@ For how it works under the hood, see [DESIGN.md](DESIGN.md).
 
 ---
 
+## Installing
+
+1. In SillyTavern, open **Extensions** (the stacked-blocks icon) → **Install extension**.
+2. Paste `https://github.com/nsethshadburn-cloud/SillyTavern-DungeonMaster` and choose **Install just for me**.
+3. Updating later: Extensions → **Manage extensions** → the update (⟳) button next to Dungeon Master.
+
+Settings, character sheets and campaigns are stored per SillyTavern install, so a new machine starts fresh: set your DM voice and budget again and re-upload your persona sheet there.
+
 ## First-time setup (5 minutes)
 
 1. **Reload SillyTavern** (F5). The extension loads automatically once it's installed for your SillyTavern user.
