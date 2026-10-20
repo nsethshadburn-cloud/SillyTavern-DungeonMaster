@@ -11,6 +11,7 @@ import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
+import { modelLabel } from '../core/models.js';
 
 let stableCache = { key: '', text: '' };
 
@@ -108,13 +109,32 @@ const REASON_TEXT = {
 };
 
 /**
- * Build the volatile part of a DM call.
+ * Build the per-call part of a DM prompt, split by how often each piece changes so Claude's
+ * prompt cache can reuse the slow parts (see callClaude):
+ *   layers[0] = plot and NPCs met (changes when a beat is ticked or someone new shows up)
+ *   layers[1] = notes, story so far, memories (changes when the DM adds notes or story)
+ *   user      = everything that changes every call
+ * Both layers are always sent, even when empty, so the cache positions stay the same.
  * @param {{reasons:string[], playerMessage?:string, rollResolution?:string, events?:object[], extraFiles?:string[], oocText?:string}} p
+ * @returns {Promise<{layers:string[], user:string}>}
  */
 export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '' }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
+
+    const plotLayer = [
+        '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)',
+        '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
+    ].join('\n');
+
+    const memories = await memoryBookEntries();
+    const notesLayer = [
+        '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none yet)',
+        '', '# STORY SO FAR', c.docs.story ? trimToTokens(c.docs.story, 2000, true) : '(none yet)',
+        '', '# MEMORY BOOK ENTRIES (from the MemoryBooks extension)', memories || '(none yet)',
+    ].join('\n');
+
     const sections = [];
     const sessionMinutes = (Date.now() - (c.meta.session?.startedAt || Date.now())) / 60000;
 
@@ -129,14 +149,6 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
     sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90 }));
-
-    sections.push('', '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)');
-
-    if (c.docs.notes) sections.push('', '# YOUR PRIVATE NOTES', trimToTokens(c.docs.notes, 2500, true));
-    if (c.docs.story) sections.push('', '# STORY SO FAR', trimToTokens(c.docs.story, 2000, true));
-    const memories = await memoryBookEntries();
-    if (memories) sections.push('', '# MEMORY BOOK ENTRIES (from the MemoryBooks extension)', memories);
-    if (c.docs.npcs?.length) sections.push('', '# NPCS MET', rosterSummary(c.docs.npcs));
 
     for (const f of extraFiles) {
         if (f === 'rolls_log') sections.push('', '# ROLLS LOG (recent)', JSON.stringify(c.docs.rolls_log.slice(-40)));
@@ -159,34 +171,35 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const present = (c.docs.npcs || []).filter(n => n.lastSeen && n.lastSeen === w.location).map(n => n.name);
     sections.push('', `Valid speakers for directions: party ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
     sections.push('Reply with the JSON object only.');
-    return sections.join('\n');
+    return { layers: [plotLayer, notesLayer], user: sections.join('\n') };
 }
 
 /**
  * Run one DM call. Handles a single "need_files" round-trip.
- * @returns {Promise<{turn: ReturnType<typeof parseDmTurn>, usd: number, raw: string}>}
+ * @param {'big'|'routine'} tier which model handles it (see core/models.js)
+ * @returns {Promise<{turn: ReturnType<typeof parseDmTurn>, usd: number, raw: string, model: string}>}
  */
-export async function askDm(args, { label = 'DM turn', signal = null } = {}) {
+export async function askDm(args, { label = 'DM turn', signal = null, tier = 'big' } = {}) {
     const system = await stableSystem();
-    let user = await volatilePrompt(args);
-    let reply = await callClaude({ system, user, label, signal });
+    let prompt = await volatilePrompt(args);
+    let reply = await callClaude({ system, ...prompt, tier, label, signal });
     let usd = reply.usd;
     let turn = parseDmTurn(reply.text);
     if (turn && turn.need_files.length && !args.extraFiles?.length && !turn.narration && !turn.directions.length) {
-        user = await volatilePrompt({ ...args, extraFiles: turn.need_files });
-        reply = await callClaude({ system, user, label: `${label} (with files)`, signal });
+        prompt = await volatilePrompt({ ...args, extraFiles: turn.need_files });
+        reply = await callClaude({ system, ...prompt, tier, label: `${label} (with files)`, signal });
         usd += reply.usd;
         turn = parseDmTurn(reply.text);
     }
     if (!turn) {
         // One retry asking for valid JSON.
-        reply = await callClaude({ system, user: `${user}\n\nYour previous reply was not valid JSON. Reply with ONE valid JSON object only.`, label: `${label} (retry)`, signal });
+        reply = await callClaude({ system, layers: prompt.layers, user: `${prompt.user}\n\nYour previous reply was not valid JSON. Reply with ONE valid JSON object only.`, tier, label: `${label} (retry)`, signal });
         usd += reply.usd;
         turn = parseDmTurn(reply.text);
     }
     if (!turn) throw new Error('The DM did not return a usable answer.');
-    logCost(label, usd);
-    return { turn, usd, raw: reply.text };
+    logCost(`${label} · ${modelLabel(reply.model)}`, usd);
+    return { turn, usd, raw: reply.text, model: reply.model };
 }
 
 function logCost(label, usd) {
@@ -204,7 +217,7 @@ export async function maybeCondenseNotes() {
     const c = campaign();
     if (!c || estimateTokens(c.docs.notes) < 3000) return 0;
     const system = await stableSystem();
-    const reply = await callClaude({ system: `${system}\n\n${CONDENSE_NOTES_INSTRUCTIONS}`, user: `# CURRENT NOTES\n${c.docs.notes}`, label: 'condense notes', maxTokens: 4000 });
+    const reply = await callClaude({ system, user: `# CURRENT NOTES\n${c.docs.notes}\n\n${CONDENSE_NOTES_INSTRUCTIONS}`, tier: 'routine', label: 'condense notes', maxTokens: 4000 });
     const json = extractJson(reply.text);
     if (json?.notes) {
         c.docs.notes = String(json.notes);

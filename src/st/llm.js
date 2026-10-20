@@ -2,8 +2,8 @@
 // Claude goes through SillyTavern's own backend, so your saved API key is used and never exposed.
 
 import { ST, waitUntilIdle } from './st.js';
-import { settings, profileById, connectionProfiles, recordSpend, currentSpend } from './settings.js';
-import { estimateCallCost, budgetStatus } from '../core/budget.js';
+import { settings, profileById, connectionProfiles, recordSpend, currentSpend, pricesFor } from './settings.js';
+import { estimateCallCost, budgetStatus, cacheWriteMultiplier } from '../core/budget.js';
 import { stripThinking } from '../core/text.js';
 
 // ---------------- Local model queue ----------------
@@ -64,19 +64,25 @@ export function cleanLocalOutput(text) {
 
 // ---------------- Claude ----------------
 
-/** Pick the connection to use for the DM. */
-export function resolveDmConnection() {
+/**
+ * Pick the connection and model for a Claude call.
+ * @param {'big'|'routine'} tier big = story-shaping work (Sonnet by default), routine = everything else (Haiku by default)
+ */
+export function resolveDmConnection(tier = 'big') {
     const s = settings();
     let profile = profileById(s.dmProfileId);
     if (!profile) profile = connectionProfiles().find(p => p.api === 'claude') ?? null;
+    const big = s.dmModel || profile?.model || 'claude-sonnet-5-5';
+    const routine = s.dmModelRoutine || big;
     return {
         profile,
-        model: s.dmModel || profile?.model || 'claude-sonnet-5-5',
+        model: tier === 'routine' && s.autoModel ? routine : big,
     };
 }
 
-let lastStableHash = '';
-let lastCallAt = 0;
+// What Claude has probably cached, per model: prompt-prefix hash -> last time it was sent.
+// Only used for the cost ESTIMATE; Claude does the real caching.
+const cacheSeen = new Map();
 
 function hashString(str) {
     let h = 0;
@@ -84,29 +90,37 @@ function hashString(str) {
     return String(h);
 }
 
+/** Sent between context layers so the roles alternate; it never changes, so it caches. */
+const LAYER_ACK = 'Noted.';
+
 export class BudgetError extends Error { }
 
 /**
  * Call Claude.
- * @param {{system:string, user:string, maxTokens?:number, label:string, effort?:string, force?:boolean, signal?:AbortSignal}} p
- *  system = stable instructions (cache-friendly), user = everything that changes each call
- * @returns {Promise<{text:string, usd:number, inputTokens:number, outputTokens:number, ms:number}>}
+ * The prompt is sent in layers, most stable first, so Claude's prompt cache can reuse them:
+ *   system  = rules, bible, sheets (cached with claude.enableSystemPromptCache)
+ *   layers  = slower-changing context, each its own user message (cached with claude.cachingAtDepth: 2)
+ *   user    = what changes every call
+ * @param {{system:string, layers?:string[], user:string, tier?:'big'|'routine', maxTokens?:number, label:string, effort?:string, force?:boolean, signal?:AbortSignal}} p
+ * @returns {Promise<{text:string, usd:number, inputTokens:number, outputTokens:number, ms:number, model:string}>}
  */
-export async function callClaude({ system, user, maxTokens, label, effort, force = false, signal = null }) {
+export async function callClaude({ system, layers = [], user, tier = 'big', maxTokens, label, effort, force = false, signal = null }) {
     const s = settings();
     const status = budgetStatus({ ...currentSpend(), monthlyCap: Number(s.monthlyCap), nightlySoftCap: Number(s.nightlySoftCap) });
     if (status.level === 'blocked' && !force) {
         throw new BudgetError('Monthly Claude budget reached.');
     }
-    const { profile, model } = resolveDmConnection();
+    const { profile, model } = resolveDmConnection(tier);
     const ctx = ST.context();
     const started = Date.now();
+    const messages = [{ role: 'system', content: system }];
+    for (const layer of layers) {
+        messages.push({ role: 'user', content: layer }, { role: 'assistant', content: LAYER_ACK });
+    }
+    messages.push({ role: 'user', content: user });
     const request = {
         stream: false,
-        messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-        ],
+        messages,
         model,
         chat_completion_source: 'claude',
         max_tokens: maxTokens || Number(s.dmMaxTokens) || 6000,
@@ -123,24 +137,42 @@ export async function callClaude({ system, user, maxTokens, label, effort, force
     const text = extractClaudeText(json);
     const ms = Date.now() - started;
 
-    const stableHash = hashString(system);
-    const cacheHit = s.cachingEnabled && stableHash === lastStableHash && (Date.now() - lastCallAt) < 5 * 60 * 1000;
-    lastStableHash = stableHash;
-    lastCallAt = Date.now();
     const cost = estimateCallCost({
-        stableText: system,
-        volatileText: user,
+        blocks: cacheStates(model, [system, ...layers.flatMap(l => [l, LAYER_ACK])], user),
         outputText: text,
         thinkingAllowance: Number(s.thinkingAllowance) || 0,
-        prices: { input: Number(s.priceInput), output: Number(s.priceOutput), cacheRead: Number(s.priceCacheRead), cacheWrite: Number(s.priceCacheWrite) },
-        cacheHit,
-        cachingEnabled: Boolean(s.cachingEnabled),
+        prices: pricesFor(model),
+        writeMultiplier: cacheWriteMultiplier(s.cacheTtlMinutes),
     });
     recordSpend(cost.usd);
     if (!text) {
         throw new Error(`Claude returned an empty reply (${label}). It may have declined the request; try rephrasing or check the server console.`);
     }
-    return { text, usd: cost.usd, inputTokens: cost.inputTokens, outputTokens: cost.outputTokens, ms };
+    return { text, usd: cost.usd, inputTokens: cost.inputTokens, outputTokens: cost.outputTokens, ms, model };
+}
+
+/** Mark each cacheable block as a likely cache hit or write (estimate only), then remember what was sent. */
+function cacheStates(model, cacheable, user) {
+    const s = settings();
+    const blocks = [];
+    const now = Date.now();
+    const ttl = (Number(s.cacheTtlMinutes) || 5) * 60 * 1000;
+    let prefix = model;
+    for (const text of cacheable) {
+        prefix = hashString(prefix + '\u0000' + text);
+        if (!s.cachingEnabled) {
+            blocks.push({ text, cache: 'none' });
+            continue;
+        }
+        const seen = cacheSeen.get(prefix);
+        blocks.push({ text, cache: seen && now - seen < ttl ? 'hit' : 'write' });
+        cacheSeen.set(prefix, now);
+    }
+    if (cacheSeen.size > 200) {
+        for (const [k, at] of cacheSeen) if (now - at > ttl) cacheSeen.delete(k);
+    }
+    blocks.push({ text: user, cache: 'none' });
+    return blocks;
 }
 
 /** SillyTavern returns {choices, content}; content is Claude's raw block list (thinking + text). */

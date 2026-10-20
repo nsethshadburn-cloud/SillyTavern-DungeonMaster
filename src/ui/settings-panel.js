@@ -10,12 +10,13 @@ import { fetchVoices, syncVoicePool, speak, ttsConfig } from '../st/voices.js';
 import { sheetMarkdown } from '../st/sheets.js';
 import { escapeHtml } from '../core/text.js';
 import { formatUsd } from '../core/budget.js';
+import { DM_REASON_LABELS } from '../core/models.js';
 
 const MODELS = [
     ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (recommended)'],
     ['claude-sonnet-5', 'Claude Sonnet 5'],
     ['claude-opus-5-5', 'Claude Opus 5.5 (pricier)'],
-    ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest)'],
+    ['claude-haiku-5-5', 'Claude Haiku 5.5 (cheapest, recommended for routine turns)'],
 ];
 
 function profileOptions(selected, { emptyLabel, filter = () => true }) {
@@ -25,6 +26,41 @@ function profileOptions(selected, { emptyLabel, filter = () => true }) {
         opts.push(`<option value="${escapeHtml(p.id)}" ${p.id === selected ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(p.api || p.mode)}${escapeHtml(where)})</option>`);
     }
     return opts.join('');
+}
+
+/** A model picker with a "Custom…" box. */
+function modelPicker(id, value, label) {
+    const known = MODELS.some(([m]) => m === value);
+    return `<label>${label}
+        <select id="${id}" class="text_pole">
+          ${MODELS.map(([m, text]) => `<option value="${m}" ${m === value ? 'selected' : ''}>${text}</option>`).join('')}
+          <option value="__custom" ${known ? '' : 'selected'}>Custom…</option>
+        </select></label>
+      <input id="${id}-custom" class="text_pole ${known ? 'dm-hidden' : ''}" placeholder="model id, e.g. claude-sonnet-5-5" value="${known ? '' : escapeHtml(value)}">`;
+}
+
+function bindModelPicker(id, key) {
+    $(`#${id}`).on('change', function () {
+        const v = String($(this).val());
+        $(`#${id}-custom`).toggleClass('dm-hidden', v !== '__custom');
+        if (v !== '__custom') { settings()[key] = v; saveSettings(); renderPrices(); }
+    });
+    $(`#${id}-custom`).on('change', function () {
+        const v = String($(this).val()).trim();
+        if (v) { settings()[key] = v; saveSettings(); renderPrices(); }
+    });
+}
+
+/** Price rows for the models in use (USD per million tokens). */
+function renderPrices() {
+    const s = settings();
+    const models = [...new Set([s.dmModel, s.dmModelRoutine].filter(Boolean))];
+    const rows = models.map(m => {
+        const p = s.modelPrices[m] ?? { input: s.priceInput, output: s.priceOutput, cacheRead: s.priceCacheRead };
+        const field = (k, label) => `<label>${label}<input type="number" step="0.01" min="0" class="text_pole" data-price-model="${escapeHtml(m)}" data-price-key="${k}" value="${p[k]}"></label>`;
+        return `<div class="dm-price-row"><b>${escapeHtml(m)}</b><div class="dm-grid2">${field('input', 'Input')}${field('output', 'Output')}${field('cacheRead', 'Cache read')}</div></div>`;
+    });
+    $('#dm-prices').html(rows.join(''));
 }
 
 function templateEditor(key, title, help) {
@@ -38,7 +74,6 @@ function templateEditor(key, title, help) {
 
 function panelHtml() {
     const s = settings();
-    const modelKnown = MODELS.some(([id]) => id === s.dmModel);
     return `
 <div id="dm-settings" class="dm-settings">
   <div class="inline-drawer">
@@ -57,12 +92,16 @@ function panelHtml() {
       <h4>Connections</h4>
       <label>Dungeon Master (Claude) profile
         <select id="dm-dm-profile" class="text_pole">${profileOptions(s.dmProfileId, { emptyLabel: 'Auto: first Claude profile / saved Claude key', filter: p => p.api === 'claude' })}</select></label>
-      <label>DM model
-        <select id="dm-model" class="text_pole">
-          ${MODELS.map(([id, label]) => `<option value="${id}" ${id === s.dmModel ? 'selected' : ''}>${label}</option>`).join('')}
-          <option value="__custom" ${modelKnown ? '' : 'selected'}>Custom…</option>
-        </select></label>
-      <input id="dm-model-custom" class="text_pole ${modelKnown ? 'dm-hidden' : ''}" placeholder="model id, e.g. claude-sonnet-5-5" value="${modelKnown ? '' : escapeHtml(s.dmModel)}">
+      ${modelPicker('dm-model', s.dmModel, 'DM model for big moments')}
+      ${modelPicker('dm-model-routine', s.dmModelRoutine, 'DM model for routine turns')}
+      <label class="checkbox_label"><input id="dm-auto-model" type="checkbox" ${s.autoModel ? 'checked' : ''}> Pick the model automatically for each DM turn (off = the big-moments model does everything)</label>
+      <details><summary>Which DM turns use the big-moments model</summary>
+        <div class="dm-grid2">
+          ${Object.entries(DM_REASON_LABELS).map(([k, label]) => `<label class="checkbox_label"><input type="checkbox" data-big-reason="${k}" ${s.bigReasons[k] ? 'checked' : ''}> ${escapeHtml(label)}</label>`).join('')}
+          <label class="checkbox_label"><input id="dm-big-critical" type="checkbox" ${s.bigOnCritical ? 'checked' : ''}> Your natural 1s and 20s</label>
+        </div>
+        <small>Unticked turns go to the routine model. Campaign setup, character sheets and recaps always use the big-moments model.</small>
+      </details>
       <label>DM thinking effort
         <select id="dm-effort" class="text_pole">
           ${['low', 'medium', 'high'].map(e => `<option value="${e}" ${e === s.dmEffort ? 'selected' : ''}>${e}${e === 'low' ? ' (cheapest, recommended)' : ''}</option>`).join('')}
@@ -80,13 +119,15 @@ function panelHtml() {
         <label>Nightly soft cap ($)<input id="dm-nightly" type="number" min="0" step="0.05" class="text_pole" value="${s.nightlySoftCap}"></label>
       </div>
       <div id="dm-spend" class="dm-muted"></div>
-      <label class="checkbox_label"><input id="dm-caching" type="checkbox" ${s.cachingEnabled ? 'checked' : ''}> I turned on Claude prompt caching in config.yaml (<code>claude.enableSystemPromptCache: true</code>)</label>
+      <label class="checkbox_label"><input id="dm-caching" type="checkbox" ${s.cachingEnabled ? 'checked' : ''}> I turned on Claude prompt caching in config.yaml (<code>enableSystemPromptCache: true</code> and <code>cachingAtDepth: 2</code> under <code>claude:</code>)</label>
+      <label>Cache lifetime
+        <select id="dm-cache-ttl" class="text_pole">
+          <option value="5" ${Number(s.cacheTtlMinutes) < 60 ? 'selected' : ''}>5 minutes (default)</option>
+          <option value="60" ${Number(s.cacheTtlMinutes) >= 60 ? 'selected' : ''}>1 hour (needs extendedTTL: true)</option>
+        </select></label>
       <details><summary>Prices (USD per million tokens) &amp; estimate tuning</summary>
+        <div id="dm-prices"></div>
         <div class="dm-grid2">
-          <label>Input<input id="dm-p-in" type="number" step="0.01" class="text_pole" value="${s.priceInput}"></label>
-          <label>Output<input id="dm-p-out" type="number" step="0.01" class="text_pole" value="${s.priceOutput}"></label>
-          <label>Cache read<input id="dm-p-cr" type="number" step="0.01" class="text_pole" value="${s.priceCacheRead}"></label>
-          <label>Cache write<input id="dm-p-cw" type="number" step="0.01" class="text_pole" value="${s.priceCacheWrite}"></label>
           <label>Thinking allowance (tokens/call)<input id="dm-think" type="number" step="50" class="text_pole" value="${s.thinkingAllowance}"></label>
         </div>
         <small>SillyTavern doesn't pass token usage back, so costs are estimates. Your Anthropic console shows real spend.</small>
@@ -245,14 +286,27 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     $('#dm-open-screen').on('click', onScreen);
     bindCheck('dm-enabled', 'enabled');
     bindSelect('dm-dm-profile', 'dmProfileId');
-    $('#dm-model').on('change', function () {
-        const v = String($(this).val());
-        $('#dm-model-custom').toggleClass('dm-hidden', v !== '__custom');
-        if (v !== '__custom') { settings().dmModel = v; saveSettings(); }
+    bindModelPicker('dm-model', 'dmModel');
+    bindModelPicker('dm-model-routine', 'dmModelRoutine');
+    bindCheck('dm-auto-model', 'autoModel');
+    bindCheck('dm-big-critical', 'bigOnCritical');
+    $('[data-big-reason]').on('change', function () {
+        settings().bigReasons[String($(this).data('big-reason'))] = $(this).is(':checked');
+        saveSettings();
     });
-    $('#dm-model-custom').on('change', function () {
-        const v = String($(this).val()).trim();
-        if (v) { settings().dmModel = v; saveSettings(); }
+    renderPrices();
+    $('#dm-prices').on('change', '[data-price-model]', function () {
+        const s = settings();
+        const model = String($(this).attr('data-price-model'));
+        const v = Number($(this).val());
+        if (!Number.isFinite(v)) return;
+        s.modelPrices[model] ??= { input: s.priceInput, output: s.priceOutput, cacheRead: s.priceCacheRead };
+        s.modelPrices[model][String($(this).attr('data-price-key'))] = v;
+        saveSettings();
+    });
+    $('#dm-cache-ttl').on('change', function () {
+        settings().cacheTtlMinutes = Number($(this).val()) || 5;
+        saveSettings();
     });
     bindSelect('dm-effort', 'dmEffort');
     bindSelect('dm-actor-profile', 'actorProfileId');
@@ -261,10 +315,6 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindNumber('dm-monthly', 'monthlyCap');
     bindNumber('dm-nightly', 'nightlySoftCap');
     bindCheck('dm-caching', 'cachingEnabled');
-    bindNumber('dm-p-in', 'priceInput');
-    bindNumber('dm-p-out', 'priceOutput');
-    bindNumber('dm-p-cr', 'priceCacheRead');
-    bindNumber('dm-p-cw', 'priceCacheWrite');
     bindNumber('dm-think', 'thinkingAllowance');
     bindNumber('dm-checkin', 'checkinEvery');
     bindNumber('dm-session', 'usualSessionMinutes');

@@ -206,3 +206,5 @@
 .dm-template-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .dm-template-head .menu_button { margin: 0; padding: 2px 8px; font-size: 0.85em; }
 .dm-preview { white-space: pre-wrap; text-align: left; font-family: var(--monoFontFamily, monospace); font-size: 0.85em; }
+.dm-price-row { margin: 4px 0; }
+.dm-price-row b { font-size: 0.9em; opacity: 0.8; }

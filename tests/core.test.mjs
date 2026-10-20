@@ -9,7 +9,8 @@ import { ruleTriage, parseHelperTriage } from '../src/core/triage.js';
 import { extractJson, stripThinking, stripSpeakerPrefix, matchName, slug } from '../src/core/text.js';
 import { parseDmTurn } from '../src/core/protocol.js';
 import { createWorldState, ensureParty, applyStateChanges, lookupModifier, startCombat, worldFlags, addNpcs } from '../src/core/world.js';
-import { estimateCallCost, budgetStatus, nightKey } from '../src/core/budget.js';
+import { estimateCallCost, budgetStatus, nightKey, cacheWriteMultiplier } from '../src/core/budget.js';
+import { pickDmTier, modelLabel, DEFAULT_BIG_REASONS, DM_REASON_LABELS } from '../src/core/models.js';
 
 test('dice notation parses and rolls in range', () => {
     assert.deepEqual(parseNotation('1d20+5').terms.length, 2);
@@ -162,11 +163,37 @@ test('world state changes, sheets and combat', () => {
 });
 
 test('budget estimates', () => {
-    const c = estimateCallCost({ stableText: 'x'.repeat(36000), volatileText: 'y'.repeat(3600), outputText: 'z'.repeat(1800), thinkingAllowance: 300, prices: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 }, cacheHit: false, cachingEnabled: false });
-    assert.equal(c.inputTokens, 11000);
-    assert.ok(Math.abs(c.usd - (11000 * 2 + 800 * 10) / 1e6) < 1e-6);
+    const prices = { input: 2, output: 10, cacheRead: 0.1 };
+    const blocks = cache => [{ text: 'x'.repeat(36000), cache }, { text: 'y'.repeat(3600), cache: 'none' }];
+    const plain = estimateCallCost({ blocks: blocks('none'), outputText: 'z'.repeat(1800), thinkingAllowance: 300, prices });
+    assert.equal(plain.inputTokens, 11000);
+    assert.ok(Math.abs(plain.usd - (11000 * 2 + 800 * 10) / 1e6) < 1e-6);
+    const hit = estimateCallCost({ blocks: blocks('hit'), outputText: 'z'.repeat(1800), thinkingAllowance: 300, prices });
+    assert.ok(Math.abs(hit.usd - (10000 * 0.1 + 1000 * 2 + 800 * 10) / 1e6) < 1e-6);
+    const write = estimateCallCost({ blocks: blocks('write'), outputText: '', prices, writeMultiplier: cacheWriteMultiplier(5) });
+    assert.ok(Math.abs(write.usd - (10000 * 2 * 1.25 + 1000 * 2) / 1e6) < 1e-6);
+    assert.equal(cacheWriteMultiplier(60), 2);
+    // Too short to cache: billed as plain input even when marked as a hit.
+    const tiny = estimateCallCost({ blocks: [{ text: 'x'.repeat(360), cache: 'hit' }], outputText: '', prices });
+    assert.ok(Math.abs(tiny.usd - (100 * 2) / 1e6) < 1e-6);
     assert.equal(budgetStatus({ monthUsd: 21, monthlyCap: 20 }).level, 'blocked');
     assert.equal(budgetStatus({ monthUsd: 17, monthlyCap: 20 }).level, 'tight');
     assert.equal(budgetStatus({ monthUsd: 2, monthlyCap: 20 }).level, 'ok');
     assert.equal(nightKey(new Date(2026, 9, 19, 2, 0)), '2026-10-18');
+});
+
+test('DM model tier picks Haiku for routine turns and Sonnet for big ones', () => {
+    assert.equal(pickDmTier(['roll_result']), 'routine');
+    assert.equal(pickDmTier(['checkin']), 'routine');
+    assert.equal(pickDmTier(['risky_action', 'npc_addressed']), 'routine');
+    assert.equal(pickDmTier(['risky_action', 'event']), 'big', 'any big reason wins');
+    assert.equal(pickDmTier(['scene_move']), 'big');
+    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true }), 'big');
+    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true, bigOnCritical: false }), 'routine');
+    assert.equal(pickDmTier(['checkin'], { auto: false }), 'big');
+    assert.equal(pickDmTier(['some_future_reason']), 'big', 'unknown reasons are treated as big');
+    assert.equal(pickDmTier(['scene_move'], { bigReasons: { ...DEFAULT_BIG_REASONS, scene_move: false } }), 'routine');
+    assert.deepEqual(Object.keys(DEFAULT_BIG_REASONS).sort(), Object.keys(DM_REASON_LABELS).sort(), 'every reason has a label and a default');
+    assert.equal(modelLabel('claude-haiku-5-5'), 'Haiku');
+    assert.equal(modelLabel('claude-sonnet-5-5'), 'Sonnet');
 });

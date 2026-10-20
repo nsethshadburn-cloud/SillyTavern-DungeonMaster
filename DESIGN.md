@@ -27,7 +27,7 @@ When you start a new chat you can turn on **D&D mode**. A setup wizard asks for 
 
 | Role | Default connection | Job | Cost |
 |---|---|---|---|
-| **Dungeon Master** | A Claude profile (Sonnet; model picker in settings) | Story, pacing, rulings, consequences, deciding when events happen, writing hidden stage directions, keeping the campaign files | Paid, so used sparingly |
+| **Dungeon Master** | A Claude profile: Sonnet for big moments, Haiku for routine turns (both pickers in settings, chosen per turn) | Story, pacing, rulings, consequences, deciding when events happen, writing hidden stage directions, keeping the campaign files | Paid, so used sparingly |
 | **Actors** | *Your current connection* (whatever is selected in SillyTavern) | Playing Judy, other party members and NPCs, following the DM's stage directions | Free |
 | **Helper** | *Same as actors* (or any saved profile, e.g. your "Memory manager" or "phi") | Fast small decisions: "is this banter?", "who speaks next?", "did the player just do something risky?" | Free |
 | **Rulebook** | Plain code | Dice, event selection, cooldowns, counters, pacing meters, spend tracking | Free, instant |
@@ -234,9 +234,10 @@ When the turn is done, it collapses to a one-line summary you can expand. It is 
 ## 14. Cost control
 
 - **Budget setting:** monthly cap (default **$20**) and an optional nightly soft cap (~$0.65 a night fits $20 a month). Your Anthropic console limit stays as a hard backstop.
-- **Real numbers:** each Claude call's actual token usage is read from the response and priced, so the meter reflects what you really spend.
+- **Estimates:** SillyTavern's Claude proxy doesn't return token usage, so each call is priced from its text length with per-model prices (editable). The Anthropic console has the real numbers.
+- **Two models:** each DM turn picks Sonnet or Haiku from why the DM was called (core/models.js). Big moments (opening, travel, events, drift, stuck scenes, combat rounds, "step in now", natural 1s/20s) use Sonnet; the rest use Haiku, which costs about a twentieth as much. The split is a settings checklist.
 - **Throttling:** at 80% of budget, check-ins become rarer. At 100%, the DM switches to **local-only mode** (the helper does basic orchestration) and tells you, so you're never surprised by the bill.
-- **Prompt caching:** the stable part of every DM call (rules, bible, sheets) is arranged to be cached, which makes repeat calls much cheaper. **This needs a setting in SillyTavern's `config.yaml`:** `claude.enableSystemPromptCache: true` (and possibly `cachingAtDepth`). It's a settings switch, not a code change, and you decide whether to turn it on.
+- **Prompt caching:** each DM call is sent in layers, most stable first: the system prompt (rules, bible, sheets), then a user message with the plot and NPC roster, then one with notes, story so far and MemoryBooks entries (each followed by a fixed "Noted." reply so roles alternate), then the per-call part (state, pacing, recent chat, why it's called). With `claude.enableSystemPromptCache: true` and `claude.cachingAtDepth: 2` in `config.yaml`, SillyTavern puts cache breakpoints on exactly those three layers, so a change to the notes only rewrites the notes layer. Both layers are always sent (with "(none yet)" when empty) so the positions never shift. These are config switches, not code changes; the user turns them on.
 - **Small calls:** the DM returns compact structured plans, not prose essays, and only requests the files it needs.
 
 ---
@@ -323,11 +324,18 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.4 changes (cost: about $1.50 per session was too much)
+- **Per-turn model choice:** Haiku 5.5 for routine DM turns, Sonnet 5.5 for big moments (see Cost control). The status bar and cost log name the model used. Note condensing uses Haiku; campaign setup, sheets and recaps use Sonnet.
+- **Layered prompt for caching** (see Cost control). Checked against SillyTavern's own `convertClaudeMessages` + `cachingAtDepthForClaude`: breakpoints land on the system prompt and both context layers, nothing else. Note condensing no longer appends its instructions to the system prompt, so it reuses the same cache.
+- **Per-model prices** (Sonnet 5.5 $2/$10, cache read $0.10; Haiku 5.5 $0.10/$0.50, cache read $0.01 per million tokens), cache writes priced at 1.25× input (2× for the 1-hour cache). The estimate tracks which layers were sent in the last 5 minutes (or hour) per model.
+- How often the DM is called is unchanged on purpose.
+- Tested offline (test copy of SillyTavern with Claude stubbed): settings panel, model per tier, message layers, cost estimates for cold/warm cache, and a full `askDm` round with an in-memory campaign.
+
 ### Verified in a live test (isolated copy of SillyTavern, port 8011)
 Wizard → campaign build (Judy's sheet + bible/plot/opening) → group chat with no greetings → banter turn (local only, helper 0.7 s) → risky action (DM asks Stealth, hidden DC) → typed roll resolves → DM narrates → Judy follows her direction → new NPC registered with a voice and voiced locally → random event woven in → combat (initiative, attack, damage, HP) → persona PDF form fields read and converted → DM Screen. About $0.20 of Claude estimated for all testing.
 
 ### Not yet verified
 - Long campaigns over many sessions (story summaries, note condensing, "Previously on…" recap).
 - Actor connection profile switching (`/profile` swap), which wasn't exercised because your saved profiles point at `127.0.0.1` addresses that only exist on the laptop/server.
-- Prompt caching savings (needs the `config.yaml` switch).
+- Real prompt-caching savings and Haiku's DM quality in real play (needs the `config.yaml` switches and a session; check the Anthropic console's cache-read numbers).
 - Running on the AI server itself.

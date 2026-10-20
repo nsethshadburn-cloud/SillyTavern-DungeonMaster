@@ -3,6 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
+import { DEFAULT_BIG_REASONS } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -19,7 +20,11 @@ export const DEFAULTS = Object.freeze({
 
     // Connections (Connection Manager profile ids; '' = default behavior)
     dmProfileId: '',            // '' = first Claude profile, else SillyTavern's saved Claude key
-    dmModel: 'claude-sonnet-5-5',
+    dmModel: 'claude-sonnet-5-5',          // big model: campaign setup and story-shaping turns
+    dmModelRoutine: 'claude-haiku-5-5',    // routine model: rolls, check-ins, quick rulings
+    autoModel: true,            // false = the big model handles every DM turn
+    bigReasons: { ...DEFAULT_BIG_REASONS }, // which kinds of DM turn use the big model
+    bigOnCritical: true,        // natural 1s and 20s get the big model
     dmEffort: 'low',            // Claude thinking effort: low | medium | high
     dmMaxTokens: 6000,
     actorProfileId: '',         // '' = whatever connection is currently selected
@@ -30,12 +35,16 @@ export const DEFAULTS = Object.freeze({
     // Budget (USD) and Claude prices (USD per million tokens)
     monthlyCap: 20,
     nightlySoftCap: 0.65,
-    priceInput: 2,
+    modelPrices: {
+        'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.1 },
+        'claude-haiku-5-5': { input: 0.1, output: 0.5, cacheRead: 0.01 },
+    },
+    priceInput: 2,              // fallback prices for models not in modelPrices
     priceOutput: 10,
     priceCacheRead: 0.2,
-    priceCacheWrite: 2.5,
     thinkingAllowance: 500,
-    cachingEnabled: false,      // set true after enabling claude.enableSystemPromptCache in config.yaml
+    cachingEnabled: false,      // set true after turning on caching in config.yaml (see README)
+    cacheTtlMinutes: 5,         // 5, or 60 with claude.extendedTTL: true
 
     // Pacing
     checkinEvery: 10,
@@ -87,7 +96,17 @@ export function settings() {
     for (const [k, v] of Object.entries(DEFAULT_TEMPLATES)) if (typeof s.templates[k] !== 'string') s.templates[k] = v;
     for (const [k, v] of Object.entries(DEFAULT_LENGTHS)) if (typeof s.lengths[k] !== 'string') s.lengths[k] = v;
     for (const k of Object.keys(SURPRISES)) if (typeof s.surprises[k] !== 'boolean') s.surprises[k] = true;
+    for (const [k, v] of Object.entries(DEFAULT_BIG_REASONS)) if (typeof s.bigReasons[k] !== 'boolean') s.bigReasons[k] = v;
+    for (const [k, v] of Object.entries(DEFAULTS.modelPrices)) if (!s.modelPrices[k]) s.modelPrices[k] = { ...v };
     return s;
+}
+
+/** Prices (USD per million tokens) for a model: its own row, or the fallback prices. */
+export function pricesFor(model) {
+    const s = settings();
+    const row = s.modelPrices?.[model];
+    if (row) return { input: Number(row.input) || 0, output: Number(row.output) || 0, cacheRead: Number(row.cacheRead) || 0 };
+    return { input: Number(s.priceInput) || 0, output: Number(s.priceOutput) || 0, cacheRead: Number(s.priceCacheRead) || 0 };
 }
 
 export function saveSettings() {

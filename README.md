@@ -22,14 +22,20 @@ Settings, character sheets and campaigns are stored per SillyTavern install, so 
 1. **Reload SillyTavern** (F5). The extension loads automatically once it's installed for your SillyTavern user.
 2. Open **Extensions** (the stacked-blocks icon) and find **🎲 Dungeon Master**. Check:
    - **DM profile:** "Auto" uses your saved **Claude** profile and key. That's fine.
-   - **DM model:** Claude Sonnet 5.5 (the default).
+   - **DM models:** Claude Sonnet 5.5 for big moments and Claude Haiku 5.5 for routine turns (the defaults). With **Pick the model automatically** on, each DM turn uses whichever fits: Sonnet for openings, travel, events, combat rounds, steering back to the plot and your natural 1s/20s; Haiku for roll results, risky-action rulings, check-ins, new NPCs and out-of-character questions. Change which is which under **Which DM turns use the big-moments model**.
    - **Actors / Helper:** leave them on "current connection" unless you want a different server.
    - **Budget:** $20/month is set. The nightly soft cap ($0.65) makes the DM check in less often once it's reached.
    - **Voices:** pick a **DM voice** and press **Test DM voice**. Open **NPC voice pool** to switch voices on or off and fix any wrong genders.
 3. **Your character sheet:** open the **Persona** panel and click the new **📜 scroll** button. Pick your 5e PDF; Claude converts it once (about 1¢) and then it's locked.
 4. **Thinking models (Gemma 4 / Orion):** nothing to do. In group chats SillyTavern starts each reply with "Name:", which makes these models skip thinking and garble words. In campaign chats the extension removes that one prefix automatically (other chats are untouched).
 5. Optional: lower your **Response length** to about 2048 in the left sliders panel, so the story has room in the context.
-6. Optional, saves money: in SillyTavern's `config.yaml`, set `claude: enableSystemPromptCache: true`, restart SillyTavern, then tick **"I turned on Claude prompt caching"** in the extension settings.
+6. **Recommended, saves the most money:** turn on Claude prompt caching. In SillyTavern's `config.yaml` (on the machine running SillyTavern), find the `claude:` section and set:
+   ```yaml
+   claude:
+     enableSystemPromptCache: true
+     cachingAtDepth: 2
+   ```
+   Restart SillyTavern, then tick **"I turned on Claude prompt caching"** in the extension settings. The DM's rules, character sheets, plot and notes are then reused from Claude's cache between turns at a tenth of the price or less, instead of being paid for in full every call. The cache lasts 5 minutes after each DM call; if you often go longer between DM turns, also set `extendedTTL: true` there and pick **1 hour** under **Cache lifetime** (writing to the cache costs a bit more, reading it stays cheap). These settings only affect Claude.
 
 ## Starting a campaign
 
@@ -47,7 +53,7 @@ Just roleplay. Behind the scenes, each message goes through:
 
 - **The helper** (your local model, under a second) reads your move.
 - **Talking and roleplay** → your companions answer on the local model, playing freely. **Free.**
-- **Risky things** (sneaking, lying, climbing, attacking), **travel**, **talking to someone new**, or a **random event** → the **DM (Claude)** steps in. About 2¢ per call.
+- **Risky things** (sneaking, lying, climbing, attacking), **travel**, **talking to someone new**, or a **random event** → the **DM (Claude)** steps in. Routine DM turns on Haiku cost a fraction of a cent; big moments on Sonnet about 1.5–5¢ (the low end with caching on).
 - Every ~10 local turns the DM does a quick **check-in** to keep pacing on track.
 
 **What the bot sees.** The DM's narration is for you only; the bot never reads it (that's what made it chase random details and drive the plot). Instead, when Claude handles a turn it gives each companion a short private **brief**: only what they need to know and want, never their words. Every reply also gets a short **scene note** (where you are, who's here, the goal, and a 3-4 sentence length target). You can read and edit all of this in **Settings → What the bot is told**, with **Reset to default** on each part and a **Preview** of exactly what the bot gets in the current chat.

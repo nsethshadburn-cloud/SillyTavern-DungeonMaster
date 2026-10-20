@@ -4,28 +4,40 @@
 
 import { estimateTokens } from './text.js';
 
+/** Claude only caches a prefix this long or longer. */
+export const MIN_CACHE_TOKENS = 1024;
+
+/** Cache writes cost more than plain input: 1.25× for the 5-minute cache, 2× for the 1-hour one. */
+export function cacheWriteMultiplier(ttlMinutes) {
+    return Number(ttlMinutes) >= 60 ? 2 : 1.25;
+}
+
 /**
- * @param {{stableText:string, volatileText:string, outputText:string, thinkingAllowance:number,
- *          prices:{input:number, output:number, cacheRead:number, cacheWrite:number}, cacheHit:boolean, cachingEnabled:boolean}} p
- * prices are USD per million tokens
+ * @param {{blocks:Array<{text:string, cache?:'hit'|'write'|'none'}>, outputText:string, thinkingAllowance:number,
+ *          prices:{input:number, output:number, cacheRead:number}, writeMultiplier?:number}} p
+ * blocks are the prompt in order; prices are USD per million tokens.
+ * A block marked 'hit' or 'write' only counts as cached once the prompt up to it reaches MIN_CACHE_TOKENS.
  */
 export function estimateCallCost(p) {
-    const stable = estimateTokens(p.stableText);
-    const volatile = estimateTokens(p.volatileText);
-    const output = estimateTokens(p.outputText) + (p.thinkingAllowance || 0);
     const per = (tokens, price) => tokens * (price || 0) / 1_000_000;
-    let inputCost;
-    if (p.cachingEnabled && stable >= 1024) {
-        inputCost = p.cacheHit ? per(stable, p.prices.cacheRead) : per(stable, p.prices.cacheWrite);
-        inputCost += per(volatile, p.prices.input);
-    } else {
-        inputCost = per(stable + volatile, p.prices.input);
+    const writeMultiplier = p.writeMultiplier ?? 1.25;
+    let prefix = 0;
+    let inputTokens = 0;
+    let inputCost = 0;
+    for (const block of p.blocks) {
+        const tokens = estimateTokens(block.text);
+        prefix += tokens;
+        inputTokens += tokens;
+        const cacheable = prefix >= MIN_CACHE_TOKENS;
+        if (cacheable && block.cache === 'hit') inputCost += per(tokens, p.prices.cacheRead);
+        else if (cacheable && block.cache === 'write') inputCost += per(tokens, p.prices.input) * writeMultiplier;
+        else inputCost += per(tokens, p.prices.input);
     }
-    const outputCost = per(output, p.prices.output);
+    const output = estimateTokens(p.outputText) + (p.thinkingAllowance || 0);
     return {
-        inputTokens: stable + volatile,
+        inputTokens,
         outputTokens: output,
-        usd: round6(inputCost + outputCost),
+        usd: round6(inputCost + per(output, p.prices.output)),
     };
 }
 
