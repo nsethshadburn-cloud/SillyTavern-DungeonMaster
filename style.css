@@ -208,3 +208,8 @@
 .dm-preview { white-space: pre-wrap; text-align: left; font-family: var(--monoFontFamily, monospace); font-size: 0.85em; }
 .dm-price-row { margin: 4px 0; }
 .dm-price-row b { font-size: 0.9em; opacity: 0.8; }
+.dm-task-group { margin: 6px 0; }
+.dm-task-group > b { display: block; font-size: 0.9em; opacity: 0.85; margin-bottom: 2px; }
+.dm-task-row { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+.dm-task-row > span { flex: 1 1 55%; font-size: 0.9em; }
+.dm-task-row > select { flex: 1 1 45%; min-width: 0; margin: 0; }

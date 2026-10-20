@@ -82,7 +82,7 @@ export async function createPersonaSheetFromPdf(personaAvatar, personaName, file
         trimToTokens(pdf.text || '(none)', 12000),
     ].join('\n');
     onStep('Claude is converting the sheet');
-    const reply = await callClaude({ system: SHEET_FROM_PDF_INSTRUCTIONS, user, label: 'persona sheet', maxTokens: 8000, effort: 'low', force: true });
+    const reply = await callClaude({ system: SHEET_FROM_PDF_INSTRUCTIONS, user, task: 'persona_sheet', label: 'persona sheet', maxTokens: 8000, effort: 'low', force: true });
     const sheet = parseSheetReply(reply.text);
     const fileName = `dmsheet_persona_${slug(personaName, 30)}_${shortId()}.md`;
     await writeFile(fileName, sheet.markdown);
@@ -110,6 +110,7 @@ export async function createCharacterSheet(characterAvatar, onStep = () => { }) 
     const reply = await callClaude({
         system: SHEET_FROM_CARD_INSTRUCTIONS,
         user: ST.substituteParams(trimToTokens(card, 6000)),
+        task: 'character_sheet',
         label: `${ch.name} sheet`,
         maxTokens: 6000,
         effort: 'low',

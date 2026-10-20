@@ -1,78 +1,90 @@
-// Which Claude model handles a DM call: the big model (Sonnet) for moments that shape the story,
-// the routine model (Haiku) for everything else. Pure module.
+// Which Claude model does each job. With hybrid mode on, every job has its own model (Sonnet for
+// setup, story direction and combat; Haiku for everyday play by default). With it off, the main
+// DM model does everything. Pure module.
 
-/** Why the DM gets called, with a plain label for the settings panel. */
-export const DM_REASON_LABELS = Object.freeze({
-    opening: 'Opening a campaign',
-    scene_move: 'Travel, rests and time skips',
-    event: 'Random events',
-    drift: 'Steering back to the plot',
-    stalled: 'Unsticking a stuck scene',
-    combat_round: 'Combat rounds',
-    combat_action: 'Your actions in combat',
-    risky_action: 'Risky actions (sneak, lie, climb, attack)',
-    roll_result: 'Narrating your roll results',
-    npc_addressed: 'Talking to someone new',
-    ooc: 'Out-of-character questions',
-    checkin: 'Routine check-ins',
-    manual: 'When you ask the DM to step in',
-});
+export const DEFAULT_MAIN_MODEL = 'claude-sonnet-5-5';
+export const DEFAULT_LIGHT_MODEL = 'claude-haiku-5-5';
 
 /**
- * Defaults: true = big model. The big model opens the story, keeps its direction (drift, stuck
- * scenes, check-ins) and runs every fight, including the turn that starts one. Everything else
- * goes to the routine model, which can hand a turn up when it's a real story moment (escalate).
+ * Every job Claude does, in the order the settings panel shows them.
+ * key = the DM call reason (core/pacing.js dmReasons) or a non-turn job; main = uses the main model by default.
  */
-export const DEFAULT_BIG_REASONS = Object.freeze({
-    opening: true,
-    scene_move: false,
-    event: false,
-    drift: true,
-    stalled: true,
-    combat_round: true,
-    combat_action: true,
-    risky_action: false,
-    roll_result: false,
-    npc_addressed: false,
-    ooc: false,
-    checkin: true,
-    manual: false,
-});
-export const DEFAULT_BIG_ON_CRITICAL = false;
-export const MODEL_DEFAULTS_VERSION = 2;
+export const TASKS = Object.freeze([
+    { key: 'campaign_design', group: 'Setup', label: 'Designing a new campaign', main: true },
+    { key: 'pitches', group: 'Setup', label: 'Pitching story ideas', main: true },
+    { key: 'opening', group: 'Setup', label: 'The opening scene', main: true },
+    { key: 'persona_sheet', group: 'Setup', label: 'Reading your PDF character sheet', main: true },
+    { key: 'character_sheet', group: 'Setup', label: 'Writing sheets for party members', main: true },
+    { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: true },
+    { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: true },
+    { key: 'checkin', group: 'Story direction', label: 'Routine check-ins', main: true },
+    { key: 'combat_action', group: 'Combat', label: 'Starting fights and your combat actions', main: true },
+    { key: 'combat_round', group: 'Combat', label: 'Running combat rounds', main: true },
+    { key: 'risky_action', group: 'Everyday play', label: 'Risky actions (sneak, lie, climb)', main: false },
+    { key: 'roll_result', group: 'Everyday play', label: 'Narrating your roll results', main: false },
+    { key: 'scene_move', group: 'Everyday play', label: 'Travel, rests and time skips', main: false },
+    { key: 'event', group: 'Everyday play', label: 'Random events', main: false },
+    { key: 'npc_addressed', group: 'Everyday play', label: 'Talking to someone new', main: false },
+    { key: 'ooc', group: 'Everyday play', label: 'Out-of-character questions', main: false },
+    { key: 'manual', group: 'Everyday play', label: 'When you ask the DM to step in', main: false },
+    { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
+    { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
+]);
 
-/** v0.4.0's defaults, so saved settings that were never customized can move to the new ones. */
-const V1_BIG_REASONS = Object.freeze({
+/** The recommended model for every job. */
+export function defaultTaskModels(main = DEFAULT_MAIN_MODEL, light = DEFAULT_LIGHT_MODEL) {
+    return Object.fromEntries(TASKS.map(t => [t.key, t.main ? main : light]));
+}
+
+/**
+ * The model for one call.
+ * @param {string[]} tasks the jobs this call covers (a DM turn can have several reasons)
+ * @param {{hybrid:boolean, mainModel:string, taskModels:Record<string,string>, criticalModel?:string, criticalRoll?:boolean, rank?:(model:string)=>number}} o
+ *  rank: bigger = more capable; when a call covers several jobs, the highest-ranked model wins.
+ *  criticalModel: '' = no change for natural 1s and 20s.
+ */
+export function pickModel(tasks, { hybrid, mainModel, taskModels, criticalModel = '', criticalRoll = false, rank = () => 0 }) {
+    if (!hybrid) return mainModel;
+    // A job the settings don't know about (added in a later version) uses the main model.
+    const models = tasks.map(t => taskModels?.[t] || mainModel);
+    if (criticalRoll && criticalModel) models.push(criticalModel);
+    if (!models.length) return mainModel;
+    // Highest rank wins; on a tie the main model wins, then the first listed.
+    return models.reduce((best, m) => {
+        const diff = rank(m) - rank(best);
+        if (diff > 0) return m;
+        if (diff === 0 && m === mainModel) return m;
+        return best;
+    });
+}
+
+/** v0.4.0's big-model checklist, to tell untouched settings from customized ones. */
+const V040_BIG = Object.freeze({
     opening: true, scene_move: true, event: true, drift: true, stalled: true, combat_round: true,
     combat_action: false, risky_action: false, roll_result: false, npc_addressed: false, ooc: false, checkin: false, manual: true,
 });
 
 /**
- * Bring saved model-routing settings up to the current defaults, unless the player changed them.
- * @param {{bigReasons?:Record<string, boolean>, bigOnCritical?:boolean, modelDefaultsVersion?:number}} saved
+ * Move v0.4.x settings (a big/routine model pair plus a big-model checklist) to per-job models.
+ * Untouched v0.4.0 defaults become the current recommended models; anything else keeps its choices.
+ * @param {any} s saved settings (mutated)
  * @returns {boolean} true if anything changed
  */
-export function migrateModelDefaults(saved) {
-    if ((saved.modelDefaultsVersion ?? 1) >= MODEL_DEFAULTS_VERSION) return false;
-    const untouched = Object.entries(V1_BIG_REASONS).every(([k, v]) => (saved.bigReasons?.[k] ?? v) === v) && saved.bigOnCritical !== false;
-    if (untouched) {
-        saved.bigReasons = { ...DEFAULT_BIG_REASONS };
-        saved.bigOnCritical = DEFAULT_BIG_ON_CRITICAL;
+export function migrateModelSettings(s) {
+    if (s.taskModels && typeof s.taskModels === 'object') return false;
+    const main = s.dmModel || DEFAULT_MAIN_MODEL;
+    const light = s.dmModelRoutine || DEFAULT_LIGHT_MODEL;
+    s.taskModels = defaultTaskModels(main, light);
+    if (s.bigReasons && typeof s.bigReasons === 'object') {
+        const untouchedV040 = (s.modelDefaultsVersion ?? 1) < 2 && Object.entries(V040_BIG).every(([k, v]) => s.bigReasons[k] === v);
+        if (!untouchedV040) {
+            for (const [k, big] of Object.entries(s.bigReasons)) if (k in s.taskModels) s.taskModels[k] = big ? main : light;
+            if (s.bigOnCritical === true) s.criticalModel = main;
+        }
+        if (s.autoModel === false) s.hybridModels = false;
     }
-    saved.modelDefaultsVersion = MODEL_DEFAULTS_VERSION;
+    for (const k of ['bigReasons', 'bigOnCritical', 'dmModelRoutine', 'autoModel', 'modelDefaultsVersion']) delete s[k];
     return true;
-}
-
-/**
- * @param {string[]} reasons why the DM is being called
- * @param {{auto?:boolean, bigReasons?:Record<string, boolean>, criticalRoll?:boolean, bigOnCritical?:boolean}} opts
- * @returns {'big'|'routine'}
- */
-export function pickDmTier(reasons, { auto = true, bigReasons = DEFAULT_BIG_REASONS, criticalRoll = false, bigOnCritical = DEFAULT_BIG_ON_CRITICAL } = {}) {
-    if (!auto) return 'big';
-    if (criticalRoll && bigOnCritical) return 'big';
-    // A reason the settings don't know about (added in a later version) counts as big.
-    return reasons.some(r => bigReasons[r] ?? true) ? 'big' : 'routine';
 }
 
 /** "claude-haiku-5-5" → "Haiku" for status lines and cost logs. */

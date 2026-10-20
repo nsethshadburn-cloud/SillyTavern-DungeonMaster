@@ -10,7 +10,7 @@ import { extractJson, stripThinking, stripSpeakerPrefix, matchName, slug } from 
 import { parseDmTurn } from '../src/core/protocol.js';
 import { createWorldState, ensureParty, applyStateChanges, lookupModifier, startCombat, worldFlags, addNpcs } from '../src/core/world.js';
 import { estimateCallCost, budgetStatus, nightKey, cacheWriteMultiplier } from '../src/core/budget.js';
-import { pickDmTier, modelLabel, migrateModelDefaults, DEFAULT_BIG_REASONS, DM_REASON_LABELS } from '../src/core/models.js';
+import { pickModel, modelLabel, migrateModelSettings, defaultTaskModels, TASKS } from '../src/core/models.js';
 
 test('dice notation parses and rolls in range', () => {
     assert.deepEqual(parseNotation('1d20+5').terms.length, 2);
@@ -182,46 +182,54 @@ test('budget estimates', () => {
     assert.equal(nightKey(new Date(2026, 9, 19, 2, 0)), '2026-10-18');
 });
 
-test('DM model tier: Sonnet for setup, direction and combat, Haiku for the rest', () => {
-    assert.equal(pickDmTier(['roll_result']), 'routine');
-    assert.equal(pickDmTier(['risky_action', 'npc_addressed']), 'routine');
-    assert.equal(pickDmTier(['scene_move']), 'routine');
-    assert.equal(pickDmTier(['event']), 'routine');
-    assert.equal(pickDmTier(['ooc']), 'routine');
-    assert.equal(pickDmTier(['opening']), 'big');
-    assert.equal(pickDmTier(['checkin']), 'big', 'check-ins keep the story direction');
-    assert.equal(pickDmTier(['drift']), 'big');
-    assert.equal(pickDmTier(['stalled']), 'big');
-    assert.equal(pickDmTier(['combat_action']), 'big', 'the turn that starts a fight');
-    assert.equal(pickDmTier(['combat_action', 'combat_round', 'roll_result']), 'big');
-    assert.equal(pickDmTier(['risky_action', 'drift']), 'big', 'any big reason wins');
-    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true }), 'routine', 'criticals are off by default');
-    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true, bigOnCritical: true }), 'big');
-    assert.equal(pickDmTier(['roll_result'], { auto: false }), 'big');
-    assert.equal(pickDmTier(['some_future_reason']), 'big', 'unknown reasons are treated as big');
-    assert.deepEqual(Object.keys(DEFAULT_BIG_REASONS).sort(), Object.keys(DM_REASON_LABELS).sort(), 'every reason has a label and a default');
-    assert.equal(modelLabel('claude-haiku-5-5'), 'Haiku');
-    assert.equal(modelLabel('claude-sonnet-5-5'), 'Sonnet');
+test('per-job models: Sonnet for setup, direction and combat, Haiku for the rest', () => {
+    const S = 'claude-sonnet-5-5', H = 'claude-haiku-5-5';
+    const taskModels = defaultTaskModels();
+    const price = { [S]: 2, [H]: 0.1, 'claude-opus-5-5': 5 };
+    const o = { hybrid: true, mainModel: S, taskModels, rank: m => price[m] ?? 0 };
+    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'drift', 'stalled', 'checkin', 'combat_action', 'combat_round']) {
+        assert.equal(pickModel([k], o), S, k);
+    }
+    for (const k of ['risky_action', 'roll_result', 'scene_move', 'event', 'npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes']) {
+        assert.equal(pickModel([k], o), H, k);
+    }
+    assert.equal(pickModel(['risky_action', 'drift'], o), S, 'the more capable model wins when jobs disagree');
+    assert.equal(pickModel(['roll_result'], { ...o, criticalRoll: true }), H, 'criticals unchanged by default');
+    assert.equal(pickModel(['roll_result'], { ...o, criticalRoll: true, criticalModel: S }), S);
+    assert.equal(pickModel(['roll_result'], { ...o, hybrid: false }), S, 'hybrid off = main model for everything');
+    assert.equal(pickModel(['some_future_job'], o), S, 'unknown jobs use the main model');
+    assert.equal(pickModel(['event'], { ...o, taskModels: { ...taskModels, event: 'claude-opus-5-5' } }), 'claude-opus-5-5', 'any model per job');
+    assert.equal(new Set(TASKS.map(t => t.key)).size, TASKS.length, 'job keys are unique');
+    for (const r of ['ooc', 'roll_result', 'risky_action', 'scene_move', 'combat_action', 'combat_round', 'event', 'stalled', 'npc_addressed', 'drift', 'checkin', 'opening', 'manual']) {
+        assert.ok(TASKS.some(t => t.key === r), `DM reason ${r} has a job`);
+    }
+    assert.equal(modelLabel(H), 'Haiku');
+    assert.equal(modelLabel(S), 'Sonnet');
 });
 
-test('saved model settings move to new defaults only if never customized', () => {
-    const v1 = { opening: true, scene_move: true, event: true, drift: true, stalled: true, combat_round: true, combat_action: false, risky_action: false, roll_result: false, npc_addressed: false, ooc: false, checkin: false, manual: true };
-    const untouched = { bigReasons: { ...v1 }, bigOnCritical: true };
-    assert.equal(migrateModelDefaults(untouched), true);
-    assert.deepEqual(untouched.bigReasons, { ...DEFAULT_BIG_REASONS });
-    assert.equal(untouched.bigOnCritical, false);
-    assert.equal(untouched.modelDefaultsVersion, 2);
-    assert.equal(migrateModelDefaults(untouched), false, 'runs once');
+test('older model settings move to per-job models', () => {
+    const S = 'claude-sonnet-5-5', H = 'claude-haiku-5-5';
+    const v040 = { opening: true, scene_move: true, event: true, drift: true, stalled: true, combat_round: true, combat_action: false, risky_action: false, roll_result: false, npc_addressed: false, ooc: false, checkin: false, manual: true };
 
-    const custom = { bigReasons: { ...v1, roll_result: true }, bigOnCritical: true };
-    migrateModelDefaults(custom);
-    assert.equal(custom.bigReasons.roll_result, true, 'customized settings are kept');
-    assert.equal(custom.bigReasons.scene_move, true);
-    assert.equal(custom.modelDefaultsVersion, 2);
+    const untouched = { dmModel: S, dmModelRoutine: H, autoModel: true, bigReasons: { ...v040 }, bigOnCritical: true };
+    assert.equal(migrateModelSettings(untouched), true);
+    assert.deepEqual(untouched.taskModels, defaultTaskModels(), 'untouched v0.4.0 → recommended');
+    assert.equal(untouched.criticalModel, undefined);
+    assert.equal(untouched.bigReasons, undefined, 'old keys removed');
+    assert.equal(migrateModelSettings(untouched), false, 'runs once');
 
-    const current = { bigReasons: { ...DEFAULT_BIG_REASONS, event: true }, modelDefaultsVersion: 2 };
-    assert.equal(migrateModelDefaults(current), false);
-    assert.equal(current.bigReasons.event, true);
+    const custom = { dmModel: S, dmModelRoutine: H, autoModel: false, bigReasons: { ...v040, roll_result: true }, bigOnCritical: true, modelDefaultsVersion: 2 };
+    migrateModelSettings(custom);
+    assert.equal(custom.taskModels.roll_result, S, 'customized choices kept');
+    assert.equal(custom.taskModels.ooc, H);
+    assert.equal(custom.taskModels.persona_sheet, S, 'new jobs get the recommended model');
+    assert.equal(custom.criticalModel, S);
+    assert.equal(custom.hybridModels, false, 'auto off → hybrid off');
+
+    const neverHadModels = { dmModel: 'claude-opus-5-5' };
+    migrateModelSettings(neverHadModels);
+    assert.equal(neverHadModels.taskModels.opening, 'claude-opus-5-5', 'main jobs follow the saved main model');
+    assert.equal(neverHadModels.taskModels.roll_result, H);
 });
 
 test('DM can hand a turn up', () => {

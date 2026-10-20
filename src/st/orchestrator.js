@@ -3,12 +3,11 @@
 // 4) DM (Claude) only if needed  5) actors reply  6) bookkeeping.
 
 import { ST } from './st.js';
-import { settings, currentSpend } from './settings.js';
+import { settings, currentSpend, modelFor } from './settings.js';
 import { campaign, saveMeta, saveDoc } from './campaign.js';
 import { callLocal, BudgetError } from './llm.js';
 import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
-import { resolveDmConnection } from './llm.js';
-import { pickDmTier, modelLabel } from '../core/models.js';
+import { modelLabel } from '../core/models.js';
 import { makeSpeak, refreshStandingPrompt, speakerCandidates } from './actors.js';
 import { postNarration, postOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName } from './sheets.js';
@@ -200,8 +199,8 @@ async function turnBody(c, opts, status, signal) {
     }
 
     if (reasons.length) {
-        const tier = pickDmTier(reasons, { auto: s.autoModel, bigReasons: s.bigReasons, criticalRoll, bigOnCritical: s.bigOnCritical });
-        const step = status.step(`DM is thinking (${modelLabel(resolveDmConnection(tier).model)}) · ${reasons.join(', ')}`);
+        const model = modelFor(reasons, { criticalRoll });
+        const step = status.step(`DM is thinking (${modelLabel(model)}) · ${reasons.join(', ')}`);
         let result;
         try {
             result = await askDm({
@@ -210,7 +209,7 @@ async function turnBody(c, opts, status, signal) {
                 rollResolution,
                 events,
                 oocText: opts.oocText || triage.oocText || '',
-            }, { signal, tier });
+            }, { signal, model });
             step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
             turnUsd += result.usd;
         } catch (error) {

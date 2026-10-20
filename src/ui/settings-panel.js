@@ -10,7 +10,7 @@ import { fetchVoices, syncVoicePool, speak, ttsConfig } from '../st/voices.js';
 import { sheetMarkdown } from '../st/sheets.js';
 import { escapeHtml } from '../core/text.js';
 import { formatUsd } from '../core/budget.js';
-import { DM_REASON_LABELS } from '../core/models.js';
+import { TASKS, defaultTaskModels } from '../core/models.js';
 
 const MODELS = [
     ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (recommended)'],
@@ -39,22 +39,43 @@ function modelPicker(id, value, label) {
       <input id="${id}-custom" class="text_pole ${known ? 'dm-hidden' : ''}" placeholder="model id, e.g. claude-sonnet-5-5" value="${known ? '' : escapeHtml(value)}">`;
 }
 
-function bindModelPicker(id, key) {
+function bindModelPicker(id, onPick) {
     $(`#${id}`).on('change', function () {
         const v = String($(this).val());
         $(`#${id}-custom`).toggleClass('dm-hidden', v !== '__custom');
-        if (v !== '__custom') { settings()[key] = v; saveSettings(); renderPrices(); }
+        if (v !== '__custom') onPick(v);
     });
     $(`#${id}-custom`).on('change', function () {
         const v = String($(this).val()).trim();
-        if (v) { settings()[key] = v; saveSettings(); renderPrices(); }
+        if (v) onPick(v);
     });
+}
+
+/** Every model id the per-job dropdowns can offer: the known list plus any custom ids in use. */
+function modelChoices() {
+    const s = settings();
+    const short = id => (MODELS.find(([m]) => m === id)?.[1] ?? id).replace(/ \(.*\)$/, '');
+    const ids = [...new Set([...MODELS.map(([m]) => m), s.dmModel, ...Object.values(s.taskModels), s.criticalModel].filter(Boolean))];
+    return ids.map(id => [id, short(id)]);
+}
+
+/** The per-job model dropdowns, grouped as in core/models.js TASKS. */
+function renderTaskModels() {
+    const s = settings();
+    const choices = modelChoices();
+    const options = value => choices.map(([id, text]) => `<option value="${escapeHtml(id)}" ${id === value ? 'selected' : ''}>${escapeHtml(text)}${id === s.dmModel ? ' (main)' : ''}</option>`).join('');
+    const groups = [...new Set(TASKS.map(t => t.group))];
+    const html = groups.map(g => `<div class="dm-task-group"><b>${escapeHtml(g)}</b>${TASKS.filter(t => t.group === g).map(t => `
+        <label class="dm-task-row"><span>${escapeHtml(t.label)}</span><select class="text_pole" data-task-model="${t.key}">${options(s.taskModels[t.key])}</select></label>`).join('')}</div>`).join('')
+        + `<div class="dm-task-group"><b>Dice</b>
+        <label class="dm-task-row"><span>Turns with your natural 1 or 20</span><select class="text_pole" id="dm-critical-model"><option value="" ${s.criticalModel ? '' : 'selected'}>Same as the turn</option>${options(s.criticalModel)}</select></label></div>`;
+    $('#dm-task-models-body').html(html);
 }
 
 /** Price rows for the models in use (USD per million tokens). */
 function renderPrices() {
     const s = settings();
-    const models = [...new Set([s.dmModel, s.dmModelRoutine].filter(Boolean))];
+    const models = [...new Set([s.dmModel, ...(s.hybridModels ? [...Object.values(s.taskModels), s.criticalModel] : [])].filter(Boolean))];
     const rows = models.map(m => {
         const p = s.modelPrices[m] ?? { input: s.priceInput, output: s.priceOutput, cacheRead: s.priceCacheRead };
         const field = (k, label) => `<label>${label}<input type="number" step="0.01" min="0" class="text_pole" data-price-model="${escapeHtml(m)}" data-price-key="${k}" value="${p[k]}"></label>`;
@@ -92,16 +113,16 @@ function panelHtml() {
       <h4>Connections</h4>
       <label>Dungeon Master (Claude) profile
         <select id="dm-dm-profile" class="text_pole">${profileOptions(s.dmProfileId, { emptyLabel: 'Auto: first Claude profile / saved Claude key', filter: p => p.api === 'claude' })}</select></label>
-      ${modelPicker('dm-model', s.dmModel, 'DM model for big moments')}
-      ${modelPicker('dm-model-routine', s.dmModelRoutine, 'DM model for routine turns')}
-      <label class="checkbox_label"><input id="dm-auto-model" type="checkbox" ${s.autoModel ? 'checked' : ''}> Pick the model automatically for each DM turn (off = the big-moments model does everything)</label>
-      <details><summary>Which DM turns use the big-moments model</summary>
-        <div class="dm-grid2">
-          ${Object.entries(DM_REASON_LABELS).map(([k, label]) => `<label class="checkbox_label"><input type="checkbox" data-big-reason="${k}" ${s.bigReasons[k] ? 'checked' : ''}> ${escapeHtml(label)}</label>`).join('')}
-          <label class="checkbox_label"><input id="dm-big-critical" type="checkbox" ${s.bigOnCritical ? 'checked' : ''}> Your natural 1s and 20s</label>
-        </div>
-        <small>Unticked turns go to the routine model. Campaign setup, character sheets and recaps always use the big-moments model.</small>
-      </details>
+
+      <h4>Dungeon Master models</h4>
+      ${modelPicker('dm-model', s.dmModel, 'Main DM model')}
+      <label class="checkbox_label"><input id="dm-hybrid" type="checkbox" ${s.hybridModels ? 'checked' : ''}> Hybrid models: each job uses its own model (recommended, much cheaper). Off = the main model does everything.</label>
+      <div id="dm-task-models" class="${s.hybridModels ? '' : 'dm-hidden'}">
+        <small>Recommended: Sonnet for setup, story direction and combat; Haiku for everyday play.</small>
+        <div id="dm-task-models-body"></div>
+        <label class="checkbox_label"><input id="dm-hand-up" type="checkbox" ${s.handUp ? 'checked' : ''}> Let cheaper models hand a big story moment (major reveal, plot beat, a fight breaking out, a new chapter) up to the main model</label>
+        <div id="dm-task-models-reset" class="menu_button">Reset to recommended</div>
+      </div>
       <label>DM thinking effort
         <select id="dm-effort" class="text_pole">
           ${['low', 'medium', 'high'].map(e => `<option value="${e}" ${e === s.dmEffort ? 'selected' : ''}>${e}${e === 'low' ? ' (cheapest, recommended)' : ''}</option>`).join('')}
@@ -286,13 +307,41 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     $('#dm-open-screen').on('click', onScreen);
     bindCheck('dm-enabled', 'enabled');
     bindSelect('dm-dm-profile', 'dmProfileId');
-    bindModelPicker('dm-model', 'dmModel');
-    bindModelPicker('dm-model-routine', 'dmModelRoutine');
-    bindCheck('dm-auto-model', 'autoModel');
-    bindCheck('dm-big-critical', 'bigOnCritical');
-    $('[data-big-reason]').on('change', function () {
-        settings().bigReasons[String($(this).data('big-reason'))] = $(this).is(':checked');
+    bindModelPicker('dm-model', v => {
+        const st = settings();
+        // Jobs that used the old main model follow it to the new one.
+        for (const t of TASKS) if (st.taskModels[t.key] === st.dmModel) st.taskModels[t.key] = v;
+        if (st.criticalModel === st.dmModel) st.criticalModel = v;
+        st.dmModel = v;
         saveSettings();
+        renderTaskModels();
+        renderPrices();
+    });
+    bindCheck('dm-hybrid', 'hybridModels', () => {
+        $('#dm-task-models').toggleClass('dm-hidden', !settings().hybridModels);
+        renderPrices();
+    });
+    bindCheck('dm-hand-up', 'handUp');
+    renderTaskModels();
+    $('#dm-task-models').on('change', '[data-task-model]', function () {
+        settings().taskModels[String($(this).attr('data-task-model'))] = String($(this).val());
+        saveSettings();
+        renderPrices();
+    });
+    $('#dm-task-models').on('change', '#dm-critical-model', function () {
+        settings().criticalModel = String($(this).val());
+        saveSettings();
+        renderPrices();
+    });
+    $('#dm-task-models-reset').on('click', () => {
+        const st = settings();
+        st.taskModels = defaultTaskModels(st.dmModel);
+        st.criticalModel = '';
+        st.handUp = true;
+        $('#dm-hand-up').prop('checked', true);
+        saveSettings();
+        renderTaskModels();
+        renderPrices();
     });
     renderPrices();
     $('#dm-prices').on('change', '[data-price-model]', function () {

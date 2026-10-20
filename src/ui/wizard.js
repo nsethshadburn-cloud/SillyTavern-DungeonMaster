@@ -114,7 +114,7 @@ function wire(root, state) {
             const intensity = $root.find('#dm-wiz-intensity').val();
             const party = $root.find('#dm-wiz-chars input:checked').map((_, el) => ST.characters.find(c => c.avatar === el.value)?.name).get();
             const user = `Tone: ${tone}. Intensity: ${intensity}/5 (5 = very intense, high stakes, dark themes allowed).\nParty: ${party.join(', ') || 'unspecified'} plus the player.\nPlayer's wishes: ${$root.find('#dm-wiz-premise').val() || 'none'}\nAlready pitched (don't repeat): ${state.pitches.map(p => p.title).join('; ') || 'none'}`;
-            const reply = await callClaude({ system: PITCH_INSTRUCTIONS, user, label: 'pitches', maxTokens: 3000, effort: 'low' });
+            const reply = await callClaude({ system: PITCH_INSTRUCTIONS, user, task: 'pitches', label: 'pitches', maxTokens: 3000, effort: 'low' });
             const json = extractJson(reply.text);
             const pitches = Array.isArray(json?.pitches) ? json.pitches : [];
             state.pitches.push(...pitches);
@@ -233,7 +233,7 @@ async function buildCampaign(form) {
             `Combat frequency: ${form.combat}. Rules: ${form.strictness === 'loose' ? 'loose, rule of cool' : 'standard 5e'}.`,
             'The player usually plays 1-2 hours a night; a campaign may run for weeks. Plan accordingly.',
         ].filter(Boolean).join('\n');
-        const reply = await callClaude({ system: BIBLE_INSTRUCTIONS, user, label: 'campaign design', maxTokens: 12000, effort: 'medium' });
+        const reply = await callClaude({ system: BIBLE_INSTRUCTIONS, user, task: 'campaign_design', label: 'campaign design', maxTokens: 12000, effort: 'medium' });
         const json = extractJson(reply.text);
         if (!json?.bible || !json?.plot) throw new Error('Claude did not return a usable campaign. Try again.');
         step.done(json.title || '', reply.usd);

@@ -2,7 +2,7 @@
 // Claude goes through SillyTavern's own backend, so your saved API key is used and never exposed.
 
 import { ST, waitUntilIdle } from './st.js';
-import { settings, profileById, connectionProfiles, recordSpend, currentSpend, pricesFor } from './settings.js';
+import { settings, profileById, connectionProfiles, recordSpend, currentSpend, pricesFor, modelFor } from './settings.js';
 import { estimateCallCost, budgetStatus, cacheWriteMultiplier } from '../core/budget.js';
 import { stripThinking } from '../core/text.js';
 
@@ -64,19 +64,14 @@ export function cleanLocalOutput(text) {
 
 // ---------------- Claude ----------------
 
-/**
- * Pick the connection and model for a Claude call.
- * @param {'big'|'routine'} tier big = story-shaping work (Sonnet by default), routine = everything else (Haiku by default)
- */
-export function resolveDmConnection(tier = 'big') {
+/** The connection for Claude calls, and the main DM model. Per-job models come from modelFor(). */
+export function resolveDmConnection() {
     const s = settings();
     let profile = profileById(s.dmProfileId);
     if (!profile) profile = connectionProfiles().find(p => p.api === 'claude') ?? null;
-    const big = s.dmModel || profile?.model || 'claude-sonnet-5-5';
-    const routine = s.dmModelRoutine || big;
     return {
         profile,
-        model: tier === 'routine' && s.autoModel ? routine : big,
+        model: s.dmModel || profile?.model || 'claude-sonnet-5-5',
     };
 }
 
@@ -101,16 +96,18 @@ export class BudgetError extends Error { }
  *   system  = rules, bible, sheets (cached with claude.enableSystemPromptCache)
  *   layers  = slower-changing context, each its own user message (cached with claude.cachingAtDepth: 2)
  *   user    = what changes every call
- * @param {{system:string, layers?:string[], user:string, tier?:'big'|'routine', maxTokens?:number, label:string, effort?:string, force?:boolean, signal?:AbortSignal}} p
+ * @param {{system:string, layers?:string[], user:string, task?:string, model?:string, maxTokens?:number, label:string, effort?:string, force?:boolean, signal?:AbortSignal}} p
+ *  task = the job (core/models.js TASKS) whose model to use; model = use exactly this model instead
  * @returns {Promise<{text:string, usd:number, inputTokens:number, outputTokens:number, ms:number, model:string}>}
  */
-export async function callClaude({ system, layers = [], user, tier = 'big', maxTokens, label, effort, force = false, signal = null }) {
+export async function callClaude({ system, layers = [], user, task = '', model: modelOverride = '', maxTokens, label, effort, force = false, signal = null }) {
     const s = settings();
     const status = budgetStatus({ ...currentSpend(), monthlyCap: Number(s.monthlyCap), nightlySoftCap: Number(s.nightlySoftCap) });
     if (status.level === 'blocked' && !force) {
         throw new BudgetError('Monthly Claude budget reached.');
     }
-    const { profile, model } = resolveDmConnection(tier);
+    const { profile, model: mainModel } = resolveDmConnection();
+    const model = modelOverride || (task ? modelFor(task) : mainModel);
     const ctx = ST.context();
     const started = Date.now();
     const messages = [{ role: 'system', content: system }];

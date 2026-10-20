@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
-import { DEFAULT_BIG_REASONS, DEFAULT_BIG_ON_CRITICAL, MODEL_DEFAULTS_VERSION, migrateModelDefaults } from '../core/models.js';
+import { DEFAULT_MAIN_MODEL, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -20,12 +20,11 @@ export const DEFAULTS = Object.freeze({
 
     // Connections (Connection Manager profile ids; '' = default behavior)
     dmProfileId: '',            // '' = first Claude profile, else SillyTavern's saved Claude key
-    dmModel: 'claude-sonnet-5-5',          // big model: campaign setup and story-shaping turns
-    dmModelRoutine: 'claude-haiku-5-5',    // routine model: rolls, check-ins, quick rulings
-    autoModel: true,            // false = the big model handles every DM turn
-    bigReasons: { ...DEFAULT_BIG_REASONS }, // which kinds of DM turn use the big model
-    bigOnCritical: DEFAULT_BIG_ON_CRITICAL, // natural 1s and 20s get the big model
-    modelDefaultsVersion: MODEL_DEFAULTS_VERSION,
+    dmModel: DEFAULT_MAIN_MODEL, // main DM model: does everything when hybrid is off, and takes handed-up turns
+    hybridModels: true,         // true = each job uses its own model (taskModels); false = dmModel for everything
+    taskModels: defaultTaskModels(), // job -> model id (see core/models.js TASKS)
+    criticalModel: '',          // model for turns with your natural 1 or 20 ('' = no change)
+    handUp: true,               // cheaper models may hand a big story moment up to the main model
     dmEffort: 'low',            // Claude thinking effort: low | medium | high
     dmMaxTokens: 6000,
     actorProfileId: '',         // '' = whatever connection is currently selected
@@ -90,9 +89,8 @@ export function settings() {
     const all = ST.extensionSettings;
     if (!all[MODULE]) all[MODULE] = {};
     const s = all[MODULE];
-    // Saved before model routing existed: start on the current defaults (no migration needed).
-    if (s.bigReasons === undefined && s.modelDefaultsVersion === undefined) s.modelDefaultsVersion = MODEL_DEFAULTS_VERSION;
-    if (s.bigReasons !== undefined && migrateModelDefaults(s)) ST.saveSettingsDebounced();
+    // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
+    if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();
     for (const [k, v] of Object.entries(DEFAULTS)) {
         if (s[k] === undefined) s[k] = structuredClone(v);
     }
@@ -100,7 +98,8 @@ export function settings() {
     for (const [k, v] of Object.entries(DEFAULT_TEMPLATES)) if (typeof s.templates[k] !== 'string') s.templates[k] = v;
     for (const [k, v] of Object.entries(DEFAULT_LENGTHS)) if (typeof s.lengths[k] !== 'string') s.lengths[k] = v;
     for (const k of Object.keys(SURPRISES)) if (typeof s.surprises[k] !== 'boolean') s.surprises[k] = true;
-    for (const [k, v] of Object.entries(DEFAULT_BIG_REASONS)) if (typeof s.bigReasons[k] !== 'boolean') s.bigReasons[k] = v;
+    const recommended = defaultTaskModels(s.dmModel || DEFAULT_MAIN_MODEL);
+    for (const t of TASKS) if (typeof s.taskModels[t.key] !== 'string' || !s.taskModels[t.key]) s.taskModels[t.key] = recommended[t.key];
     for (const [k, v] of Object.entries(DEFAULTS.modelPrices)) if (!s.modelPrices[k]) s.modelPrices[k] = { ...v };
     return s;
 }
@@ -111,6 +110,23 @@ export function pricesFor(model) {
     const row = s.modelPrices?.[model];
     if (row) return { input: Number(row.input) || 0, output: Number(row.output) || 0, cacheRead: Number(row.cacheRead) || 0 };
     return { input: Number(s.priceInput) || 0, output: Number(s.priceOutput) || 0, cacheRead: Number(s.priceCacheRead) || 0 };
+}
+
+/**
+ * The Claude model for a call covering these jobs (DM call reasons or other TASKS keys).
+ * When jobs disagree, the model with the higher input price is taken as the more capable one.
+ */
+export function modelFor(tasks, { criticalRoll = false } = {}) {
+    const s = settings();
+    const mainModel = s.dmModel || DEFAULT_MAIN_MODEL;
+    return pickModel([].concat(tasks), {
+        hybrid: s.hybridModels !== false,
+        mainModel,
+        taskModels: s.taskModels,
+        criticalModel: s.criticalModel,
+        criticalRoll,
+        rank: m => pricesFor(m).input,
+    });
 }
 
 export function saveSettings() {
