@@ -211,7 +211,7 @@ async function turnBody(c, opts, status, signal) {
                 events,
                 oocText: opts.oocText || triage.oocText || '',
             }, { signal, tier });
-            step.done(summarizeTurn(result.turn), result.usd);
+            step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
             turnUsd += result.usd;
         } catch (error) {
             step.fail(error);

@@ -2,11 +2,11 @@
 
 import { ST } from './st.js';
 import { settings, SURPRISES } from './settings.js';
-import { callClaude } from './llm.js';
+import { callClaude, resolveDmConnection } from './llm.js';
 import { campaign, saveDoc } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
-import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
+import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, parseDmTurn } from '../core/protocol.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
@@ -115,10 +115,10 @@ const REASON_TEXT = {
  *   layers[1] = notes, story so far, memories (changes when the DM adds notes or story)
  *   user      = everything that changes every call
  * Both layers are always sent, even when empty, so the cache positions stay the same.
- * @param {{reasons:string[], playerMessage?:string, rollResolution?:string, events?:object[], extraFiles?:string[], oocText?:string}} p
+ * @param {{reasons:string[], playerMessage?:string, rollResolution?:string, events?:object[], extraFiles?:string[], oocText?:string, tier?:'big'|'routine'}} p
  * @returns {Promise<{layers:string[], user:string}>}
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '' }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', tier = 'big' }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
@@ -159,6 +159,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
 
     sections.push('', '# WHY YOU ARE BEING CALLED');
     for (const r of reasons) sections.push(`- ${REASON_TEXT[r] ?? r}`);
+    if (tier === 'routine' && resolveDmConnection('routine').model !== resolveDmConnection('big').model) sections.push('', ESCALATE_INSTRUCTION);
     if (oocText) sections.push('', `Player's out-of-character question: ${oocText}`);
     if (rollResolution) sections.push('', `ROLL RESULT: ${rollResolution}`);
     if (events.length) {
@@ -175,12 +176,27 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
 }
 
 /**
- * Run one DM call. Handles a single "need_files" round-trip.
+ * Run one DM call. Handles a single "need_files" round-trip, and a single hand-up from the
+ * routine model to the big one when the routine model says the turn is a big story moment.
  * @param {'big'|'routine'} tier which model handles it (see core/models.js)
- * @returns {Promise<{turn: ReturnType<typeof parseDmTurn>, usd: number, raw: string, model: string}>}
+ * @returns {Promise<{turn: ReturnType<typeof parseDmTurn>, usd: number, raw: string, model: string, escalated: boolean}>}
  */
 export async function askDm(args, { label = 'DM turn', signal = null, tier = 'big' } = {}) {
+    let routineUsd = 0;
+    let escalated = false;
+    if (tier === 'routine') {
+        const first = await askDmOnce(args, { label, signal, tier });
+        if (!first.turn.escalate) return { ...first, escalated };
+        routineUsd = first.usd;
+        escalated = true;
+    }
+    const result = await askDmOnce(args, { label: escalated ? `${label} (handed up)` : label, signal, tier: 'big' });
+    return { ...result, usd: result.usd + routineUsd, escalated };
+}
+
+async function askDmOnce(args, { label, signal, tier }) {
     const system = await stableSystem();
+    args = { ...args, tier };
     let prompt = await volatilePrompt(args);
     let reply = await callClaude({ system, ...prompt, tier, label, signal });
     let usd = reply.usd;
@@ -237,7 +253,7 @@ export async function recap() {
         '', '# RECENT CHAT', transcript(30),
         '', RECAP_INSTRUCTIONS,
     ].join('\n');
-    const reply = await callClaude({ system, user, label: 'recap', maxTokens: 2000 });
+    const reply = await callClaude({ system, user, tier: 'routine', label: 'recap', maxTokens: 2000 });
     logCost('recap', reply.usd);
     const json = extractJson(reply.text);
     return { text: String(json?.recap ?? reply.text), usd: reply.usd };

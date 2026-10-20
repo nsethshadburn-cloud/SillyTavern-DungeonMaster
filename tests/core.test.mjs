@@ -10,7 +10,7 @@ import { extractJson, stripThinking, stripSpeakerPrefix, matchName, slug } from 
 import { parseDmTurn } from '../src/core/protocol.js';
 import { createWorldState, ensureParty, applyStateChanges, lookupModifier, startCombat, worldFlags, addNpcs } from '../src/core/world.js';
 import { estimateCallCost, budgetStatus, nightKey, cacheWriteMultiplier } from '../src/core/budget.js';
-import { pickDmTier, modelLabel, DEFAULT_BIG_REASONS, DM_REASON_LABELS } from '../src/core/models.js';
+import { pickDmTier, modelLabel, migrateModelDefaults, DEFAULT_BIG_REASONS, DM_REASON_LABELS } from '../src/core/models.js';
 
 test('dice notation parses and rolls in range', () => {
     assert.deepEqual(parseNotation('1d20+5').terms.length, 2);
@@ -182,18 +182,49 @@ test('budget estimates', () => {
     assert.equal(nightKey(new Date(2026, 9, 19, 2, 0)), '2026-10-18');
 });
 
-test('DM model tier picks Haiku for routine turns and Sonnet for big ones', () => {
+test('DM model tier: Sonnet for setup, direction and combat, Haiku for the rest', () => {
     assert.equal(pickDmTier(['roll_result']), 'routine');
-    assert.equal(pickDmTier(['checkin']), 'routine');
     assert.equal(pickDmTier(['risky_action', 'npc_addressed']), 'routine');
-    assert.equal(pickDmTier(['risky_action', 'event']), 'big', 'any big reason wins');
-    assert.equal(pickDmTier(['scene_move']), 'big');
-    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true }), 'big');
-    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true, bigOnCritical: false }), 'routine');
-    assert.equal(pickDmTier(['checkin'], { auto: false }), 'big');
+    assert.equal(pickDmTier(['scene_move']), 'routine');
+    assert.equal(pickDmTier(['event']), 'routine');
+    assert.equal(pickDmTier(['ooc']), 'routine');
+    assert.equal(pickDmTier(['opening']), 'big');
+    assert.equal(pickDmTier(['checkin']), 'big', 'check-ins keep the story direction');
+    assert.equal(pickDmTier(['drift']), 'big');
+    assert.equal(pickDmTier(['stalled']), 'big');
+    assert.equal(pickDmTier(['combat_action']), 'big', 'the turn that starts a fight');
+    assert.equal(pickDmTier(['combat_action', 'combat_round', 'roll_result']), 'big');
+    assert.equal(pickDmTier(['risky_action', 'drift']), 'big', 'any big reason wins');
+    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true }), 'routine', 'criticals are off by default');
+    assert.equal(pickDmTier(['roll_result'], { criticalRoll: true, bigOnCritical: true }), 'big');
+    assert.equal(pickDmTier(['roll_result'], { auto: false }), 'big');
     assert.equal(pickDmTier(['some_future_reason']), 'big', 'unknown reasons are treated as big');
-    assert.equal(pickDmTier(['scene_move'], { bigReasons: { ...DEFAULT_BIG_REASONS, scene_move: false } }), 'routine');
     assert.deepEqual(Object.keys(DEFAULT_BIG_REASONS).sort(), Object.keys(DM_REASON_LABELS).sort(), 'every reason has a label and a default');
     assert.equal(modelLabel('claude-haiku-5-5'), 'Haiku');
     assert.equal(modelLabel('claude-sonnet-5-5'), 'Sonnet');
+});
+
+test('saved model settings move to new defaults only if never customized', () => {
+    const v1 = { opening: true, scene_move: true, event: true, drift: true, stalled: true, combat_round: true, combat_action: false, risky_action: false, roll_result: false, npc_addressed: false, ooc: false, checkin: false, manual: true };
+    const untouched = { bigReasons: { ...v1 }, bigOnCritical: true };
+    assert.equal(migrateModelDefaults(untouched), true);
+    assert.deepEqual(untouched.bigReasons, { ...DEFAULT_BIG_REASONS });
+    assert.equal(untouched.bigOnCritical, false);
+    assert.equal(untouched.modelDefaultsVersion, 2);
+    assert.equal(migrateModelDefaults(untouched), false, 'runs once');
+
+    const custom = { bigReasons: { ...v1, roll_result: true }, bigOnCritical: true };
+    migrateModelDefaults(custom);
+    assert.equal(custom.bigReasons.roll_result, true, 'customized settings are kept');
+    assert.equal(custom.bigReasons.scene_move, true);
+    assert.equal(custom.modelDefaultsVersion, 2);
+
+    const current = { bigReasons: { ...DEFAULT_BIG_REASONS, event: true }, modelDefaultsVersion: 2 };
+    assert.equal(migrateModelDefaults(current), false);
+    assert.equal(current.bigReasons.event, true);
+});
+
+test('DM can hand a turn up', () => {
+    assert.equal(parseDmTurn('{"escalate": true}').escalate, true);
+    assert.equal(parseDmTurn('{"narration": "x"}').escalate, false);
 });

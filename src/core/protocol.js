@@ -127,6 +127,9 @@ Return ONE JSON object and nothing else, same format:
 
 export const RECAP_INSTRUCTIONS = `Write a short "Previously on..." recap for the player returning to this campaign after a break: 3-6 sentences, second person, evocative, ending on where things stand right now and what's at stake. Return ONE JSON object: {"recap": "..."}`;
 
+/** Added to routine-model calls only: lets the quick DM hand a real story moment to the senior DM. */
+export const ESCALATE_INSTRUCTION = `You are the quick DM for routine turns; a senior DM handles big moments. If this turn is a big story moment (a major reveal, completing a plot beat, a fight breaking out, a new chapter or major location, or a turn that changes where the story is going), reply with ONLY {"escalate": true} and the senior DM will take this turn. Otherwise handle it yourself as normal. Don't escalate ordinary rulings, rolls, conversation or small discoveries.`;
+
 export const CONDENSE_NOTES_INSTRUCTIONS = `Your private DM notes have grown long. Rewrite them into a compact, organized version that keeps every still-relevant secret, motive, plan, open thread and foreshadowing, and drops what's resolved. Return ONE JSON object: {"notes": "markdown"}`;
 
 /**
@@ -155,6 +158,7 @@ export function normalizeDmTurn(raw) {
         standing_direction: str(d.standing_direction),
         objective: str(d.objective),
         need_files: arr(d.need_files).map(String).filter(Boolean),
+        escalate: d.escalate === true,
     };
     if (d.player_roll && typeof d.player_roll === 'object' && (d.player_roll.skill || d.player_roll.kind)) {
         const pr = d.player_roll;

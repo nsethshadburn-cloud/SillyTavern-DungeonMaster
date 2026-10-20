@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
-import { DEFAULT_BIG_REASONS } from '../core/models.js';
+import { DEFAULT_BIG_REASONS, DEFAULT_BIG_ON_CRITICAL, MODEL_DEFAULTS_VERSION, migrateModelDefaults } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -24,7 +24,8 @@ export const DEFAULTS = Object.freeze({
     dmModelRoutine: 'claude-haiku-5-5',    // routine model: rolls, check-ins, quick rulings
     autoModel: true,            // false = the big model handles every DM turn
     bigReasons: { ...DEFAULT_BIG_REASONS }, // which kinds of DM turn use the big model
-    bigOnCritical: true,        // natural 1s and 20s get the big model
+    bigOnCritical: DEFAULT_BIG_ON_CRITICAL, // natural 1s and 20s get the big model
+    modelDefaultsVersion: MODEL_DEFAULTS_VERSION,
     dmEffort: 'low',            // Claude thinking effort: low | medium | high
     dmMaxTokens: 6000,
     actorProfileId: '',         // '' = whatever connection is currently selected
@@ -89,6 +90,9 @@ export function settings() {
     const all = ST.extensionSettings;
     if (!all[MODULE]) all[MODULE] = {};
     const s = all[MODULE];
+    // Saved before model routing existed: start on the current defaults (no migration needed).
+    if (s.bigReasons === undefined && s.modelDefaultsVersion === undefined) s.modelDefaultsVersion = MODEL_DEFAULTS_VERSION;
+    if (s.bigReasons !== undefined && migrateModelDefaults(s)) ST.saveSettingsDebounced();
     for (const [k, v] of Object.entries(DEFAULTS)) {
         if (s[k] === undefined) s[k] = structuredClone(v);
     }
