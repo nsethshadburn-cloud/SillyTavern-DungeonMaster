@@ -123,7 +123,7 @@ const REASON_TEXT = {
     drift: 'The party has been away from the plot for a while. Apply the PLOT PRESSURE stage in the pacing report, building on any pressure you set up before.',
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
     solo: 'No companion or NPC is with the player right now, or nobody nearby would answer. Respond as the world: what they notice, what happens, who shows up. Keep it short if nothing much happens. Absent companions stay silent.',
-    checkin: 'Routine director check-in. Usually: no narration, just refresh standing_direction and maybe a direction or two. Only intervene if pacing needs it. Keep this response SHORT.',
+    checkin: 'The world moves on: a few turns have passed since it last acted. Narrate it advancing one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. Then set world_next.',
     opening: 'Open the campaign.',
     manual: 'The player asked the DM to step in.',
 };
@@ -187,7 +187,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
         sections.push('', 'RANDOM EVENT CANDIDATES (use one by id, "custom", or "none"):');
         for (const ev of events) sections.push(`- [${ev.id}] ${ev.title} (${ev.type}, danger ${ev.danger}/5): ${ev.seed}`);
     }
-    if (playerMessage && !reasons.includes('checkin')) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
+    if (playerMessage) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
     const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);

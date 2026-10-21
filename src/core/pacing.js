@@ -13,6 +13,7 @@ export function createPacingState() {
         turnsSinceBeat: 0,         // player turns since a plot beat was completed
         turnsSinceEvent: 0,
         localTurnsSinceDM: 0,
+        worldClock: null,          // player turns until the world acts on its own (set by the DM's "world_next")
         fun: 1,                    // smoothed engagement 0..3
         stalledStreak: 0,
         fillerStreak: 0,           // player messages in a row that were short filler (stall detection)
@@ -97,6 +98,7 @@ export function updateFun(pacing, { engaged = null, messageLength = 0 } = {}) {
  * @param {{filler?:boolean}} o filler = this message was low-content filler (isFillerMessage)
  */
 export function tickPlayerTurn(pacing, length, { filler = false } = {}) {
+    if (Number.isFinite(pacing.worldClock)) pacing.worldClock--;
     pacing.turnsInScene++;
     pacing.turnsSinceBeat++;
     pacing.turnsSinceEvent++;
@@ -133,16 +135,31 @@ export function dmReasons({ pacing, triage, eventDue, checkinEvery, budgetBlocke
     if (pacing.driftStage > lastDriftStageCalled) reasons.push('drift');
     // At the top stages, keep the pressure on until a beat lands (but not mid-conversation).
     else if (pacing.driftStage >= 3 && (pacing.pressureCallAge ?? 0) >= PRESSURE_RECALL_TURNS && pacing.fun < 2.2) reasons.push('drift');
-    let every = Math.max(3, Number(checkinEvery) || 10);
-    if (budgetTight) every *= 2;
-    if (pacing.fun >= 2.2) every = Math.round(every * 1.5);
-    if (pacing.localTurnsSinceDM >= every) reasons.push('checkin');
+    // The world acts on its own clock: the DM sets how many player turns until it moves again
+    // (world_next); before the DM has set one, every `checkinEvery` local turns.
+    let worldDue;
+    if (Number.isFinite(pacing.worldClock)) {
+        worldDue = pacing.worldClock <= (budgetTight ? -2 : 0);
+    } else {
+        let every = Math.max(1, Number(checkinEvery) || DEFAULT_WORLD_EVERY);
+        if (budgetTight) every *= 2;
+        worldDue = pacing.localTurnsSinceDM >= every;
+    }
+    if (worldDue) reasons.push('checkin');
     return [...new Set(reasons)];
 }
 
-/** Apply the DM's pacing-relevant output. */
-export function applyDmPacing(pacing, dm) {
+/** Default player turns between the world's own moves when the DM hasn't set a pace. */
+export const DEFAULT_WORLD_EVERY = 3;
+
+/**
+ * Apply the DM's pacing-relevant output.
+ * @param {{worldEvery?:number}} [o] worldEvery = the pace to use when the DM doesn't set "world_next"
+ */
+export function applyDmPacing(pacing, dm, { worldEvery = DEFAULT_WORLD_EVERY } = {}) {
     pacing.localTurnsSinceDM = 0;
+    const next = Number(dm.world_next);
+    pacing.worldClock = Math.min(10, Math.max(1, Math.round(Number.isFinite(next) && next > 0 ? next : (Number(worldEvery) || DEFAULT_WORLD_EVERY))));
     if (dm.scene?.type && SCENE_TYPES.includes(dm.scene.type)) {
         const changed = dm.scene.type !== pacing.sceneType || (dm.scene.changed && pacing.turnsInScene > 0);
         if (changed) {

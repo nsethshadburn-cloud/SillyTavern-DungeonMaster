@@ -157,7 +157,7 @@ function panelHtml() {
 
       <h4>Pacing</h4>
       <div class="dm-grid2">
-        <label>DM check-in every N local turns<input id="dm-checkin" type="number" min="3" max="50" class="text_pole" value="${s.checkinEvery}"></label>
+        <label>The world moves on its own every N turns (when the DM hasn't set its own pace)<input id="dm-checkin" type="number" min="1" max="20" class="text_pole" value="${s.checkinEvery}"></label>
         <label>Usual session length (min)<input id="dm-session" type="number" min="15" max="600" class="text_pole" value="${s.usualSessionMinutes}"></label>
         <label>Chat messages sent to the DM<input id="dm-recent" type="number" min="6" max="80" class="text_pole" value="${s.recentMessages}"></label>
         <label>Max tokens added to local prompts<input id="dm-inject" type="number" min="100" max="2000" class="text_pole" value="${s.injectionMaxTokens}"></label>

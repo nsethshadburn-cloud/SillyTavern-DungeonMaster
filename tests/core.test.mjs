@@ -314,7 +314,8 @@ test('SillyTavern dice messages are read for pending rolls', () => {
 test('DM rules: forward motion, arrivals, sensible rolls, pressure ladder', () => {
     assert.doesNotMatch(DM_RULES, /Never rush/);
     assert.doesNotMatch(DM_RULES, /Usually 1-3 sentences/);
-    assert.match(DM_RULES, /Usually 2-5 sentences/);
+    assert.match(DM_RULES, /as long as the moment needs/);
+    assert.match(DM_RULES, /No fluff/);
     assert.match(DM_RULES, /Arrivals:/);
     assert.match(DM_RULES, /Conversation is never filler/);
     assert.match(DM_RULES, /stage 4 force/);
@@ -345,4 +346,35 @@ test('companions can split off, rejoin, and choose not to answer', async () => {
     assert.deepEqual(parseHelperTriage('{"category":"action","speakers":[]}', ['Judy Hopps']).speakers, []);
     assert.match(DM_RULES, /Companions don't have to speak every turn/);
     assert.match(DM_RULES, /party_away/);
+});
+
+test('the world keeps its own clock, set by the DM, and does not freeze during conversation', () => {
+    const p = createPacingState();
+    const banter = () => dmReasons({ pacing: p, triage: { category: 'banter' }, eventDue: false, checkinEvery: 3 });
+    // Before the DM has set a pace: every 3 local turns.
+    p.localTurnsSinceDM = 2;
+    assert.ok(!banter().includes('checkin'));
+    p.localTurnsSinceDM = 3;
+    assert.ok(banter().includes('checkin'));
+    // The DM says guards are actively processing them: act again after 1 turn.
+    applyDmPacing(p, { world_next: 1 });
+    assert.equal(p.worldClock, 1);
+    assert.ok(!banter().includes('checkin'));
+    tickPlayerTurn(p, 'breathe');
+    assert.ok(banter().includes('checkin'), 'one turn later the world moves again');
+    // A quiet moment: much later. Engaged chat does not stop the clock.
+    applyDmPacing(p, { world_next: 8 });
+    p.fun = 2.8;
+    for (let i = 0; i < 7; i++) tickPlayerTurn(p, 'breathe');
+    assert.ok(!banter().includes('checkin'));
+    tickPlayerTurn(p, 'breathe');
+    assert.ok(banter().includes('checkin'));
+    // No world_next from the DM: the default pace.
+    applyDmPacing(p, {}, { worldEvery: 3 });
+    assert.equal(p.worldClock, 3);
+    assert.equal(parseDmTurn('{"world_next": 2}').world_next, 2);
+    assert.equal(parseDmTurn('{"world_next": 99}').world_next, 10);
+    assert.equal(parseDmTurn('{"narration": "x"}').world_next, null);
+    assert.match(DM_RULES, /the world doesn't freeze while people talk/);
+    assert.match(DM_RULES, /"world_next"/);
 });

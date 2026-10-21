@@ -24,7 +24,8 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 
 ## Narration (shown to the player only)
 - Plain, simple English: everyday words, clear sentences, about a 7th-grade reading level.
-- Usually 2-5 sentences. A full paragraph (up to about 8 sentences) for arrivals, time skips, reveals and big moments. Present tense, "you" for the player.
+- Length: as long as the moment needs. A few sentences when little happens; a full paragraph or two when a lot does (arrivals, a process like an intake, time skips, reveals, big moments). Present tense, "you" for the player.
+- No fluff: every sentence shows something new, someone doing something, or a consequence. Cut mood-only lines, repeated atmosphere and restated facts.
 - Concrete and specific; no purple prose, no "little did they know".
 - Every narration adds something new: a change, a detail that matters, someone acting, a consequence. Never just repeat back what the player did.
 - Don't narrate what companions say, think or feel when they are about to reply; their own reply shows it. You may say where they are or what they physically do when the scene needs it.
@@ -46,7 +47,9 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 
 ## Pacing (this matters most)
 - Keep the story moving. Each time you narrate, something moves forward: time passes, someone acts, a problem gets closer, a choice appears. Don't crawl in tiny steps ("you move a little deeper… you climb a little higher…").
-- Conversation is never filler. When the player is really talking with companions or NPCs (questions, feelings, plans, banter with substance), let it breathe, even while traveling or resting: keep narration light, don't jump ahead, don't interrupt it with plot.
+- Conversation is never filler: when the player is really talking with companions or NPCs, let it breathe and don't cut it off with plot. But the world doesn't freeze while people talk. NPCs keep doing their jobs, anything underway keeps going, time passes. Move the scene AROUND the conversation ("Brask shoves you both toward the intake hall while you talk").
+- Anything underway (an intake, a march, a trial, a search, a chase) advances one clear step every time you narrate, until it's done. NPCs with a job do it; they don't stand and wait for the player.
+- "world_next": after every turn, say how many player turns until the world should act again on its own: 1-2 when people are actively doing things to or around the party (guards processing them, a chase, a crowd, a ticking threat), 3-4 normally, 6-10 for genuinely quiet moments with nothing pressing.
 - Skip the boring parts. When nothing interesting is happening (a long walk, a ride, a wait) and the player isn't in a real conversation, compress it in a sentence or two ("By dusk the road climbs into the hills…") and land on the next interesting moment or the destination.
 - Stalls: when the pacing report says the player's recent messages are short filler with no questions or plans, move the scene on yourself: skip ahead, arrive somewhere, or let someone or something push in.
 - Vary scene types: social, exploration, tension, combat, downtime. Avoid two fights in a row; the world is NOT constant combat. Tension rises and falls; a lull after a big moment is good.
@@ -88,12 +91,13 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "event": {"use": "event id | custom | none", "text": "only for custom: the small event you invented"},
   "standing_direction": "<=35 words, plain facts every companion can see and know right now (no secrets, no mood writing)",
   "objective": "<=15 words: the party's immediate goal (only when it changes)",
+  "world_next": 3,
   "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline (only when someone splits off)"},
   "party_back": ["names of companions who rejoin the player"],
   "need_files": ["rolls_log", "events_log"]
 }
 - "directions" order = speaking order. Usually 0-2 speakers, only party members or NPCs present. Leave empty when the player should act next.
-- Always include "scene" (with the current "location" name), "tension" and "standing_direction".
+- Always include "scene" (with the current "location" name), "tension", "standing_direction" and "world_next".
 - If you need older records to rule fairly, return ONLY {"need_files": [...]} and you will be called again with them.`;
 
 export const BIBLE_INSTRUCTIONS = `You are designing a new tabletop campaign for SillyTavern. You will be its Dungeon Master later.
@@ -108,7 +112,8 @@ Return ONE JSON object and nothing else:
   "objective": "<=15 words: the party's immediate goal at the start",
   "directions": [{"speaker": "party member name", "direction": "optional brief for an opening line: only what they need to know and want, never their words", "length": "short|normal"}],
   "new_npcs": [{"name": "every NPC who appears in the opening", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile"}],
-  "tension": 2
+  "tension": 2,
+  "world_next": "player turns until the world acts on its own after the opening: 1-2 if people are actively doing something to the party (guards, a chase, a crowd), 3-4 otherwise"
 }`;
 
 export const PITCH_INSTRUCTIONS = `Pitch campaign ideas for a tabletop roleplaying campaign. Return ONE JSON object and nothing else:
@@ -176,6 +181,7 @@ export function normalizeDmTurn(raw) {
         need_files: arr(d.need_files).map(String).filter(Boolean),
         party_away: Object.fromEntries(Object.entries(obj(d.party_away)).map(([k, v]) => [str(k), str(v)]).filter(([k]) => k)),
         party_back: arr(d.party_back).map(String).filter(Boolean),
+        world_next: Number.isFinite(Number(d.world_next)) && d.world_next !== null && d.world_next !== '' ? clamp(Math.round(Number(d.world_next)), 1, 10) : null,
         escalate: d.escalate === true,
     };
     if (d.player_roll && typeof d.player_roll === 'object' && (d.player_roll.skill || d.player_roll.kind)) {
