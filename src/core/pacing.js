@@ -150,7 +150,7 @@ export function dmReasons({ pacing, triage, eventDue, checkinEvery, budgetBlocke
 }
 
 /** Default player turns between the world's own moves when the DM hasn't set a pace. */
-export const DEFAULT_WORLD_EVERY = 3;
+export const DEFAULT_WORLD_EVERY = 5;
 
 /**
  * Apply the DM's pacing-relevant output.
@@ -187,7 +187,7 @@ export function applyDmPacing(pacing, dm, { worldEvery = DEFAULT_WORLD_EVERY } =
 }
 
 /** Human-readable pacing summary for the DM prompt. */
-export function pacingReport(pacing, { length = 'breathe', sessionMinutes = 0, usualSessionMinutes = 90, plot = '' } = {}) {
+export function pacingReport(pacing, { length = 'breathe', sessionMinutes = 0, usualSessionMinutes = 90, plot = '', worldEvery = DEFAULT_WORLD_EVERY } = {}) {
     const thresholds = driftBudget(length);
     const recent = [...pacing.sceneHistory.slice(-5), pacing.sceneType];
     const stage = Math.min(pacing.driftStage ?? 0, PRESSURE_STAGES.length - 1);
@@ -197,6 +197,7 @@ export function pacingReport(pacing, { length = 'breathe', sessionMinutes = 0, u
         beat ? `NEXT BEAT: ${beat.id} ${beat.text}. Tick it in beats_completed as soon as its goal is reached, even if it happened differently than planned.` : 'NEXT BEAT: none left (the plot is complete or empty).',
         `Player turns since a plot beat was completed: ${pacing.turnsSinceBeat} (pressure rises at ${thresholds.join(', ')}).`,
         `PLOT PRESSURE: stage ${stage} of 4, "${PRESSURE_STAGES[stage].name}": ${PRESSURE_STAGES[stage].guide}${engagedChat && stage > 0 ? ' (Holding: the player is engaged in real conversation, so let it play out first.)' : ''}`,
+        `WORLD PACE: the player's normal pace is every ${worldEvery} player turns. Set world_next to ${worldEvery} normally, 1-2 while people are actively doing things to or around the party, and longer (up to 10) only for genuinely quiet moments.`,
         `Current scene type: ${pacing.sceneType} (for ${pacing.turnsInScene} player turns). Recent scene types, oldest→newest: ${recent.join(' → ')}.`,
         `Tension: ${pacing.tension}/10.`,
         `Player engagement (0–3, smoothed): ${pacing.fun}${engagedChat ? ' — HIGH: they are enjoying the conversation; let it breathe and keep narration light' : ''}.`,

@@ -49,7 +49,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - Keep the story moving. Each time you narrate, something moves forward: time passes, someone acts, a problem gets closer, a choice appears. Don't crawl in tiny steps ("you move a little deeper… you climb a little higher…").
 - Conversation is never filler: when the player is really talking with companions or NPCs, let it breathe and don't cut it off with plot. But the world doesn't freeze while people talk. NPCs keep doing their jobs, anything underway keeps going, time passes. Move the scene AROUND the conversation ("Brask shoves you both toward the intake hall while you talk").
 - Anything underway (an intake, a march, a trial, a search, a chase) advances one clear step every time you narrate, until it's done. NPCs with a job do it; they don't stand and wait for the player.
-- "world_next": after every turn, say how many player turns until the world should act again on its own: 1-2 when people are actively doing things to or around the party (guards processing them, a chase, a crowd, a ticking threat), 3-4 normally, 6-10 for genuinely quiet moments with nothing pressing.
+- "world_next": after every turn, say how many player turns until the world should act again on its own: 1-2 when people are actively doing things to or around the party (guards processing them, a chase, a crowd, a ticking threat), the player's normal pace (WORLD PACE in the pacing report) otherwise, and longer (up to 10) only for genuinely quiet moments with nothing pressing.
 - Skip the boring parts. When nothing interesting is happening (a long walk, a ride, a wait) and the player isn't in a real conversation, compress it in a sentence or two ("By dusk the road climbs into the hills…") and land on the next interesting moment or the destination.
 - Stalls: when the pacing report says the player's recent messages are short filler with no questions or plans, move the scene on yourself: skip ahead, arrive somewhere, or let someone or something push in.
 - Vary scene types: social, exploration, tension, combat, downtime. Avoid two fights in a row; the world is NOT constant combat. Tension rises and falls; a lull after a big moment is good.
@@ -113,7 +113,7 @@ Return ONE JSON object and nothing else:
   "directions": [{"speaker": "party member name", "direction": "optional brief for an opening line: only what they need to know and want, never their words", "length": "short|normal"}],
   "new_npcs": [{"name": "every NPC who appears in the opening", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile"}],
   "tension": 2,
-  "world_next": "player turns until the world acts on its own after the opening: 1-2 if people are actively doing something to the party (guards, a chase, a crowd), 3-4 otherwise"
+  "world_next": "player turns until the world acts on its own after the opening: 1-2 if people are actively doing something to the party (guards, a chase, a crowd), 5 otherwise"
 }`;
 
 export const PITCH_INSTRUCTIONS = `Pitch campaign ideas for a tabletop roleplaying campaign. Return ONE JSON object and nothing else:

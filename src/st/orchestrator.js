@@ -215,7 +215,7 @@ async function turnBody(c, opts, status, signal) {
         pacing,
         triage,
         eventDue: events.length > 0,
-        checkinEvery: Number(s.checkinEvery) || 3,
+        checkinEvery: Number(s.checkinEvery) || 5,
         budgetBlocked: b.level === 'blocked',
         budgetTight: b.level === 'tight',
         lastDriftStageCalled: meta.lastDriftStageCalled,
@@ -477,7 +477,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         closeMap();
         status.note('Combat over');
     }
-    applyDmPacing(meta.pacing, t, { worldEvery: Number(settings().checkinEvery) || 3 });
+    applyDmPacing(meta.pacing, t, { worldEvery: Number(settings().checkinEvery) || 5 });
     if (t.beats_completed.length) {
         meta.lastDriftStageCalled = 0;
         for (const beat of t.beats_completed) {

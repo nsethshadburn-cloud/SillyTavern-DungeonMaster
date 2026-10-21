@@ -47,7 +47,7 @@ export const DEFAULTS = Object.freeze({
     cacheTtlMinutes: 5,         // 5, or 60 with claude.extendedTTL: true
 
     // Pacing
-    checkinEvery: 3,            // the world acts on its own every N player turns when the DM hasn't set its own pace
+    checkinEvery: 5,            // the world's normal pace: it acts on its own every N player turns (the DM goes faster when people are actively doing things)
     usualSessionMinutes: 90,
     eventBase: 0.04,
     eventGrowth: 0.025,
@@ -91,9 +91,12 @@ export function settings() {
     const all = ST.extensionSettings;
     if (!all[MODULE]) all[MODULE] = {};
     const s = all[MODULE];
-    // v0.5.2: the old check-in default (10) let scenes freeze; the world now moves every 3 turns.
-    if (s.checkinEvery === 10 && !s.worldPaceMigrated) s.checkinEvery = 3;
-    s.worldPaceMigrated = true;
+    // Saved defaults from older versions (10 let scenes freeze; 3 was v0.5.2's) move to the current 5.
+    if (!s.worldPaceV5) {
+        if (s.checkinEvery === 10 || s.checkinEvery === 3) s.checkinEvery = 5;
+        s.worldPaceV5 = true;
+        delete s.worldPaceMigrated;
+    }
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();
     for (const [k, v] of Object.entries(DEFAULTS)) {

@@ -169,7 +169,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
-    sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90, plot: c.docs.plot }));
+    sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90, plot: c.docs.plot, worldEvery: Number(s.checkinEvery) || 5 }));
 
     for (const f of extraFiles) {
         if (f === 'rolls_log') sections.push('', '# ROLLS LOG (recent)', JSON.stringify(c.docs.rolls_log.slice(-40)));

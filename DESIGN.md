@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.5.3
+- World pace default 5 (was 3). The pacing report now states the player's pace ("WORLD PACE: every N turns"), and the rules tell the DM to use it as the normal world_next, so the setting controls the DM's pace rather than only the fallback. Saved 10 (pre-0.5.2) or 3 (0.5.2) move to 5 once (worldPaceV5).
+
 ### v0.5.2 (the world keeps moving)
 - From a real session: nine turns of conversation at the prison gate with one DM call; the guards stood frozen and intake never happened. Causes: talking never called the DM, the check-in came every 10 local turns and was told "usually no narration, keep it SHORT", and the v0.5 rule "don't interrupt conversation with plot" froze the world.
 - **World clock:** every DM turn returns "world_next" (1-10 player turns until the world acts on its own; 1-2 when people are actively doing things to the party). pacing.worldClock counts down per player turn; at 0 the DM is called with "checkin", now "the world moves on": NPCs act on their jobs, anything underway takes its next step, time passes, woven around ongoing conversation. Default pace when unset: settings.checkinEvery = 3 (old saved default 10 migrated). The opening sets it too. Check-ins use the main model by default ("The world moving on between your actions").

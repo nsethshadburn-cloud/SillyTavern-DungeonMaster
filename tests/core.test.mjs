@@ -372,6 +372,9 @@ test('the world keeps its own clock, set by the DM, and does not freeze during c
     // No world_next from the DM: the default pace.
     applyDmPacing(p, {}, { worldEvery: 3 });
     assert.equal(p.worldClock, 3);
+    applyDmPacing(p, {});
+    assert.equal(p.worldClock, 5, 'default pace is 5');
+    assert.match(pacingReport(p, { worldEvery: 5 }), /WORLD PACE: the player's normal pace is every 5 player turns/);
     assert.equal(parseDmTurn('{"world_next": 2}').world_next, 2);
     assert.equal(parseDmTurn('{"world_next": 99}').world_next, 10);
     assert.equal(parseDmTurn('{"narration": "x"}').world_next, null);
