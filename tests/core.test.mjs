@@ -320,3 +320,29 @@ test('DM rules: forward motion, arrivals, sensible rolls, pressure ladder', () =
     assert.match(DM_RULES, /stage 4 force/);
     assert.match(DM_RULES, /just narrate the success/);
 });
+
+test('companions can split off, rejoin, and choose not to answer', async () => {
+    const { applyPresence, isAway, createWorldState } = await import('../src/core/world.js');
+    const { helperTriagePrompt, parseHelperTriage } = await import('../src/core/triage.js');
+    const w = createWorldState();
+    applyPresence(w, ['Judy Hopps'], { 'judy hopps': 'waiting at the treeline' }, []);
+    assert.ok(isAway(w, 'Judy Hopps'));
+    assert.equal(w.away['Judy Hopps'], 'waiting at the treeline');
+    applyPresence(w, ['Judy Hopps'], {}, ['Judy Hopps']);
+    assert.ok(!isAway(w, 'Judy Hopps'));
+    applyPresence(w, ['Judy Hopps'], { 'Random Stranger': 'x' }, []);
+    assert.deepEqual(w.away, {}, 'only party members can be away');
+
+    const t = parseDmTurn('{"narration":"x","party_away":{"Judy Hopps":"at the camp"},"party_back":["Bob"]}');
+    assert.deepEqual(t.party_away, { 'Judy Hopps': 'at the camp' });
+    assert.deepEqual(t.party_back, ['Bob']);
+
+    const { user } = helperTriagePrompt({ player: 'Amber', message: 'hi', recent: '', speakers: ['Judy Hopps'], scene: 'x', away: [] });
+    assert.match(user, /Use \[\] when nobody nearby would answer/);
+    const alone = helperTriagePrompt({ player: 'Amber', message: 'hi', recent: '', speakers: [], scene: 'x', away: ['Judy Hopps (at the camp)'] }).user;
+    assert.match(alone, /nobody is with the player/);
+    assert.match(alone, /Not with the player.*Judy Hopps \(at the camp\)/);
+    assert.deepEqual(parseHelperTriage('{"category":"action","speakers":[]}', ['Judy Hopps']).speakers, []);
+    assert.match(DM_RULES, /Companions don't have to speak every turn/);
+    assert.match(DM_RULES, /party_away/);
+});

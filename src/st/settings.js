@@ -57,7 +57,8 @@ export const DEFAULTS = Object.freeze({
     // What the roleplay model is told (editable, each with "reset to default")
     templates: { ...DEFAULT_TEMPLATES },
     lengths: { ...DEFAULT_LENGTHS },
-    noteDepth: 0,               // 0 = right before the reply; higher = further back in the chat
+    noteMode: 'message',        // 'message' = inside the player's turn (no extra turns); 'separate' = its own message (noteDepth/noteRole)
+    noteDepth: 0,               // 'separate' mode: 0 = right before the reply; higher = further back in the chat
     noteRole: 'system',         // 'system' | 'user': how the note is formatted in your instruct template
     hideNarration: true,        // the bot never sees "Dungeon Master" messages; it gets briefs instead
     autoReadDice: true,         // read SillyTavern's dice rolls for a pending roll (no need to type the number)

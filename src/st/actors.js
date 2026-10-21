@@ -10,7 +10,7 @@ import { callLocal, cleanLocalOutput } from './llm.js';
 import { campaign, saveDoc } from './campaign.js';
 import { postNpc, dmType } from './messages.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
-import { addNpcs } from '../core/world.js';
+import { addNpcs, isAway } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName } from '../core/text.js';
 
@@ -49,11 +49,46 @@ export function buildNote({ brief = '', length = 'normal' } = {}) {
     return parts.filter(Boolean).join('\n');
 }
 
+/** The note for the next generation when it rides inside the player's turn (noteMode 'message'). */
+let noteForMessage = '';
+
 function setNote(text) {
     const s = settings();
+    if (s.noteMode !== 'separate') {
+        // Added by the generation interceptor instead (addNoteToChat), so SillyTavern's prompt keeps
+        // its own shape: no extra turn of ours between the player's message and its post-history turn.
+        noteForMessage = text;
+        ST.setExtensionPrompt(KEY_NOTE, '', ST.promptTypes.IN_CHAT, 0);
+        return;
+    }
+    noteForMessage = '';
     const role = s.noteRole === 'user' ? ST.promptRoles.USER : ST.promptRoles.SYSTEM;
     const depth = Math.max(0, Math.min(10, Number(s.noteDepth) || 0));
     ST.setExtensionPrompt(KEY_NOTE, text, ST.promptTypes.IN_CHAT, depth, false, role);
+}
+
+/**
+ * Generation interceptor part 2: put the note inside the player's turn.
+ * Why: SillyTavern already ends every prompt with its own turns (the player's message, then the
+ * post-history instruction as another user turn). A separate system turn of ours in between is a
+ * second system turn mid-conversation, which models like Gemma 4 treat as a new system setup
+ * (Gemma wants <|think|> and all system instructions in ONE system turn). Inside the player's
+ * message, the note uses whatever format the player has selected and adds no turn at all.
+ * If the latest message isn't the player's (a companion speaking after an NPC), it becomes a
+ * plain user turn; SillyTavern adds no name to the player's own turns, so it stays unlabeled.
+ * `chat` is SillyTavern's per-generation copy (fresh objects), so the saved chat is untouched.
+ */
+export function addNoteToChat(chat) {
+    const c = campaign();
+    if (!c || c.meta.paused || !noteForMessage || !Array.isArray(chat) || settings().noteMode === 'separate') return;
+    const note = ST.substituteParams(noteForMessage);
+    if (!note.trim()) return;
+    const last = chat[chat.length - 1];
+    if (last?.is_user && !dmType(last)) {
+        chat[chat.length - 1] = { ...last, mes: `${String(last.mes ?? '').trimEnd()}\n\n${note}` };
+    } else {
+        chat.push({ name: ST.context().name1, is_user: true, is_system: false, mes: note, send_date: '', extra: { type: 'dm_note' } });
+    }
 }
 
 /** The base note (no brief) stays in every local generation while a campaign is active. */
@@ -102,7 +137,7 @@ export function speakerCandidates() {
     const c = campaign();
     if (!c) return [];
     const npcsHere = (c.docs.npcs || []).filter(n => !c.docs.world.location || n.lastSeen === c.docs.world.location).map(n => n.name);
-    return [...c.meta.party.map(p => p.name), ...npcsHere];
+    return [...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n)), ...npcsHere];
 }
 
 /**
@@ -307,7 +342,12 @@ async function speakNpc(npc, brief, { signal, length = 'normal' } = {}) {
         brief ? sub(renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) })) : '',
         postHistory,
     ].filter(Boolean).join('\n');
-    if (finalNote) messages.push({ role: 'system', content: finalNote });
+    // Inside the latest user turn (or as a user turn), never a second system turn: see addNoteToChat.
+    if (finalNote) {
+        const last = messages[messages.length - 1];
+        if (last?.role === 'user') last.content = `${last.content.trimEnd()}\n\n${finalNote}`;
+        else messages.push({ role: 'user', content: finalNote });
+    }
     if (signal?.aborted) return;
     const raw = await callLocal({ system, messages, maxTokens: ST.responseLength || 400, profileId: s.actorProfileId });
     const text = stripSpeakerPrefix(cleanLocalOutput(raw), npc.name);

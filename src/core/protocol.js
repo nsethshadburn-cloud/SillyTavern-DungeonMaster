@@ -18,6 +18,8 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - Leave out atmosphere, scenery, secrets and anything that doesn't affect what they say next. Extra detail derails them.
 - "length": "short" (one quick line), "normal" (3-4 sentences, mostly dialogue; the default), "long" (only for big emotional moments).
 - Name the speaker's pronouns in the brief when they aren't "she".
+- Companions don't have to speak every turn. Give a companion a brief only when they are with the player and would naturally react or have something to say; silence is fine, and "directions" may be empty. Never narrate their words for them instead.
+- When the party splits up (someone stays behind, goes another way, gets separated or captured apart), list who left in "party_away" with where they are. Away companions can't hear the player or speak: give them no briefs until they rejoin, then list them in "party_back".
 - Companions sometimes invent facts anyway. You decide what's canon: quietly overrule inventions that don't fit (in your narration or their next brief), or adopt them if they're good.
 
 ## Narration (shown to the player only)
@@ -86,6 +88,8 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "event": {"use": "event id | custom | none", "text": "only for custom: the small event you invented"},
   "standing_direction": "<=35 words, plain facts every companion can see and know right now (no secrets, no mood writing)",
   "objective": "<=15 words: the party's immediate goal (only when it changes)",
+  "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline (only when someone splits off)"},
+  "party_back": ["names of companions who rejoin the player"],
   "need_files": ["rolls_log", "events_log"]
 }
 - "directions" order = speaking order. Usually 0-2 speakers, only party members or NPCs present. Leave empty when the player should act next.
@@ -170,6 +174,8 @@ export function normalizeDmTurn(raw) {
         standing_direction: str(d.standing_direction),
         objective: str(d.objective),
         need_files: arr(d.need_files).map(String).filter(Boolean),
+        party_away: Object.fromEntries(Object.entries(obj(d.party_away)).map(([k, v]) => [str(k), str(v)]).filter(([k]) => k)),
+        party_back: arr(d.party_back).map(String).filter(Boolean),
         escalate: d.escalate === true,
     };
     if (d.player_roll && typeof d.player_roll === 'object' && (d.player_roll.skill || d.player_roll.kind)) {

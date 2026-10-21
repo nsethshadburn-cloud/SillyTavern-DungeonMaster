@@ -27,6 +27,7 @@ export const TASKS = Object.freeze([
     { key: 'npc_addressed', group: 'Everyday play', label: 'Talking to someone new', main: false },
     { key: 'ooc', group: 'Everyday play', label: 'Out-of-character questions', main: false },
     { key: 'manual', group: 'Everyday play', label: 'When you ask the DM to step in', main: false },
+    { key: 'solo', group: 'Everyday play', label: 'Your moments with no companion around', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
 ]);

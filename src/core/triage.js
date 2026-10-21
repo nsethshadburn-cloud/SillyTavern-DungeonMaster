@@ -69,7 +69,7 @@ export function ruleTriage(text, ctx = {}) {
  * Prompt for the local helper. Kept tiny, no thinking trigger.
  * @param {{player:string, message:string, recent:string, speakers:string[], scene:string}} p
  */
-export function helperTriagePrompt({ player, message, recent, speakers, scene }) {
+export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [] }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
     const user = [
         `Scene: ${scene || 'unknown'}`,
@@ -83,10 +83,13 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene })
         '"category": one of "banter" (talking/roleplay, no risk), "action" (simple action, no real risk), "risky_action" (outcome uncertain: needs a dice roll or a ruling), "scene_move" (travel, rest, leave, time skip), "combat_action", "question" (asking about the world).',
         '"engaged": 0-3, how invested/playful the player seems right now.',
         '"stalled": true if the conversation is going in circles with no progress for several messages.',
-        `"speakers": who should reply next, 1 or 2 names chosen ONLY from: ${speakers.map(s => JSON.stringify(s)).join(', ')}.`,
+        speakers.length
+            ? `"speakers": who would naturally reply next, 0, 1 or 2 names chosen ONLY from: ${speakers.map(s => JSON.stringify(s)).join(', ')}. Use [] when nobody nearby would answer (the player is acting alone, talking to themselves, or nothing calls for a reply). Nobody has to reply every time.`
+            : '"speakers": [] (nobody is with the player right now).',
+        away.length ? `Not with the player (can't hear or reply): ${away.join('; ')}.` : '',
         '"addressed": the name of the character the player is speaking to or acting toward (any name, even if not in that list), or "" if nobody in particular.',
         'Example: {"category":"banter","engaged":2,"stalled":false,"speakers":["Judy Hopps"],"addressed":"Judy Hopps"}',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     return { system, user };
 }
 

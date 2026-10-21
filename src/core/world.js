@@ -14,7 +14,30 @@ export function createWorldState() {
         party: {},        // name -> {hp, hp_max, conditions: []}
         flags: {},
         combat: null,     // {round, order: [{name, init}], enemies: {name: {hp, hp_max, ac}}}
+        away: {},         // companion name -> where they are (split off from the player)
     };
+}
+
+/**
+ * Companions who split off from the player: name -> where they are. They can't hear or speak
+ * until they rejoin. The DM reports it with "party_away" / "party_back".
+ */
+export function applyPresence(world, partyNames, away = {}, back = []) {
+    world.away ??= {};
+    for (const [name, where] of Object.entries(away ?? {})) {
+        const match = partyNames.find(p => p.toLowerCase() === String(name).toLowerCase());
+        if (match) world.away[match] = String(where || 'elsewhere').slice(0, 120);
+    }
+    for (const name of back ?? []) {
+        const match = Object.keys(world.away).find(p => p.toLowerCase() === String(name).toLowerCase());
+        if (match) delete world.away[match];
+    }
+    return world.away;
+}
+
+/** Is this party member away from the player right now? */
+export function isAway(world, name) {
+    return Object.keys(world?.away ?? {}).some(p => p.toLowerCase() === String(name).toLowerCase());
 }
 
 /** Make sure every party member (incl. the player) has an HP entry. */

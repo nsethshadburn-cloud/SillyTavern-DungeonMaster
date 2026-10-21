@@ -8,7 +8,7 @@ import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
 import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, parseDmTurn } from '../core/protocol.js';
 import { pacingReport } from '../core/pacing.js';
-import { rosterSummary, combatSummary } from '../core/world.js';
+import { rosterSummary, combatSummary, isAway } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
 import { modelLabel } from '../core/models.js';
@@ -122,6 +122,7 @@ const REASON_TEXT = {
     stalled: 'The scene has stalled (filler replies or going in circles). Move it forward yourself: skip ahead, arrive somewhere, or let someone or something push in.',
     drift: 'The party has been away from the plot for a while. Apply the PLOT PRESSURE stage in the pacing report, building on any pressure you set up before.',
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
+    solo: 'No companion or NPC is with the player right now, or nobody nearby would answer. Respond as the world: what they notice, what happens, who shows up. Keep it short if nothing much happens. Absent companions stay silent.',
     checkin: 'Routine director check-in. Usually: no narration, just refresh standing_direction and maybe a direction or two. Only intervene if pacing needs it. Keep this response SHORT.',
     opening: 'Open the campaign.',
     manual: 'The player asked the DM to step in.',
@@ -188,9 +189,11 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     }
     if (playerMessage && !reasons.includes('checkin')) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
 
-    const companions = c.meta.party.map(p => p.name);
+    const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
+    const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);
     const present = (c.docs.npcs || []).filter(n => n.lastSeen && n.lastSeen === w.location).map(n => n.name);
-    sections.push('', `Valid speakers for directions: party ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
+    sections.push('', `Valid speakers for directions: party with the player ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
+    if (awayList.length) sections.push(`Companions AWAY from the player (no briefs; they can't hear or speak until "party_back"): ${awayList.join('; ')}.`);
     sections.push('Reply with the JSON object only.');
     return { layers: [plotLayer, notesLayer], user: sections.join('\n') };
 }

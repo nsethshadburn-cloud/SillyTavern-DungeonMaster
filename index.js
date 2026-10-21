@@ -5,7 +5,7 @@ import { ST, MODULE } from './src/st/st.js';
 import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
 import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll } from './src/st/orchestrator.js';
-import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, briefForMessage } from './src/st/actors.js';
+import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, addNoteToChat, briefForMessage } from './src/st/actors.js';
 import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig } from './src/st/voices.js';
 import { toggleMap, refreshMap, closeMap } from './src/ui/map.js';
 import { postDiceCard } from './src/st/messages.js';
@@ -174,6 +174,7 @@ function registerSlashCommands() {
 // SillyTavern generation interceptor (named in manifest.json): hides the DM's narration from the bot.
 globalThis.dungeonMasterInterceptor = async (chat) => {
     hideNarrationFromBot(chat);
+    addNoteToChat(chat);
 };
 
 jQuery(async () => {

@@ -19,7 +19,7 @@ import { ruleTriage, helperTriagePrompt, parseHelperTriage } from '../core/triag
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01 } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty } from '../core/world.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway } from '../core/world.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens } from '../core/text.js';
 
@@ -162,12 +162,14 @@ async function turnBody(c, opts, status, signal) {
                     recent: recentForHelper(),
                     speakers: candidates,
                     scene: `${c.docs.world.location || 'unknown'}; ${meta.standing || ''}`,
+                    away: Object.entries(c.docs.world.away ?? {}).map(([n, where]) => `${n} (${where})`),
                 });
                 const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: Number(s.helperMaxTokens) || 160, profileId: s.helperProfileId });
                 const h = parseHelperTriage(raw, candidates);
                 if (!rule.category) triage.category = h.category;
                 triage.stalled = h.stalled;
                 triage.speakers = h.speakers;
+                triage.helperChoseSpeakers = true;
                 engaged = h.engaged;
                 // Who is the player talking to? A known NPC answers locally; a stranger needs the DM.
                 if (h.addressed && !/^(dm|dungeon master|narrator|everyone|nobody|none)$/i.test(h.addressed)) {
@@ -219,6 +221,8 @@ async function turnBody(c, opts, status, signal) {
         lastDriftStageCalled: meta.lastDriftStageCalled,
     });
     if (opts.force) reasons = [...new Set([opts.force, ...reasons])];
+    // Nobody would answer this locally (alone, or nobody nearby would reply): the world responds.
+    if (!reasons.length && !opts.force && !triage.rollResult && !localSpeakers(c, triage, playerText).length) reasons = ['solo'];
     if (b.level === 'blocked' && reasons.length) {
         status.note('Budget reached: the DM is resting (local-only)');
         reasons = [];
@@ -286,14 +290,24 @@ function summarizeTurn(t) {
     return bits.join(' · ') || 'no changes';
 }
 
+/**
+ * Who answers locally: the helper's pick (which may be nobody), else whoever the player named,
+ * else a companion who is with the player. Companions who split off never answer.
+ */
+function localSpeakers(c, triage, playerText) {
+    const candidates = speakerCandidates();
+    if (!candidates.length) return [];
+    if (triage.speakers?.length) return triage.speakers.filter(n => candidates.includes(n));
+    if (triage.helperChoseSpeakers) return [];
+    const addressed = candidates.filter(n => new RegExp(`\\b${nameKey(n).split(' ')[0]}\\b`, 'i').test(playerText));
+    if (addressed.length) return addressed.slice(0, 2);
+    const party = c.meta.party.map(p => p.name).filter(n => candidates.includes(n));
+    return party.length ? [party[Math.floor(random01() * party.length)]] : [];
+}
+
 /** No DM this turn: the right character(s) answer locally. */
 async function localReplies(c, triage, playerText, status, signal) {
-    const partyNames = c.meta.party.map(p => p.name);
-    let speakers = triage.speakers?.length ? triage.speakers : [];
-    if (!speakers.length) {
-        const addressed = [...speakerCandidates()].filter(n => new RegExp(`\\b${nameKey(n).split(' ')[0]}\\b`, 'i').test(playerText));
-        speakers = addressed.length ? addressed.slice(0, 2) : [partyNames[Math.floor(random01() * partyNames.length)]];
-    }
+    const speakers = localSpeakers(c, triage, playerText);
     // Plain roleplay: no brief, the bot plays the character freely (it still gets the scene note).
     for (const sp of speakers.filter(Boolean)) {
         if (signal.aborted) throw new Error('aborted');
@@ -426,6 +440,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
             world.time = t.scene.time;
         }
     }
+    // Who split off from the player, and who is back.
+    applyPresence(world, meta.party.map(p => p.name), t.party_away, t.party_back);
     // NPCs who get briefs are "here".
     for (const d of t.directions) {
         const npc = c.docs.npcs.find(n => nameKey(n.name) === nameKey(d.speaker));
@@ -550,10 +566,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         else refreshMap();
     }
 
-    // Companions and NPCs speak, in order, each with only their brief.
+    // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     for (const d of t.directions) {
         if (signal.aborted) throw new Error('aborted');
         const speaker = d.speaker;
+        if (isAway(world, speaker)) {
+            status.note(`${speaker} isn't with you right now`);
+            continue;
+        }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
         const length = meta.pacing.inCombat ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);

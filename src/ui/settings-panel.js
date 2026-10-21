@@ -166,7 +166,12 @@ function panelHtml() {
       <h4>What the bot is told</h4>
       <small>This works like a small system prompt for your roleplay model in D&amp;D chats. Your own system prompt, formatting and samplers are always used as they are; this is added on top.</small>
       <label class="checkbox_label"><input id="dm-hide-narration" type="checkbox" ${s.hideNarration ? 'checked' : ''}> Hide the DM's narration from the bot (it only gets the DM's private briefs)</label>
-      <div class="dm-grid2">
+      <label>How the note is added
+        <select id="dm-note-mode" class="text_pole">
+          <option value="message" ${s.noteMode !== 'separate' ? 'selected' : ''}>Inside your latest message (recommended: keeps your format's turns as they are, so thinking models aren't disturbed)</option>
+          <option value="separate" ${s.noteMode === 'separate' ? 'selected' : ''}>As its own message (older behavior)</option>
+        </select></label>
+      <div id="dm-note-separate" class="dm-grid2 ${s.noteMode === 'separate' ? '' : 'dm-hidden'}">
         <label>Note position (0 = right before the reply)<input id="dm-note-depth" type="number" min="0" max="10" class="text_pole" value="${s.noteDepth}"></label>
         <label>Note sent as
           <select id="dm-note-role" class="text_pole">
@@ -376,6 +381,12 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
         syncTtsTakeover(Boolean(campaign() && !campaign().meta.paused));
     });
     bindCheck('dm-hide-narration', 'hideNarration');
+    $('#dm-note-mode').on('change', function () {
+        settings().noteMode = String($(this).val());
+        $('#dm-note-separate').toggleClass('dm-hidden', settings().noteMode !== 'separate');
+        saveSettings();
+        refreshStandingPrompt();
+    });
     bindNumber('dm-note-depth', 'noteDepth');
     $('#dm-note-depth').on('change', () => refreshStandingPrompt());
     $('#dm-note-role').on('change', function () {
@@ -413,7 +424,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
         const base = fill(buildNote());
         const withBrief = fill(buildNote({ brief: '(example) The riders are closing in. She wants Amber to give up before anyone gets hurt.', length: 'normal' }));
         await ST.callGenericPopup(
-            `<h3>What ${escapeHtml(char)} gets in this chat</h3><p>Plain roleplay turns:</p><div class="dm-preview">${escapeHtml(base)}</div><p>When Claude handles the turn (example brief):</p><div class="dm-preview">${escapeHtml(withBrief)}</div><small>Position: ${settings().noteDepth === 0 ? 'right before the reply' : `${settings().noteDepth} message(s) back`}, as a ${settings().noteRole === 'user' ? 'user' : 'system'} message. ${settings().hideNarration ? 'The DM\'s narration is hidden from the bot.' : 'The DM\'s narration is visible to the bot.'}</small>`,
+            `<h3>What ${escapeHtml(char)} gets in this chat</h3><p>Plain roleplay turns:</p><div class="dm-preview">${escapeHtml(base)}</div><p>When Claude handles the turn (example brief):</p><div class="dm-preview">${escapeHtml(withBrief)}</div><small>Position: ${settings().noteMode !== 'separate' ? 'added to the end of your latest message (or as a plain user turn when the latest message is someone elses)' : `${settings().noteDepth === 0 ? 'right before the reply' : `${settings().noteDepth} message(s) back`}, as a ${settings().noteRole === 'user' ? 'user' : 'system'} message`}. ${settings().hideNarration ? 'The DM\'s narration is hidden from the bot.' : 'The DM\'s narration is visible to the bot.'}</small>`,
             ST.POPUP_TYPE.TEXT, '', { wide: true, allowVerticalScrolling: true },
         );
     });
