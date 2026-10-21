@@ -132,6 +132,7 @@ function panelHtml() {
       <label>Helper (quick decisions)
         <select id="dm-helper-profile" class="text_pole">${profileOptions(s.helperProfileId, { emptyLabel: 'Same as actors (current connection)', filter: p => p.api !== 'claude' })}</select></label>
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
+      <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
       <small>Profiles come from SillyTavern's Connection Manager. A profile brings its own saved formats, so update old profiles before using them here.</small>
 
       <h4>Budget</h4>
@@ -361,6 +362,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindSelect('dm-actor-profile', 'actorProfileId');
     bindSelect('dm-helper-profile', 'helperProfileId');
     bindCheck('dm-use-helper', 'useHelper');
+    bindCheck('dm-auto-dice', 'autoReadDice');
     bindNumber('dm-monthly', 'monthlyCap');
     bindNumber('dm-nightly', 'nightlySoftCap');
     bindCheck('dm-caching', 'cachingEnabled');

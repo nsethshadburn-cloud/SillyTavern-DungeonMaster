@@ -324,6 +324,17 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.5 (pacing, from a 600-message session)
+- **DM rules:** forward motion every narration, 2-5 sentences (a paragraph for arrivals and big moments), arrivals must be named and described and set scene.location, compress uneventful travel unless the player is really talking, don't narrate companions about to reply, don't echo the player's action, rolls only when failure is possible and interesting. Removed "never rush" and "one beat per scene"; story_add on arrivals, captures, escapes, reveals.
+- **Plot pressure ladder** (core/pacing.js PRESSURE_STAGES): lean in → hints → pursuit → pressure → force, one stage per turn at most, thresholds by campaign feel (breathe: 12/20/28/36 turns without a beat). Holds while engagement is high. The DM is called at each new stage and every 4 turns at stages 3-4 until a beat lands; a beat resets everything (including lastDriftStageCalled, which previously never reset).
+- **NEXT BEAT** (first unticked plot line) is in every pacing report, with "tick it as soon as its goal is reached, even differently". The old session sat at 98 turns since a beat although the capture had happened.
+- **Stalls:** code counts filler player messages (core/pacing.js isFillerMessage: very short, or short acknowledgements/passive actions, never anything with a question); 3 in a row calls the DM with "stalled".
+- **Typed roll numbers no longer count as story turns** for pacing.
+- **DM chat window:** the 24 messages are story messages; dice results ride along without counting; SillyTavern's own system messages, answered roll requests and typed roll numbers are left out.
+- **Dice auto-read** (st/dicewatch.js, core/rollmsg.js): SillyTavern's dice extension posts "Name rolls a d20. The result is: 17 (17)" as a system message with no event, so a MutationObserver on #chat reads those after a roll request (advantage/disadvantage take two d20s; damage collects the formula's dice and adds its flat bonuses). The result waits in meta.pendingRoll.autoResult and the turn runs as a roll result. A number typed afterwards within 3 minutes is ignored. Setting: autoReadDice.
+- **Each player message is handled once** (meta.lastHandledPlayer), so a re-triggered turn can't narrate the same action twice. Attack roll cards say AC instead of DC.
+- Tested offline (stubbed Claude, test copy of SillyTavern): roll request → SillyTavern system dice message → automatic resolution and DM call; retyped number ignored; transcript contents; duplicate trigger handled once. 20/20 unit tests.
+
 ### v0.4.2
 - A model dropdown per job instead of a two-model checklist, plus a Hybrid on/off switch, a natural-1/20 option, a hand-up switch and "Reset to recommended". v0.4.x settings carry over (untouched v0.4.0 defaults become the recommended set; customized choices are kept). Tested offline with Claude stubbed: dropdowns save, hybrid off routes everything to the main model, reset, per-job calls (PDF → Sonnet, recap → Haiku), hand-up on and off.
 

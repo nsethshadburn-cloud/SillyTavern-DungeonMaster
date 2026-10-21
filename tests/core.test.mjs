@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 
 import { parseNotation, roll, rollDie, judge, parsePlayerRoll, abilityModifier } from '../src/core/dice.js';
 import { normalizeEvent, eventChance, eligibleEvents, pickEvent, guessSetting } from '../src/core/deck.js';
-import { createPacingState, tickPlayerTurn, dmReasons, applyDmPacing, updateFun } from '../src/core/pacing.js';
+import { createPacingState, tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage, nextBeat, pacingReport, PRESSURE_STAGES } from '../src/core/pacing.js';
+import { parseRollMessage, damageDice, collectRoll } from '../src/core/rollmsg.js';
+import { DM_RULES } from '../src/core/protocol.js';
 import { ruleTriage, parseHelperTriage } from '../src/core/triage.js';
 import { extractJson, stripThinking, stripSpeakerPrefix, matchName, slug } from '../src/core/text.js';
 import { parseDmTurn } from '../src/core/protocol.js';
@@ -84,7 +86,7 @@ test('pacing decides when the DM is needed', () => {
     assert.deepEqual(dmReasons({ pacing: p, triage: { category: 'risky_action' }, eventDue: true, checkinEvery: 10, budgetBlocked: true }), []);
     assert.ok(dmReasons({ pacing: p, triage: { category: 'question', unknownAddressee: 'Finch' }, eventDue: false, checkinEvery: 99 }).includes('npc_addressed'));
     for (let i = 0; i < 20; i++) tickPlayerTurn(p, 'breathe');
-    assert.equal(p.driftStage, 1);
+    assert.equal(p.driftStage, 2, '21 turns without a beat: pursuit');
     applyDmPacing(p, { beats_completed: ['A1.1'], tension: 6, scene: { type: 'tension', changed: true } });
     assert.deepEqual(p.sceneHistory, ['exploration']);
     applyDmPacing(p, { scene: { type: 'tension', changed: true } });
@@ -235,4 +237,86 @@ test('older model settings move to per-job models', () => {
 test('DM can hand a turn up', () => {
     assert.equal(parseDmTurn('{"escalate": true}').escalate, true);
     assert.equal(parseDmTurn('{"narration": "x"}').escalate, false);
+});
+
+test('plot pressure climbs one stage at a time, holds during real conversation, and keeps pushing at the top', () => {
+    const p = createPacingState();
+    for (let i = 0; i < 11; i++) tickPlayerTurn(p, 'breathe');
+    assert.equal(p.driftStage, 0);
+    tickPlayerTurn(p, 'breathe');
+    assert.equal(p.driftStage, 1, 'hints at 12 turns');
+    // Engaged chat holds the stage even though turns keep counting.
+    p.fun = 2.6;
+    for (let i = 0; i < 20; i++) tickPlayerTurn(p, 'breathe');
+    assert.equal(p.driftStage, 1, 'held while the player is engaged');
+    p.fun = 1;
+    tickPlayerTurn(p, 'breathe');
+    assert.equal(p.driftStage, 2, 'one stage per turn once the chat ends');
+    for (let i = 0; i < 6; i++) tickPlayerTurn(p, 'breathe');
+    assert.equal(p.driftStage, 4, 'force');
+    // A new stage calls the DM; at the top it calls again every few turns until a beat lands.
+    const call = lastDriftStageCalled => dmReasons({ pacing: p, triage: { category: 'banter' }, eventDue: false, checkinEvery: 99, lastDriftStageCalled });
+    assert.ok(call(3).includes('drift'));
+    p.pressureCallAge = 0;
+    assert.ok(!call(4).includes('drift'));
+    p.pressureCallAge = 4;
+    assert.ok(call(4).includes('drift'));
+    p.fun = 2.5;
+    assert.ok(!call(4).includes('drift'), 'not mid-conversation');
+    applyDmPacing(p, { beats_completed: ['A2.1'] });
+    assert.equal(p.driftStage, 0);
+    assert.equal(p.turnsSinceBeat, 0);
+    assert.equal(PRESSURE_STAGES.length, 5);
+});
+
+test('stalls are detected from filler replies, not from questions or real moves', () => {
+    for (const t of ['Go', 'Fine. Lets go', 'Lets go then.', '*amber complies with his demands*', '*they sit in silence for awhile*', 'ok', '*nods*']) {
+        assert.ok(isFillerMessage(t), t);
+    }
+    for (const t of ['What do you want, and why shouldnt i kill you', '*amber jumps onto the horse with judy*', 'Wow, your really optimistic arnt you?', 'Look, we just need to find a tool that can pick this lock, then we steal what supplies we need and we get out of there.']) {
+        assert.ok(!isFillerMessage(t), t);
+    }
+    const p = createPacingState();
+    for (const filler of [true, true]) tickPlayerTurn(p, 'breathe', { filler });
+    assert.ok(!dmReasons({ pacing: p, triage: { category: 'banter' }, eventDue: false, checkinEvery: 99 }).includes('stalled'));
+    tickPlayerTurn(p, 'breathe', { filler: true });
+    assert.ok(dmReasons({ pacing: p, triage: { category: 'banter' }, eventDue: false, checkinEvery: 99 }).includes('stalled'));
+    assert.match(pacingReport(p), /STALL/);
+    tickPlayerTurn(p, 'breathe', { filler: false });
+    assert.equal(p.fillerStreak, 0, 'a real message resets it');
+});
+
+test('next beat comes from the plot checklist', () => {
+    const plot = '## Act 1: The Market\n- [x] A1.1 Amber works the market\n- [ ] A1.2 Hunters take Amber and Judy\n- [ ] A1.3 The road to Grimhollow';
+    assert.deepEqual(nextBeat(plot), { id: 'A1.2', text: 'Hunters take Amber and Judy' });
+    assert.equal(nextBeat('- [x] A1.1 done'), null);
+    assert.match(pacingReport(createPacingState(), { plot }), /NEXT BEAT: A1\.2 Hunters take Amber and Judy/);
+});
+
+test('SillyTavern dice messages are read for pending rolls', () => {
+    assert.deepEqual(parseRollMessage('Amber rolls a d20. The result is: 17 (17)'), { who: 'Amber', count: 1, sides: 20, total: 17, rolls: [17] });
+    assert.deepEqual(parseRollMessage('Amber rolls a 4d6. The result is: 19 (6,2,6,5)').rolls, [6, 2, 6, 5]);
+    assert.deepEqual(parseRollMessage('Amber rolls a 1d20+11. The result is: 28 (17)').rolls, [17], 'natural die, not the total');
+    assert.equal(parseRollMessage('Amber says hi'), null);
+    assert.deepEqual(damageDice('1d6+5 +3d6 Sneak Attack +6 Assassinate'), { dice: { 6: 4 }, bonus: 11 });
+    const d = (sides, value) => ({ sides, value });
+    // From the chat: 6+6+5+3 +11 = 31.
+    const dmg = { kind: 'damage', damage: '1d6+5 +3d6 Sneak Attack +6 Assassinate' };
+    assert.deepEqual(collectRoll(dmg, [d(6, 6), d(6, 6), d(6, 5)]), { done: false });
+    assert.deepEqual(collectRoll(dmg, [d(6, 6), d(6, 6), d(6, 5), d(6, 3)]), { done: true, natural: null, total: 31 });
+    const adv = { kind: 'attack', die: 20, advantage: 'advantage' };
+    assert.deepEqual(collectRoll(adv, [d(20, 4)]), { done: false }, 'advantage waits for the second d20');
+    assert.deepEqual(collectRoll(adv, [d(20, 4), d(20, 8)]), { done: true, natural: 8, total: null });
+    assert.deepEqual(collectRoll({ kind: 'save', die: 20, advantage: 'disadvantage' }, [d(20, 15), d(20, 9)]).natural, 9);
+    assert.deepEqual(collectRoll({ kind: 'check', die: 20 }, [d(4, 3), d(20, 6)]), { done: true, natural: 6, total: null }, 'other dice are ignored');
+});
+
+test('DM rules: forward motion, arrivals, sensible rolls, pressure ladder', () => {
+    assert.doesNotMatch(DM_RULES, /Never rush/);
+    assert.doesNotMatch(DM_RULES, /Usually 1-3 sentences/);
+    assert.match(DM_RULES, /Usually 2-5 sentences/);
+    assert.match(DM_RULES, /Arrivals:/);
+    assert.match(DM_RULES, /Conversation is never filler/);
+    assert.match(DM_RULES, /stage 4 force/);
+    assert.match(DM_RULES, /just narrate the success/);
 });

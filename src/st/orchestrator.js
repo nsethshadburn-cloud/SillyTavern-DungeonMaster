@@ -16,7 +16,7 @@ import { normalizeMap, applyPositions, placeMissing } from '../core/grid.js';
 import { openMap, refreshMap, closeMap } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage } from '../core/triage.js';
-import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun } from '../core/pacing.js';
+import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01 } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty } from '../core/world.js';
@@ -53,11 +53,16 @@ function budget() {
 
 /** Latest player message text. */
 function lastPlayerMessage() {
+    return lastPlayerEntry()?.mes || '';
+}
+
+/** Latest player message, with a key that identifies it even if earlier messages get deleted. */
+function lastPlayerEntry() {
     for (let i = ST.chat.length - 1; i >= 0; i--) {
         const m = ST.chat[i];
-        if (m?.is_user && !m.is_system) return m.mes || '';
+        if (m?.is_user && !m.is_system) return { mes: m.mes || '', key: `${m.send_date ?? ''}|${String(m.mes ?? '').slice(0, 80)}` };
     }
-    return '';
+    return null;
 }
 
 function recentForHelper(n = 6) {
@@ -73,6 +78,7 @@ function recentForHelper(n = 6) {
 /**
  * Run one turn.
  * @param {{force?: string|null, oocText?: string}} opts force = a reason to call the DM regardless
+ * A roll read from SillyTavern's dice waits in meta.pendingRoll.autoResult (see dicewatch.js).
  */
 export async function runTurn(opts = {}) {
     const c = campaign();
@@ -117,15 +123,31 @@ async function turnBody(c, opts, status, signal) {
     const s = settings();
     const meta = c.meta;
     const pacing = meta.pacing;
-    const playerText = opts.force === 'manual' ? '' : lastPlayerMessage();
+    const autoRoll = meta.pendingRoll?.autoResult ?? null;
+    const playerText = opts.force === 'manual' || autoRoll ? '' : lastPlayerMessage();
     meta.stats.lastTurnUsd = 0;
     let turnUsd = 0;
 
+    // Each player message is handled once, however many times a turn gets triggered for it.
+    if (!autoRoll && !opts.force) {
+        const entry = lastPlayerEntry();
+        if (entry && entry.key === meta.lastHandledPlayer) return;
+        meta.lastHandledPlayer = entry?.key ?? null;
+    }
+
+    // A roll that was already read from SillyTavern's dice, typed in again: nothing to do.
+    if (!autoRoll && !opts.force && !meta.pendingRoll && isRetypedAutoRoll(meta, playerText)) {
+        status.note('That roll was already read from your dice');
+        return;
+    }
+
     // ---------- 1. Triage ----------
     let triage = { category: null, ooc: false, rollResult: false, stalled: false, speakers: [] };
-    if (opts.force !== 'manual' && opts.force !== 'opening') {
+    if (autoRoll) {
         meta.turn++;
-        tickPlayerTurn(pacing, meta.options.length);
+        triage = { ...triage, rollResult: true, roll: autoRoll, category: pacing.inCombat ? 'combat_action' : 'action' };
+    } else if (opts.force !== 'manual' && opts.force !== 'opening') {
+        meta.turn++;
         pacing.localTurnsSinceDM++;
         const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat });
         triage = { ...triage, ...rule };
@@ -162,7 +184,11 @@ async function turnBody(c, opts, status, signal) {
         } else if (!triage.category) {
             triage.category = 'banter';
         }
-        updateFun(pacing, { engaged, messageLength: playerText.length });
+        // Typed roll results are mechanics, not story turns: they don't count toward pacing.
+        if (!triage.rollResult) {
+            updateFun(pacing, { engaged, messageLength: playerText.length });
+            tickPlayerTurn(pacing, meta.options.length, { filler: !triage.ooc && isFillerMessage(playerText, engaged) });
+        }
     }
     if (signal.aborted) throw new Error('aborted');
 
@@ -219,8 +245,14 @@ async function turnBody(c, opts, status, signal) {
             await localReplies(c, triage, playerText, status, signal);
             return;
         }
-        if (reasons.includes('drift')) meta.lastDriftStageCalled = pacing.driftStage;
+        if (reasons.includes('drift')) {
+            meta.lastDriftStageCalled = pacing.driftStage;
+            pacing.pressureCallAge = 0;
+        }
+        if (reasons.includes('stalled')) pacing.fillerStreak = 0;
         await applyDmTurn(c, result.turn, status, signal, { events });
+        // A beat landed: the pressure ladder starts over from the bottom.
+        if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
         meta.stats.lastTurnUsd = turnUsd;
         if (Math.random() < 0.15) {
             maybeCondenseNotes().catch(err => console.warn('[Dungeon Master] notes condense failed', err));
@@ -233,6 +265,14 @@ async function turnBody(c, opts, status, signal) {
         await localReplies(c, triage, playerText, status, signal);
         meta.stats.localTurns = (meta.stats.localTurns || 0) + 1;
     }
+}
+
+/** True if the player typed the number of a roll the plugin already read from SillyTavern's dice. */
+function isRetypedAutoRoll(meta, text) {
+    const last = meta.lastAutoRoll;
+    if (!last || Date.now() - last.at > 3 * 60 * 1000) return false;
+    const m = String(text ?? '').trim().match(/^(?:nat(?:ural)?\s*)?(\d{1,3})\b[^a-z]*$/i);
+    return Boolean(m && [last.natural, last.total].includes(Number(m[1])));
 }
 
 function summarizeTurn(t) {
@@ -286,7 +326,7 @@ async function resolvePlayerRoll(c, parsed, status) {
     const judged = pr.kind === 'damage' ? { success: null } : judge(total, pr.dc, natural, pr.kind);
     const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
     const flair = natural === 20 ? ' — **natural 20!**' : natural === 1 ? ' — natural 1…' : '';
-    const dcText = pr.dc !== null && pr.kind !== 'damage' ? ` vs DC ${pr.dc}` : '';
+    const dcText = pr.dc !== null && pr.kind !== 'damage' ? ` vs ${pr.kind === 'attack' ? 'AC' : 'DC'} ${pr.dc}` : '';
     const card = pr.kind === 'damage'
         ? `🎲 **${meta.persona.name}** — damage: **${total}**`
         : `🎲 **${meta.persona.name}** — ${pr.skill}: d${pr.die || 20} (${natural ?? '?'}) ${formatModifier(mod)} = **${total}** ${mark}${dcText}${flair}`;
@@ -534,7 +574,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         const what = pr.kind === 'damage'
             ? `roll damage **${pr.damage || 'for your hit'}** and type the total`
             : `roll a **d${pr.die || 20}** for **${pr.skill}${pr.ability ? ` (${pr.ability})` : ''}**${adv} and type the number you rolled`;
-        await postDiceCard(`🎲 **${meta.persona.name}**, ${what}.${pr.reason ? `\n*${pr.reason}*` : ''}`, { request: pr });
+        const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
+        await postDiceCard(`🎲 **${meta.persona.name}**, ${what}${auto}.${pr.reason ? `\n*${pr.reason}*` : ''}`, { request: pr });
+        // Dice rolled from here on are read automatically (dicewatch.js).
+        pr.chatIndex = ST.chat.length;
     }
     saveMeta();
 }

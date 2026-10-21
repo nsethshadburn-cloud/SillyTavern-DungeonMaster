@@ -60,6 +60,10 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **Combat.** Claude runs fights: it decides what companions and enemies do, rolls for them and narrates; companions only get a quick line. A **battle map** pops up (also in the wand menu, or `/dmmap`): chess-style squares (a1 is bottom-left), portraits, terrain, HP. Tap a square to move and an enemy to target, then **Add to message** and say what you do. On phones it's a sheet across the bottom of the screen.
 
+**Pacing.** The DM keeps the story moving: every narration changes something, boring stretches (long walks, waits) get skipped to the next interesting moment, and when you arrive somewhere new it describes the place (name, look, sounds, who's around). Real conversation is never rushed, even while traveling. If your last few messages are short filler ("ok", "lets go", "*nods*") with no questions or plans, it treats the scene as stalled and moves things along.
+
+**Staying on the plot.** Wander off as much as you like. The longer you go without reaching the next plot beat, the harder the world pushes back, one step at a time: hints and rumors, then pursuers, then direct threats, and finally a fair but overwhelming turn of events that puts the story back on track. It holds off while you're in a real conversation, and the moment you reach the beat's goal (even in a way the plot didn't plan) the pressure resets. The DM Screen shows the current pressure and the next beat.
+
 **Random events** only happen when they fit: when the dice say "maybe", Claude looks at a few candidates and the situation, and picks one, invents a better-fitting one, or skips it.
 
 **Surprises.** Settings → **Surprises**: toggles for traps, hazards, puzzles and locks, secret doors, hidden treasure and ambushes, plus how often.
@@ -68,7 +72,7 @@ Just roleplay. Behind the scenes, each message goes through:
 
 | You want to… | Do this |
 |---|---|
-| Roll when the DM asks | Roll your real dice and type the number (`14`, `nat 20`, `rolled 12 total 17`) |
+| Roll when the DM asks | Use SillyTavern's dice (they're read automatically, including advantage and damage dice), or roll real dice and type the number (`14`, `nat 20`, `rolled 12 total 17`) |
 | Ask the DM something out of character | Start with `((`… or `DM,`… e.g. `((how far is the city?))` or type `/dm how far is the city?` |
 | Make the DM step in right now | Wand menu → **DM: step in now**, or `/dm` |
 | See everything at a glance | Wand menu → **DM Screen**, or `/dmscreen` |

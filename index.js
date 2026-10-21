@@ -17,6 +17,7 @@ import { toggleScreen, renderScreen } from './src/ui/screen.js';
 import { openWizard } from './src/ui/wizard.js';
 import { hideStatus } from './src/ui/status.js';
 import { roll } from './src/core/dice.js';
+import { startDiceWatch } from './src/st/dicewatch.js';
 
 let pendingUserMessage = false;
 const BREAK_HOURS = 6;
@@ -190,6 +191,7 @@ jQuery(async () => {
     const { eventSource, eventTypes } = ST;
     eventSource.on(eventTypes.CHAT_CHANGED, onChatChanged);
     eventSource.on(eventTypes.MESSAGE_SENT, onMessageSent);
+    startDiceWatch(() => setTimeout(() => runTurn().finally(() => { renderScreen(); renderSpend(); }), 60));
     eventSource.on(eventTypes.GROUP_WRAPPER_FINISHED, onGroupWrapperFinished);
     eventSource.on(eventTypes.GENERATION_STOPPED, () => {
         if (!isRunning()) {

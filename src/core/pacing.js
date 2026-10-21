@@ -15,20 +15,62 @@ export function createPacingState() {
         localTurnsSinceDM: 0,
         fun: 1,                    // smoothed engagement 0..3
         stalledStreak: 0,
-        driftStage: 0,             // 0 lean in, 1 soft hooks, 2 firm hooks
+        fillerStreak: 0,           // player messages in a row that were short filler (stall detection)
+        driftStage: 0,             // plot pressure stage, see PRESSURE_STAGES
+        pressureCallAge: 0,        // player turns since the DM was last called about plot pressure
         beatsThisScene: 0,
         inCombat: false,
     };
 }
 
-/** Drift budget (player turns away from the plot before each hook stage), by campaign feel. */
+/** Plot pressure, from "play along" to "the plot takes them back". */
+export const PRESSURE_STAGES = Object.freeze([
+    { name: 'lean in', guide: 'Play along with what the party is doing.' },
+    { name: 'hints', guide: 'Let the plot show up in the background: rumors, signs, news, a familiar face.' },
+    { name: 'pursuit', guide: 'The plot comes looking for them: messengers, hunters on the trail, doors closing behind them.' },
+    { name: 'pressure', guide: 'Direct threats and close calls. Their options narrow and resisting the plot starts to cost them.' },
+    { name: 'force', guide: 'An overwhelming but fair turn of events puts the plot back on track (a much larger force, a trap they walk into, an offer they can\'t refuse). Set it up in the fiction first; never ignore good rolls or invent impossible odds out of nowhere.' },
+]);
+
+/** Player turns without a plot beat before each pressure stage (1..4), by campaign feel. */
 export function driftBudget(length = 'breathe') {
     switch (length) {
-        case 'short': return { soft: 6, firm: 12 };
-        case 'long': return { soft: 12, firm: 22 };
+        case 'short': return [6, 10, 14, 18];
+        case 'long': return [10, 16, 22, 28];
         case 'breathe':
-        default: return { soft: 16, firm: 30 };
+        default: return [12, 20, 28, 36];
     }
+}
+
+/** At the top pressure stages, the DM is called again this often (player turns) until a beat lands. */
+export const PRESSURE_RECALL_TURNS = 4;
+/** This many filler messages in a row counts as a stall. */
+export const STALL_FILLER_STREAK = 3;
+
+const FILLER_WORDS = /^(ok(ay)?|k|fine|sure|yeah|yep|yes|no|nope|alright|right|cool|go|lets go|let's go|lets do it|let's do it|uh huh|hm+|huh|whatever|done|good|great|nice|thanks|ty|same|agreed|follow( (him|her|them|me))?|wait|continue|keep going)\b/i;
+const FILLER_ACTIONS = /\b(nods?|shrugs?|sighs?|follows?|complies|complys|waits?|sits?|sitting|silence|silently|stays? quiet|agrees?|smirks?|yawns?|rests?|sleeps?|walks? (along|on|with)|keeps? (walking|going|riding))\b/i;
+
+/**
+ * Is this player message low-content filler (no question, no plan, nothing new)?
+ * Questions and anything with substance are never filler.
+ * @param {string} text
+ * @param {number|null} engaged the helper's 0..3 engagement guess, if any
+ */
+export function isFillerMessage(text, engaged = null) {
+    const t = String(text ?? '').replace(/[*_~]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!t) return true;
+    if (t.includes('?')) return false;
+    const words = t.split(' ').filter(Boolean).length;
+    if (words <= 3) return true;
+    if (words <= 8 && (FILLER_WORDS.test(t) || FILLER_ACTIONS.test(t))) return true;
+    if (words <= 8 && engaged !== null && Number(engaged) <= 0) return true;
+    return false;
+}
+
+/** The first unticked beat in the plot checklist ("- [ ] A2.1 description"), or null. */
+export function nextBeat(plot) {
+    const m = String(plot ?? '').match(/^\s*[-*]\s*\[\s\]\s*(A\d+\.\d+)\s*[:.\-–]?\s*(.+)$/m);
+    return m ? { id: m[1], text: m[2].trim() } : null;
 }
 
 /**
@@ -48,13 +90,23 @@ export function updateFun(pacing, { engaged = null, messageLength = 0 } = {}) {
     return pacing.fun;
 }
 
-/** Call once per player turn, before deciding anything. */
-export function tickPlayerTurn(pacing, length) {
+/**
+ * Call once per player turn (not for typed roll results), before deciding anything.
+ * Plot pressure climbs at most one stage per turn, and holds while the player is
+ * genuinely engaged in conversation (high fun), so quiet moments and travel chat aren't rushed.
+ * @param {{filler?:boolean}} o filler = this message was low-content filler (isFillerMessage)
+ */
+export function tickPlayerTurn(pacing, length, { filler = false } = {}) {
     pacing.turnsInScene++;
     pacing.turnsSinceBeat++;
     pacing.turnsSinceEvent++;
-    const budget = driftBudget(length);
-    pacing.driftStage = pacing.turnsSinceBeat >= budget.firm ? 2 : pacing.turnsSinceBeat >= budget.soft ? 1 : 0;
+    pacing.pressureCallAge = (pacing.pressureCallAge ?? 0) + 1;
+    pacing.fillerStreak = filler ? (pacing.fillerStreak ?? 0) + 1 : 0;
+    const thresholds = driftBudget(length);
+    const target = thresholds.filter(n => pacing.turnsSinceBeat >= n).length;
+    const current = pacing.driftStage ?? 0;
+    if (pacing.fun >= 2.2) pacing.driftStage = Math.min(target, current);
+    else pacing.driftStage = Math.min(target, current + 1);
 }
 
 /**
@@ -76,9 +128,11 @@ export function dmReasons({ pacing, triage, eventDue, checkinEvery, budgetBlocke
     if (['risky_action', 'scene_move', 'combat_action'].includes(triage.category)) reasons.push(triage.category);
     if (pacing.inCombat && triage.category !== 'banter') reasons.push('combat_round');
     if (eventDue) reasons.push('event');
-    if (triage.stalled) reasons.push('stalled');
+    if (triage.stalled || (pacing.fillerStreak ?? 0) >= STALL_FILLER_STREAK) reasons.push('stalled');
     if (triage.unknownAddressee) reasons.push('npc_addressed');
     if (pacing.driftStage > lastDriftStageCalled) reasons.push('drift');
+    // At the top stages, keep the pressure on until a beat lands (but not mid-conversation).
+    else if (pacing.driftStage >= 3 && (pacing.pressureCallAge ?? 0) >= PRESSURE_RECALL_TURNS && pacing.fun < 2.2) reasons.push('drift');
     let every = Math.max(3, Number(checkinEvery) || 10);
     if (budgetTight) every *= 2;
     if (pacing.fun >= 2.2) every = Math.round(every * 1.5);
@@ -106,6 +160,7 @@ export function applyDmPacing(pacing, dm) {
     if (beats.length) {
         pacing.turnsSinceBeat = 0;
         pacing.driftStage = 0;
+        pacing.pressureCallAge = 0;
         pacing.beatsThisScene += beats.length;
     }
     if (dm.start_combat) pacing.inCombat = true;
@@ -115,17 +170,24 @@ export function applyDmPacing(pacing, dm) {
 }
 
 /** Human-readable pacing summary for the DM prompt. */
-export function pacingReport(pacing, { length = 'breathe', sessionMinutes = 0, usualSessionMinutes = 90 } = {}) {
-    const budget = driftBudget(length);
+export function pacingReport(pacing, { length = 'breathe', sessionMinutes = 0, usualSessionMinutes = 90, plot = '' } = {}) {
+    const thresholds = driftBudget(length);
     const recent = [...pacing.sceneHistory.slice(-5), pacing.sceneType];
+    const stage = Math.min(pacing.driftStage ?? 0, PRESSURE_STAGES.length - 1);
+    const beat = nextBeat(plot);
+    const engagedChat = pacing.fun >= 2.2;
     const lines = [
+        beat ? `NEXT BEAT: ${beat.id} ${beat.text}. Tick it in beats_completed as soon as its goal is reached, even if it happened differently than planned.` : 'NEXT BEAT: none left (the plot is complete or empty).',
+        `Player turns since a plot beat was completed: ${pacing.turnsSinceBeat} (pressure rises at ${thresholds.join(', ')}).`,
+        `PLOT PRESSURE: stage ${stage} of 4, "${PRESSURE_STAGES[stage].name}": ${PRESSURE_STAGES[stage].guide}${engagedChat && stage > 0 ? ' (Holding: the player is engaged in real conversation, so let it play out first.)' : ''}`,
         `Current scene type: ${pacing.sceneType} (for ${pacing.turnsInScene} player turns). Recent scene types, oldest→newest: ${recent.join(' → ')}.`,
         `Tension: ${pacing.tension}/10.`,
-        `Player turns since a plot beat was completed: ${pacing.turnsSinceBeat} (soft hooks from ${budget.soft}, firm hooks from ${budget.firm}). Drift stage: ${['lean in', 'soft hooks', 'firm hooks'][pacing.driftStage]}.`,
-        `Player engagement (0–3, smoothed): ${pacing.fun}${pacing.fun >= 2.2 ? ' — HIGH: let the moment breathe, no new plot pressure' : ''}.`,
-        `Major beats completed in this scene: ${pacing.beatsThisScene} (max 1 per scene).`,
+        `Player engagement (0–3, smoothed): ${pacing.fun}${engagedChat ? ' — HIGH: they are enjoying the conversation; let it breathe and keep narration light' : ''}.`,
         `Combat: ${pacing.inCombat ? 'IN COMBAT' : 'no'}.`,
     ];
+    if ((pacing.fillerStreak ?? 0) >= 2) {
+        lines.push(`STALL: the player's last ${pacing.fillerStreak} messages were short filler with no questions or plans. Move the scene on yourself: skip ahead, arrive somewhere, or have someone or something push in.`);
+    }
     if (sessionMinutes > 0) {
         const left = usualSessionMinutes - sessionMinutes;
         lines.push(`Tonight's session has run ${Math.round(sessionMinutes)} min (usual ~${usualSessionMinutes}).${left < 20 ? ' Start steering toward a satisfying stopping point (cliffhanger or campfire).' : ''}`);

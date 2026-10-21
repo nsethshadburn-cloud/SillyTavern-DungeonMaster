@@ -59,21 +59,40 @@ export function resetStableCache() {
 
 /** Recent chat as plain text for the DM. */
 export function transcript(maxMessages) {
-    const out = [];
+    // Counts story messages only. Dice results ride along without counting, SillyTavern's own
+    // system messages (its dice roller's "X rolls a d20…") and typed roll numbers are left out,
+    // and a roll request is dropped once its result card exists. Otherwise a fight's dice spam
+    // pushes the actual story out of the window.
     const chat = ST.chat;
-    const start = Math.max(0, chat.length - maxMessages);
-    for (let i = start; i < chat.length; i++) {
+    const out = [];
+    const pending = campaign()?.meta.pendingRoll;
+    let openRequest = -1;
+    if (pending) {
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i]?.extra?.dungeon_master?.request) { openRequest = i; break; }
+        }
+    }
+    let counted = 0;
+    for (let i = chat.length - 1; i >= 0 && counted < maxMessages; i--) {
         const m = chat[i];
         if (!m || !m.mes) continue;
         const type = dmType(m);
+        // The plugin's own cards are hidden (is_system) too; only skip SillyTavern's messages.
+        if (m.is_system && !type) continue;
         if (type === 'note') continue;
         let text = String(m.mes).replace(/<[^>]+>/g, '').trim();
         if (!text) continue;
+        if (type === 'roll') {
+            if (m.extra?.dungeon_master?.request && i !== openRequest) continue;
+            out.unshift(`[DICE] ${trimToTokens(text, 150)}`);
+            continue;
+        }
+        if (m.is_user && /^\s*(nat(ural)?\s*)?\d{1,3}\b.{0,40}$/i.test(text)) continue;
         text = trimToTokens(text, 400);
-        if (type === 'roll') out.push(`[DICE] ${text}`);
-        else if (type === 'ooc') out.push(`[DM, out of character] ${text}`);
-        else if (m.is_user) out.push(`${m.name} (PLAYER): ${text}`);
-        else out.push(`${m.name}: ${text}`);
+        if (type === 'ooc') out.unshift(`[DM, out of character] ${text}`);
+        else if (m.is_user) out.unshift(`${m.name} (PLAYER): ${text}`);
+        else out.unshift(`${m.name}: ${text}`);
+        counted++;
     }
     return out.join('\n');
 }
@@ -96,12 +115,12 @@ const REASON_TEXT = {
     ooc: 'The player asked you something out of character. Answer in "ooc". Only add narration if the question changes the scene.',
     roll_result: 'The player rolled for your last request. The result is below. Narrate the outcome.',
     risky_action: 'The player attempted something with an uncertain outcome. Rule on it: ask for a roll (player_roll) or narrate the result if no roll is needed.',
-    scene_move: 'The player wants to move the scene (travel, rest, leave, time skip). Handle the transition with good pacing.',
+    scene_move: 'The player wants to move the scene (travel, rest, leave, time skip). Compress the uneventful part unless they are in a real conversation, then land them at the next interesting moment or the destination, and describe where they arrive.',
     combat_action: 'Combat action. Resolve the player\'s action fairly (they may name a square to move to, like "d4"; update "positions").',
     combat_round: 'Combat is ongoing. You run this round: decide what each companion and enemy does, roll for them (npc_rolls), move them ("positions"), and narrate. Companions get only a "short" brief for a quick line.',
     event: 'The dice say a random event COULD happen now. Candidates are below. First decide if any event fits this exact moment and place. Set event.use to a candidate id, to "custom" (and describe yours in event.text) for a small event that fits better, or to "none" if nothing should happen right now.',
-    stalled: 'The scene seems stuck going in circles. Nudge it forward from inside the world.',
-    drift: 'The player has been off the main plot for a while. Follow the drift-stage guidance in the pacing report.',
+    stalled: 'The scene has stalled (filler replies or going in circles). Move it forward yourself: skip ahead, arrive somewhere, or let someone or something push in.',
+    drift: 'The party has been away from the plot for a while. Apply the PLOT PRESSURE stage in the pacing report, building on any pressure you set up before.',
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
     checkin: 'Routine director check-in. Usually: no narration, just refresh standing_direction and maybe a direction or two. Only intervene if pacing needs it. Keep this response SHORT.',
     opening: 'Open the campaign.',
@@ -149,7 +168,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
-    sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90 }));
+    sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90, plot: c.docs.plot }));
 
     for (const f of extraFiles) {
         if (f === 'rolls_log') sections.push('', '# ROLLS LOG (recent)', JSON.stringify(c.docs.rolls_log.slice(-40)));

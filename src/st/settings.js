@@ -60,6 +60,7 @@ export const DEFAULTS = Object.freeze({
     noteDepth: 0,               // 0 = right before the reply; higher = further back in the chat
     noteRole: 'system',         // 'system' | 'user': how the note is formatted in your instruct template
     hideNarration: true,        // the bot never sees "Dungeon Master" messages; it gets briefs instead
+    autoReadDice: true,         // read SillyTavern's dice rolls for a pending roll (no need to type the number)
 
     // Surprises Claude may add
     surprises: { traps: true, hazards: true, puzzles: true, secretDoors: true, treasure: true, ambushes: true },

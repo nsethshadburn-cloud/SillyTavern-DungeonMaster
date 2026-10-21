@@ -12,7 +12,7 @@ import { toggleMap } from './map.js';
 import { turnHistory } from './status.js';
 import { escapeHtml } from '../core/text.js';
 import { formatUsd } from '../core/budget.js';
-import { driftBudget } from '../core/pacing.js';
+import { driftBudget, PRESSURE_STAGES, nextBeat } from '../core/pacing.js';
 
 let panel = null;
 
@@ -92,7 +92,7 @@ export function renderScreen() {
   <h5>Pacing</h5>
   <div class="dm-kv"><span>Scene</span><b>${escapeHtml(p.sceneType)}</b></div>
   <div class="dm-kv"><span>Tension</span>${meter(p.tension, 10)}<small>${p.tension}/10</small></div>
-  <div class="dm-kv"><span>Off-plot</span>${meter(p.turnsSinceBeat, budget.firm)}<small>${p.turnsSinceBeat} turns · ${['lean in', 'soft hooks', 'firm hooks'][p.driftStage]}</small></div>
+  <div class="dm-kv"><span>Off-plot</span>${meter(p.turnsSinceBeat, budget[budget.length - 1])}<small>${p.turnsSinceBeat} turns · pressure: ${PRESSURE_STAGES[Math.min(p.driftStage ?? 0, PRESSURE_STAGES.length - 1)].name}${nextBeat(c.docs.plot) ? ` · next: ${escapeHtml(nextBeat(c.docs.plot).id)}` : ''}</small></div>
   <div class="dm-kv"><span>Engagement</span>${meter(p.fun, 3)}<small>${p.fun}</small></div>
   <div class="dm-muted">Recent scenes: ${escapeHtml([...p.sceneHistory.slice(-4), p.sceneType].join(' → '))}</div>
   <h5>Party</h5>${party || '<div class="dm-muted">unknown</div>'}
