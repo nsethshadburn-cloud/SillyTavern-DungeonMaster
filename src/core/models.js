@@ -30,6 +30,7 @@ export const TASKS = Object.freeze([
     { key: 'solo', group: 'Everyday play', label: 'Your moments with no companion around', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
+    { key: 'resync', group: 'Housekeeping', label: 'Fixing a mismatch with the chat', main: true },
 ]);
 
 /** The recommended model for every job. */

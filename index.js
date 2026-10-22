@@ -4,7 +4,7 @@
 import { ST, MODULE } from './src/st/st.js';
 import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
-import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll } from './src/st/orchestrator.js';
+import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll, levelUp } from './src/st/orchestrator.js';
 import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, addNoteToChat, briefForMessage } from './src/st/actors.js';
 import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig } from './src/st/voices.js';
 import { toggleMap, refreshMap, closeMap } from './src/ui/map.js';
@@ -13,11 +13,12 @@ import { forgetAll } from './src/st/storage.js';
 import { recap } from './src/st/dm.js';
 import { mountSettingsPanel, renderSpend, refreshProfileSelects } from './src/ui/settings-panel.js';
 import { mountPersonaButton } from './src/ui/persona.js';
-import { toggleScreen, renderScreen } from './src/ui/screen.js';
+import { toggleScreen, renderScreen, runResync } from './src/ui/screen.js';
 import { openWizard } from './src/ui/wizard.js';
 import { hideStatus } from './src/ui/status.js';
 import { roll } from './src/core/dice.js';
 import { startDiceWatch } from './src/st/dicewatch.js';
+import { npcForName } from './src/st/npccards.js';
 
 let pendingUserMessage = false;
 const BREAK_HOURS = 6;
@@ -106,6 +107,7 @@ function addWandMenu() {
         ['dm-menu-screen', 'fa-scroll', 'DM Screen', () => toggleScreen()],
         ['dm-menu-step-in', 'fa-hat-wizard', 'DM: step in now', () => runTurn({ force: 'manual' })],
         ['dm-menu-map', 'fa-chess-board', 'Battle map', () => toggleMap()],
+        ['dm-menu-resync', 'fa-rotate', 'DM: fix mismatch with chat', () => runResync()],
     ];
     for (const [id, icon, label, fn] of items) {
         const el = document.createElement('div');
@@ -162,6 +164,31 @@ function registerSlashCommands() {
         },
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmresync',
+        helpString: 'After deleting or editing messages: Claude re-reads the chat and fixes what the DM has logged.',
+        callback: async () => {
+            await runResync();
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmlevel',
+        helpString: 'Set a companion\'s level, e.g. /dmlevel Judy 5 (Claude rewrites their sheet).',
+        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'name and level', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
+        callback: async (_args, text) => {
+            const c = campaign();
+            const m = String(text || '').trim().match(/^(.+?)\s+(\d{1,2})$/);
+            const member = c && m ? c.meta.party.find(p => p.name.toLowerCase().startsWith(m[1].trim().toLowerCase())) : null;
+            if (!member) {
+                toastr.warning('Use it like /dmlevel Judy 5 in a campaign chat.', 'Dungeon Master');
+                return '';
+            }
+            await levelUp(c, member, Number(m[2]));
+            renderScreen();
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmstart',
         helpString: 'Start a new D&D campaign.',
         callback: async () => {
@@ -208,7 +235,8 @@ jQuery(async () => {
         const name = ST.characters[chId]?.name;
         const last = ST.chat[ST.chat.length - 1];
         const saved = name && last && !last.is_user && last.name === name ? briefForMessage(last) : null;
-        if (saved) injectDirection(saved.brief, saved.length);
+        const npc = npcForName(name);
+        if (saved || npc || c.meta.party.some(p => p.name === name)) injectDirection(saved?.brief ?? '', saved?.length ?? 'normal', npc, name);
     });
     // Group chats prefix the reply with "Name:", which breaks thinking models. Campaign chats only.
     eventSource.on(eventTypes.GENERATE_AFTER_COMBINE_PROMPTS, stripReplyNamePrefix);
@@ -220,6 +248,9 @@ jQuery(async () => {
             const msg = ST.chat[Number(id)];
             if (c && !c.meta.paused && msg && !msg.is_user && c.meta.party.some(p => p.name === msg.name)) {
                 voiceLine({ kind: 'party', name: msg.name, text: msg.mes });
+            } else if (c && !c.meta.paused && msg && !msg.is_user) {
+                const npc = npcForName(msg.name);
+                if (npc) voiceLine({ kind: 'npc', name: npc.name, text: msg.mes, voice: npc.voice });
             }
         } catch (error) {
             console.warn('[Dungeon Master] party reply handling failed', error);

@@ -3,7 +3,7 @@
 // Pure module (no SillyTavern imports).
 //
 // Placeholders the plugin fills in: {{player}} {{party}} {{location}} {{present}} {{situation}}
-// {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}}.
+// {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}} {{knowledge}}.
 // SillyTavern's own macros ({{char}}, {{user}}, ...) also work. A line containing a plugin
 // placeholder that's empty is dropped, so empty fields never leave half-sentences behind.
 
@@ -23,6 +23,10 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{brief}}',
         'Length: {{length}}.]',
     ].join('\n'),
+    knowledge: [
+        '[What {{char}} knows about the story so far. Background for this reply; don\'t recite it.',
+        '{{knowledge}}]',
+    ].join('\n'),
     combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight.]',
     npc: [
         '[You play only {{npc}}, a side character in this story.',
@@ -39,7 +43,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: 'up to two short paragraphs',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**

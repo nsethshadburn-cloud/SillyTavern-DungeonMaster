@@ -97,8 +97,9 @@ export function updateFun(pacing, { engaged = null, messageLength = 0 } = {}) {
  * genuinely engaged in conversation (high fun), so quiet moments and travel chat aren't rushed.
  * @param {{filler?:boolean}} o filler = this message was low-content filler (isFillerMessage)
  */
-export function tickPlayerTurn(pacing, length, { filler = false } = {}) {
-    if (Number.isFinite(pacing.worldClock)) pacing.worldClock--;
+export function tickPlayerTurn(pacing, length, { filler = false, chatting = false } = {}) {
+    // Real conversation lets the moment breathe: the world's clock runs at half speed.
+    if (Number.isFinite(pacing.worldClock)) pacing.worldClock -= chatting ? 0.5 : 1;
     pacing.turnsInScene++;
     pacing.turnsSinceBeat++;
     pacing.turnsSinceEvent++;

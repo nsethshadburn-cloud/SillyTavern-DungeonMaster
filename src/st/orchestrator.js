@@ -8,9 +8,10 @@ import { campaign, saveMeta, saveDoc } from './campaign.js';
 import { callLocal, BudgetError } from './llm.js';
 import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
 import { modelLabel } from '../core/models.js';
+import { rotateIdleNpcs } from './npccards.js';
 import { makeSpeak, refreshStandingPrompt, speakerCandidates } from './actors.js';
 import { postNarration, postOoc, postDiceCard, postNote, dmType } from './messages.js';
-import { statsForName } from './sheets.js';
+import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing } from '../core/grid.js';
 import { openMap, refreshMap, closeMap } from '../ui/map.js';
@@ -94,6 +95,8 @@ export async function runTurn(opts = {}) {
     const status = beginTurn('Dungeon Master');
     try {
         await turnBody(c, opts, status, controller.signal);
+        const left = await rotateIdleNpcs();
+        if (left.length) status.note(`${left.join(', ')} left the scene`);
         status.finish(`Turn done${c.meta.stats.lastTurnUsd ? ` · ${formatUsd(c.meta.stats.lastTurnUsd)} est.` : ''}`);
     } catch (error) {
         if (controller.signal.aborted) {
@@ -189,7 +192,8 @@ async function turnBody(c, opts, status, signal) {
         // Typed roll results are mechanics, not story turns: they don't count toward pacing.
         if (!triage.rollResult) {
             updateFun(pacing, { engaged, messageLength: playerText.length });
-            tickPlayerTurn(pacing, meta.options.length, { filler: !triage.ooc && isFillerMessage(playerText, engaged) });
+            const filler = !triage.ooc && isFillerMessage(playerText, engaged);
+            tickPlayerTurn(pacing, meta.options.length, { filler, chatting: !filler && ['banter', 'question'].includes(triage.category) });
         }
     }
     if (signal.aborted) throw new Error('aborted');
@@ -268,6 +272,29 @@ async function turnBody(c, opts, status, signal) {
         }
         await localReplies(c, triage, playerText, status, signal);
         meta.stats.localTurns = (meta.stats.localTurns || 0) + 1;
+    }
+}
+
+/** Rewrite a companion's sheet for a new level and keep their HP in step. */
+export async function levelUp(c, member, level, status = null) {
+    const step = status?.step(`Rewriting ${member.name}'s sheet for level ${level}`);
+    try {
+        const r = await levelCharacterSheet(member.avatar, level);
+        const hpMax = Number(r.stats?.hp_max);
+        const p = c.docs.world.party[member.name];
+        if (p && hpMax > 0) {
+            const ratio = p.hp_max ? p.hp / p.hp_max : 1;
+            p.hp_max = hpMax;
+            p.hp = Math.max(1, Math.round(hpMax * ratio));
+            saveDoc('world');
+        }
+        resetStableCache();
+        await postNote(`📈 ${member.name} is now level ${level}${hpMax ? ` (HP ${p?.hp ?? hpMax}/${hpMax})` : ''}.`);
+        step?.done('', r.usd);
+        return r;
+    } catch (error) {
+        step?.fail(error);
+        if (!status) throw error;
     }
 }
 
@@ -512,6 +539,19 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
     }
     if (t.standing_direction) meta.standing = t.standing_direction;
     if (t.objective) meta.objective = t.objective;
+    // What each companion knows (rare, full-text updates).
+    for (const [name, text] of Object.entries(t.knowledge_update || {})) {
+        const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
+        if (member) {
+            meta.knowledge ??= {};
+            meta.knowledge[member.name] = text;
+        }
+    }
+    // Level a companion up or down when the player asked for it.
+    for (const [name, level] of Object.entries(t.level_change || {})) {
+        const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
+        if (member) await levelUp(c, member, level, status);
+    }
     refreshStandingPrompt();
     saveDoc('world');
 

@@ -60,11 +60,21 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **Combat.** Claude runs fights: it decides what companions and enemies do, rolls for them and narrates; companions only get a quick line. A **battle map** pops up (also in the wand menu, or `/dmmap`): chess-style squares (a1 is bottom-left), portraits, terrain, HP. Tap a square to move and an enemy to target, then **Add to message** and say what you do. On phones it's a sheet across the bottom of the screen.
 
+**NPCs are real characters.** The first time an NPC speaks, the plugin makes a SillyTavern character card for them (tagged "D&D NPC: <campaign>") and adds them to the group chat, so their replies use your normal formatting and thinking, and you can swipe them. After 10 turns without speaking they leave the group; their card stays, so they come back the same when needed. Delete the tagged cards once a campaign is over if you like.
+
+**Companions know their story.** At the start, Claude writes each companion a private "what you know" summary (how they got here, what they're accused of, who they know), and it goes with every reply they give. The DM updates it now and then when something big changes. Older campaigns get one on the next DM turn.
+
+**Companions act like players.** In turns the DM is already handling, it can have Judy use her own abilities (Misty Step, Help, her own Perception), and her rolls show as dice cards. When a check applies to everyone (all climbing, all sneaking), the DM rolls for her too, and each of you succeeds or fails on your own roll.
+
+**Levels.** Ask the DM out of character, e.g. `((level Judy to 5))`, or type `/dmlevel Judy 5`. Claude rewrites her sheet for that level by 5e rules and her HP follows.
+
+**Fix a mismatch.** Deleted or edited messages? DM Screen → **Fix mismatch** (or the wand menu, or `/dmresync`). Claude re-reads the chat as it is now and corrects what it has logged: HP, items, location, plot beats, notes, story so far, NPCs met, what companions know.
+
 **Companions talk when it makes sense.** Judy (and any other companion) only replies when she's with you and would naturally react; she can stay quiet. If Amber splits off, the DM marks her as away (and where she is), she can't hear or speak until you regroup, and your scenes alone are answered by the DM instead.
 
 **How the bot's note is added.** The note goes inside your latest message for that one reply (your saved chat isn't changed), so the prompt keeps exactly the turns your own format and SillyTavern build. Thinking models like Gemma 4 need their `<|think|>` setup to stay the only system turn; an extra system message from the plugin right before the reply made them skip thinking. The old way is still available in settings ("How the note is added").
 
-**The world doesn't wait.** Every few turns the DM steps in on its own to move the scene a step: guards keep processing you, a march goes on, time passes, someone shows up. Its normal pace is every 5 turns (Settings → "World pace"); it goes faster, every turn or two, when people are actively doing something to you, and slower in genuinely quiet moments. It works around your conversation instead of cutting it off.
+**The world doesn't wait.** Every few turns the DM steps in on its own to move the scene a step: guards keep processing you, a march goes on, time passes, someone shows up. Its normal pace is every 5 turns (Settings → "World pace"); it goes faster, every turn or two, when people are actively doing something to you, and slower in genuinely quiet moments. While you're really talking (not just "ok"), the clock runs at half speed so conversations get room to breathe. It works around your conversation instead of cutting it off.
 
 **Pacing.** The DM keeps the story moving: every narration changes something, boring stretches (long walks, waits) get skipped to the next interesting moment, and when you arrive somewhere new it describes the place (name, look, sounds, who's around). Real conversation is never rushed, even while traveling. If your last few messages are short filler ("ok", "lets go", "*nods*") with no questions or plans, it treats the scene as stalled and moves things along.
 

@@ -19,6 +19,9 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - "length": "short" (one quick line), "normal" (3-4 sentences, mostly dialogue; the default), "long" (only for big emotional moments).
 - Name the speaker's pronouns in the brief when they aren't "she".
 - Companions don't have to speak every turn. Give a companion a brief only when they are with the player and would naturally react or have something to say; silence is fine, and "directions" may be empty. Never narrate their words for them instead.
+- Each companion has a private "what you know" summary (WHAT COMPANIONS KNOW in your context). It's how they understand the story: who they are here, how they got into this, what they've been told. Keep it true: when they learn something important (a big reveal, a new chapter, a major change), send the full updated text in "knowledge_update". Rarely, not every turn. If one is marked MISSING, write it this turn.
+- Companions are players too, not luggage. In turns you're already handling, have them act when it fits: use an ability, spell or item from their sheet (Misty Step to reach a ledge, Help on a lock, a healing word), take a risk, notice something with their own Perception. Roll for them in "npc_rolls" and tell them in their brief what they just did, so they play it out. The player still leads; don't let companions solve everything.
+- Group checks: when a check applies to everyone (all climbing, all sneaking, all resisting the same poison), ask the player with "player_roll" AND roll for each companion present in "npc_rolls" in the same turn. Judge each person by their own roll (one person failing can drag the group if it makes sense: a group Stealth fails if half or more fail).
 - When the party splits up (someone stays behind, goes another way, gets separated or captured apart), list who left in "party_away" with where they are. Away companions can't hear the player or speak: give them no briefs until they rejoin, then list them in "party_back".
 - Companions sometimes invent facts anyway. You decide what's canon: quietly overrule inventions that don't fit (in your narration or their next brief), or adopt them if they're good.
 
@@ -93,11 +96,14 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "objective": "<=15 words: the party's immediate goal (only when it changes)",
   "world_next": 3,
   "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline (only when someone splits off)"},
+  "knowledge_update": {"Judy Hopps": "full new 'what you know' text for that companion (rarely; or when MISSING)"},
+  "level_change": {"Judy Hopps": 5},
   "party_back": ["names of companions who rejoin the player"],
   "need_files": ["rolls_log", "events_log"]
 }
 - "directions" order = speaking order. Usually 0-2 speakers, only party members or NPCs present. Leave empty when the player should act next.
 - Always include "scene" (with the current "location" name), "tension", "standing_direction" and "world_next".
+- If the player asks out of character to level a companion up or down ("level Judy to 5"), set "level_change" and confirm in "ooc"; their sheet is rewritten for that level automatically.
 - If you need older records to rule fairly, return ONLY {"need_files": [...]} and you will be called again with them.`;
 
 export const BIBLE_INSTRUCTIONS = `You are designing a new tabletop campaign for SillyTavern. You will be its Dungeon Master later.
@@ -109,6 +115,7 @@ Return ONE JSON object and nothing else:
   "opening": "The opening narration for the first scene: one short paragraph in plain, simple English (short sentences, everyday words), second person, present tense. End on a moment that invites the player to act. Do not speak or act for the player character.",
   "scene": {"type": "exploration|social|tension|downtime", "location": "short place name", "setting": "road|town|wild|dungeon|sea", "time": "morning|afternoon|evening|night"},
   "standing_direction": "<=35 words: plain facts the companions can see and know at the start (no secrets, no mood writing)",
+  "knowledge": {"<each party member's exact name>": "what they know when the story starts: who they are in this story, how they got into this situation, what they've been told or accused of, who they know here, what they suspect. 4-8 plain sentences, only things they would actually know (no secrets kept from them)."},
   "objective": "<=15 words: the party's immediate goal at the start",
   "directions": [{"speaker": "party member name", "direction": "optional brief for an opening line: only what they need to know and want, never their words", "length": "short|normal"}],
   "new_npcs": [{"name": "every NPC who appears in the opening", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile"}],
@@ -151,6 +158,25 @@ export const RECAP_INSTRUCTIONS = `Write a short "Previously on..." recap for th
 /** Added to routine-model calls only: lets the quick DM hand a real story moment to the senior DM. */
 export const ESCALATE_INSTRUCTION = `You are the quick DM for routine turns; a senior DM handles big moments. If this turn is a big story moment (a major reveal, completing a plot beat, a fight breaking out, a new chapter or major location, or a turn that changes where the story is going), reply with ONLY {"escalate": true} and the senior DM will take this turn. Otherwise handle it yourself as normal. Don't escalate ordinary rulings, rolls, conversation or small discoveries.`;
 
+export const LEVEL_SHEET_INSTRUCTIONS = `Rewrite this D&D 5e character sheet for the requested level, following 5e rules: hit points (average per level plus CON), proficiency bonus, class features, ASIs or feats at the right levels, spell slots and spells known/prepared, attack bonuses, saves and skill totals. Keep the character's identity, ability choices, equipment and personality. Going down in level removes what they wouldn't have yet.
+Return ONE JSON object and nothing else, in the same format as before: {"markdown": "...", "stats": {...}}. "saves" and "skills" are TOTAL modifiers.`;
+
+export const RESYNC_INSTRUCTIONS = `The player edited or deleted chat messages, so your logged campaign state may no longer match the chat. Compare the LOGGED STATE with THE CHAT AS IT IS NOW. Anything that only happened in messages that are gone did not happen. Correct only what the chat now contradicts or no longer supports; keep everything else as it is.
+Return ONE JSON object and nothing else:
+{
+  "summary": "1-3 plain sentences for the player: what you changed (or that everything already matched)",
+  "world": {"location": "", "time": "", "day": 1, "gold": 0, "items": [], "party": {"Name": {"hp": 0, "hp_max": 0, "conditions": []}}, "flags": {}, "away": {}},
+  "combat": "keep | end",
+  "plot_done": ["ids of beats that really happened in the chat as it is now"],
+  "notes": "your full corrected private notes",
+  "story": "the full corrected story-so-far log",
+  "standing_direction": "<=35 words",
+  "objective": "<=15 words",
+  "knowledge": {"Companion": "full corrected 'what you know' text"},
+  "npcs_forget": ["names of NPCs who were only met in messages that are gone"],
+  "pending_roll": "keep | clear"
+}`;
+
 export const CONDENSE_NOTES_INSTRUCTIONS = `Your private DM notes have grown long. Rewrite them into a compact, organized version that keeps every still-relevant secret, motive, plan, open thread and foreshadowing, and drops what's resolved. Return ONE JSON object: {"notes": "markdown"}`;
 
 /**
@@ -181,6 +207,8 @@ export function normalizeDmTurn(raw) {
         need_files: arr(d.need_files).map(String).filter(Boolean),
         party_away: Object.fromEntries(Object.entries(obj(d.party_away)).map(([k, v]) => [str(k), str(v)]).filter(([k]) => k)),
         party_back: arr(d.party_back).map(String).filter(Boolean),
+        knowledge_update: Object.fromEntries(Object.entries(obj(d.knowledge_update)).map(([k, v]) => [str(k), str(v)]).filter(([k, v]) => k && v)),
+        level_change: Object.fromEntries(Object.entries(obj(d.level_change)).map(([k, v]) => [str(k), Math.round(Number(v))]).filter(([k, v]) => k && v >= 1 && v <= 20)),
         world_next: Number.isFinite(Number(d.world_next)) && d.world_next !== null && d.world_next !== '' ? clamp(Math.round(Number(d.world_next)), 1, 10) : null,
         escalate: d.escalate === true,
     };

@@ -85,6 +85,7 @@ export function renderScreen() {
     <div class="menu_button" id="dm-scr-ask" title="Ask the DM something out of character">Ask the DM</div>
     <div class="menu_button" id="dm-scr-force" title="Have the DM step in now">DM step in</div>
     <div class="menu_button" id="dm-scr-recap" title="Previously on…">Recap</div>
+    <div class="menu_button" id="dm-scr-resync" title="After deleting or editing messages: Claude re-reads the chat and fixes what it has logged">Fix mismatch</div>
     ${w.combat ? '<div class="menu_button" id="dm-scr-map" title="Battle map">Battle map</div>' : ''}
     <div class="menu_button" id="dm-scr-pause">${m.paused ? 'Resume' : 'Pause'}</div>
   </div>
@@ -138,6 +139,7 @@ export function renderScreen() {
         toastr.info(m.paused ? 'D&D mode paused: this chat behaves like a normal group chat.' : 'D&D mode resumed.', 'Dungeon Master');
     });
     panel.querySelector('#dm-scr-map')?.addEventListener('click', () => toggleMap());
+    panel.querySelector('#dm-scr-resync').addEventListener('click', () => runResync());
     panel.querySelector('#dm-scr-skip')?.addEventListener('click', () => {
         m.pendingEvent = null;
         saveMeta();
@@ -162,5 +164,21 @@ async function openDoc(key) {
         if (key === 'bible') resetCaches();
         toastr.success('Saved.', 'Dungeon Master');
         renderScreen();
+    }
+}
+
+/** "Fix mismatch": Claude re-reads the chat and corrects its logs. */
+export async function runResync() {
+    toastr.info('Re-reading the chat to fix the DM\'s logs…', 'Dungeon Master');
+    try {
+        const { resyncWithChat } = await import('../st/dm.js');
+        const r = await resyncWithChat();
+        const { postOoc } = await import('../st/messages.js');
+        await postOoc(`Fixed to match the chat: ${r.summary}`);
+        const { refreshStandingPrompt } = await import('../st/actors.js');
+        refreshStandingPrompt();
+        renderScreen();
+    } catch (error) {
+        toastr.error(String(error?.message || error), 'Dungeon Master');
     }
 }

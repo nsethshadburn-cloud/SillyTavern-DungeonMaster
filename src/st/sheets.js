@@ -7,7 +7,7 @@ import { ST, findCharacterIndex } from './st.js';
 import { settings, saveSettings } from './settings.js';
 import { writeFile, readFile } from './storage.js';
 import { callClaude } from './llm.js';
-import { SHEET_FROM_PDF_INSTRUCTIONS, SHEET_FROM_CARD_INSTRUCTIONS } from '../core/protocol.js';
+import { SHEET_FROM_PDF_INSTRUCTIONS, SHEET_FROM_CARD_INSTRUCTIONS, LEVEL_SHEET_INSTRUCTIONS } from '../core/protocol.js';
 import { extractJson, slug, shortId, trimToTokens } from '../core/text.js';
 
 async function loadPdfJs() {
@@ -122,6 +122,31 @@ export async function createCharacterSheet(characterAvatar, onStep = () => { }) 
     s.characterSheets[ch.avatar] = { file: fileName, name: ch.name, created: new Date().toISOString(), source: 'card', stats: sheet.stats };
     saveSettings();
     return { ...s.characterSheets[ch.avatar], usd: reply.usd };
+}
+
+/**
+ * Rewrite a companion's sheet for another level (up or down), following 5e rules.
+ * The old sheet file is kept; the record points at the new one.
+ */
+export async function levelCharacterSheet(characterAvatar, level) {
+    const s = settings();
+    const record = s.characterSheets[characterAvatar];
+    if (!record) throw new Error('This character has no sheet yet.');
+    const current = await sheetMarkdown(record);
+    const reply = await callClaude({
+        system: LEVEL_SHEET_INSTRUCTIONS,
+        user: `# REQUESTED LEVEL\n${level}\n\n# CURRENT SHEET\n${trimToTokens(current, 6000)}`,
+        task: 'character_sheet',
+        label: `${record.name} to level ${level}`,
+        maxTokens: 6000,
+        effort: 'low',
+    });
+    const sheet = parseSheetReply(reply.text);
+    const fileName = `dmsheet_char_${slug(record.name, 30)}_L${level}_${shortId()}.md`;
+    await writeFile(fileName, sheet.markdown);
+    s.characterSheets[characterAvatar] = { ...record, file: fileName, created: new Date().toISOString(), source: `level ${level}`, stats: sheet.stats ?? record.stats };
+    saveSettings();
+    return { ...s.characterSheets[characterAvatar], usd: reply.usd };
 }
 
 export function personaSheet(avatar) {

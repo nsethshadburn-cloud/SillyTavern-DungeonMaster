@@ -3,10 +3,10 @@
 import { ST } from './st.js';
 import { settings, SURPRISES } from './settings.js';
 import { callClaude, resolveDmConnection } from './llm.js';
-import { campaign, saveDoc } from './campaign.js';
+import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
-import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, parseDmTurn } from '../core/protocol.js';
+import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
@@ -150,8 +150,10 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     ].join('\n');
 
     const memories = await memoryBookEntries();
+    const knowledgeLines = c.meta.party.map(p => `## ${p.name}\n${c.meta.knowledge?.[p.name] || '(MISSING: write "knowledge_update" for them this turn)'}`);
     const notesLayer = [
-        '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none yet)',
+        '# WHAT COMPANIONS KNOW (each one\'s private summary; sent with every reply they give)', knowledgeLines.join('\n\n'),
+        '', '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none yet)',
         '', '# STORY SO FAR', c.docs.story ? trimToTokens(c.docs.story, 2000, true) : '(none yet)',
         '', '# MEMORY BOOK ENTRIES (from the MemoryBooks extension)', memories || '(none yet)',
     ].join('\n');
@@ -260,6 +262,85 @@ export async function maybeCondenseNotes() {
     }
     logCost('condense notes', reply.usd);
     return reply.usd;
+}
+
+/**
+ * Fix a mismatch after the player edited or deleted messages: Claude re-reads the chat as it is
+ * now and corrects the logged state (world, plot ticks, notes, story, NPCs met, knowledge).
+ * @returns {Promise<{summary: string, usd: number}>}
+ */
+export async function resyncWithChat() {
+    const c = campaign();
+    if (!c) throw new Error('No campaign in this chat.');
+    const w = c.docs.world;
+    const logged = {
+        world: { location: w.location, time: w.time, day: w.day, gold: w.gold, items: w.items, party: w.party, flags: w.flags, away: w.away ?? {}, in_combat: Boolean(w.combat) },
+        standing_direction: c.meta.standing,
+        objective: c.meta.objective,
+        knowledge: c.meta.knowledge ?? {},
+        npcs_met: (c.docs.npcs || []).map(n => `${n.name} (${n.attitude}${n.lastSeen ? `, last seen: ${n.lastSeen}` : ''})`),
+        pending_roll: c.meta.pendingRoll ? `${c.meta.pendingRoll.skill}: ${c.meta.pendingRoll.reason || ''}` : 'none',
+    };
+    const user = [
+        '# LOGGED STATE', JSON.stringify(logged, null, 1),
+        '', '# PLOT', c.docs.plot || '(none)',
+        '', '# YOUR NOTES', c.docs.notes || '(none)',
+        '', '# STORY SO FAR', c.docs.story || '(none)',
+        '', '# THE CHAT AS IT IS NOW (oldest first)', transcript(80) || '(empty)',
+        '', RESYNC_INSTRUCTIONS,
+    ].join('\n');
+    const reply = await callClaude({ system: await stableSystem(), user, task: 'resync', label: 'resync with chat', maxTokens: 8000 });
+    logCost('resync with chat', reply.usd);
+    const json = extractJson(reply.text);
+    if (!json) throw new Error('Claude did not return a usable answer. Try again.');
+    applyResync(c, json);
+    return { summary: String(json.summary || 'Done.'), usd: reply.usd };
+}
+
+function applyResync(c, j) {
+    const w = c.docs.world;
+    if (j.world && typeof j.world === 'object') {
+        for (const key of ['location', 'time']) if (typeof j.world[key] === 'string' && j.world[key]) w[key] = j.world[key];
+        for (const key of ['day', 'gold']) if (Number.isFinite(Number(j.world[key]))) w[key] = Number(j.world[key]);
+        if (Array.isArray(j.world.items)) w.items = j.world.items.map(String);
+        if (j.world.flags && typeof j.world.flags === 'object') w.flags = j.world.flags;
+        if (j.world.away && typeof j.world.away === 'object') w.away = Object.fromEntries(Object.entries(j.world.away).map(([k, v]) => [k, String(v)]));
+        if (j.world.party && typeof j.world.party === 'object') {
+            for (const [name, p] of Object.entries(j.world.party)) {
+                const key = Object.keys(w.party).find(k => k.toLowerCase() === name.toLowerCase());
+                if (!key || !p || typeof p !== 'object') continue;
+                if (Number.isFinite(Number(p.hp_max))) w.party[key].hp_max = Number(p.hp_max);
+                if (Number.isFinite(Number(p.hp))) w.party[key].hp = Math.max(0, Math.min(Number(p.hp), w.party[key].hp_max || Number(p.hp)));
+                if (Array.isArray(p.conditions)) w.party[key].conditions = p.conditions.map(String);
+            }
+        }
+    }
+    if (j.combat === 'end' && w.combat) {
+        w.combat = null;
+        c.meta.pacing.inCombat = false;
+    }
+    if (Array.isArray(j.plot_done) && c.docs.plot) {
+        const done = new Set(j.plot_done.map(String));
+        c.docs.plot = c.docs.plot.replace(/^(\s*[-*]\s*)\[(?:x|X| )\](\s*)(A\d+\.\d+)/gm, (m, a, b, id) => `${a}[${done.has(id) ? 'x' : ' '}]${b}${id}`);
+    }
+    if (typeof j.notes === 'string') c.docs.notes = j.notes;
+    if (typeof j.story === 'string') c.docs.story = j.story;
+    if (typeof j.standing_direction === 'string' && j.standing_direction) c.meta.standing = j.standing_direction;
+    if (typeof j.objective === 'string' && j.objective) c.meta.objective = j.objective;
+    if (j.knowledge && typeof j.knowledge === 'object') {
+        c.meta.knowledge ??= {};
+        for (const p of c.meta.party) {
+            const text = Object.entries(j.knowledge).find(([k]) => k.toLowerCase() === p.name.toLowerCase())?.[1];
+            if (text) c.meta.knowledge[p.name] = String(text);
+        }
+    }
+    if (Array.isArray(j.npcs_forget) && j.npcs_forget.length) {
+        const forget = new Set(j.npcs_forget.map(n => String(n).toLowerCase()));
+        c.docs.npcs = (c.docs.npcs || []).filter(n => !forget.has(n.name.toLowerCase()));
+    }
+    if (j.pending_roll === 'clear') c.meta.pendingRoll = null;
+    for (const key of ['world', 'plot', 'notes', 'story', 'npcs']) saveDoc(key);
+    saveMeta();
 }
 
 /** "Previously on…" after a long break. */

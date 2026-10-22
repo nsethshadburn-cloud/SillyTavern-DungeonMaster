@@ -6,9 +6,9 @@
 
 import { ST, waitUntilIdle, findCharacterIndex, currentGroup } from './st.js';
 import { settings, profileById, selectedProfileId } from './settings.js';
-import { callLocal, cleanLocalOutput } from './llm.js';
 import { campaign, saveDoc } from './campaign.js';
-import { postNpc, dmType } from './messages.js';
+import { dmType } from './messages.js';
+import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
 import { addNpcs, isAway } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
@@ -36,14 +36,25 @@ function sceneVars(c) {
 
 /**
  * Build the note the bot gets for one reply.
- * @param {{brief?: string, length?: string}} [opts] brief = the DM's private note for this reply
+ * @param {{brief?: string, length?: string, npc?: object|null}} [opts] brief = the DM's private note
+ *  for this reply; npc = the NPC who is replying (uses the NPC template instead of the scene note)
  */
-export function buildNote({ brief = '', length = 'normal' } = {}) {
+export function buildNote({ brief = '', length = 'normal', npc = null, speaker = '' } = {}) {
     const c = campaign();
     if (!c) return '';
     const s = settings();
     const vars = sceneVars(c);
-    const parts = [renderTemplate(s.templates.scene, vars)];
+    const parts = npc
+        ? [renderTemplate(s.templates.npc, {
+            ...vars,
+            npc: npc.name,
+            description: [npc.description, npc.stats ? `Capabilities: ${npc.stats}.` : ''].filter(Boolean).join(' '),
+            pronouns: pronounsFor(npc.gender),
+            attitude: npc.attitude || '',
+        })]
+        : [renderTemplate(s.templates.scene, vars)];
+    const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
+    if (knowledge) parts.push(renderTemplate(s.templates.knowledge, { ...vars, knowledge }));
     if (c.meta.pacing?.inCombat) parts.push(renderTemplate(s.templates.combat, vars));
     if (brief) parts.push(renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }));
     return parts.filter(Boolean).join('\n');
@@ -99,12 +110,13 @@ export function refreshStandingPrompt() {
         setNote('');
         return;
     }
-    setNote(buildNote());
+    // With one companion, the base note can carry what they know.
+    setNote(buildNote({ speaker: c.meta.party.length === 1 ? c.meta.party[0].name : '' }));
 }
 
-/** Use the DM's brief for the next reply. */
-export function injectDirection(brief, length = 'normal') {
-    setNote(buildNote({ brief, length }));
+/** Use the DM's brief for the next reply (and the NPC template when an NPC is replying). */
+export function injectDirection(brief, length = 'normal', npc = null, speaker = '') {
+    setNote(buildNote({ brief, length, npc, speaker: speaker || npc?.name || '' }));
 }
 
 /** Back to the base note. */
@@ -164,7 +176,7 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
         saveDoc('npcs');
     }
     npc.lastSeen = c.docs.world.location || npc.lastSeen;
-    await speakNpc(npc, brief, { signal, length });
+    await speakNpcMember(npc, brief, { signal, length });
     return 'npc';
 }
 
@@ -176,6 +188,11 @@ async function speakPartyMember(name, brief, { signal, length = 'normal' } = {})
     if (chid === -1 || !group || !group.members.includes(ST.characters[chid].avatar)) {
         throw new Error(`${name} isn't a member of this group chat.`);
     }
+    await speakMember(name, chid, brief, { signal, length });
+}
+
+/** One reply from a group member (party member or NPC) through SillyTavern's own generation. */
+async function speakMember(name, chid, brief, { signal, length = 'normal', npc = null } = {}) {
     if (signal?.aborted) return;
     await waitUntilIdle();
     const textarea = document.getElementById('send_textarea');
@@ -183,7 +200,7 @@ async function speakPartyMember(name, brief, { signal, length = 'normal' } = {})
         // Never let a group trigger swallow text the user is typing.
         throw new Error('Clear the message box so the party can reply.');
     }
-    if (brief) injectDirection(brief, length);
+    injectDirection(brief, length, npc, name);
     const restoreTts = pauseTtsStreamingIfNeeded();
     try {
         await withActorProfile(async () => {
@@ -241,14 +258,14 @@ export function stripReplyNamePrefix(eventData) {
 }
 
 /**
- * Any party member's reply in a campaign chat (including swipes): remove an echoed "Name:" start.
- * Runs on CHARACTER_MESSAGE_RENDERED, before the reply is voiced.
+ * Any party member's or NPC's reply in a campaign chat (including swipes): remove an echoed
+ * "Name:" start. Runs on CHARACTER_MESSAGE_RENDERED, before the reply is voiced.
  */
 export async function cleanPartyReply(messageId) {
     const c = campaign();
     if (!c || c.meta.paused) return;
     const msg = ST.chat[Number(messageId)];
-    if (!msg || msg.is_user || !c.meta.party.some(p => p.name === msg.name)) return;
+    if (!msg || msg.is_user || !(c.meta.party.some(p => p.name === msg.name) || npcForName(msg.name))) return;
     await stripEchoedName(msg.name, Number(messageId));
 }
 
@@ -299,59 +316,11 @@ async function withActorProfile(fn) {
 }
 
 // ---------------- NPCs ----------------
+// NPCs are real characters in the group chat (see npccards.js), so they speak through the same
+// SillyTavern generation as party members. Only their note differs (the NPC template).
 
-/** Recent chat for an NPC prompt: the DM's narration and plugin cards are left out, like for companions. */
-function npcChatMessages(maxMessages = 16) {
-    const out = [];
-    const chat = ST.chat;
-    // If the selected instruct format already writes speaker names, don't add them twice
-    // (doubled names teach the model to echo "Name:" at the start of its reply).
-    const instruct = ST.powerUser.instruct ?? {};
-    const formatAddsNames = instruct.enabled && ['always', 'force'].includes(String(instruct.names_behavior));
-    const hide = settings().hideNarration;
-    for (let i = Math.max(0, chat.length - maxMessages * 2); i < chat.length; i++) {
-        const m = chat[i];
-        if (!m?.mes || m.is_system) continue;
-        const type = dmType(m);
-        if (type === 'note' || (hide && HIDDEN_TYPES.has(type))) continue;
-        const body = trimToTokens(m.mes, 350);
-        out.push({ role: m.is_user ? 'user' : 'assistant', name: m.name, content: formatAddsNames ? body : `${m.name}: ${body}` });
-    }
-    return out.slice(-maxMessages);
-}
-
-async function speakNpc(npc, brief, { signal, length = 'normal' } = {}) {
-    const c = campaign();
-    const s = settings();
-    const pu = ST.powerUser;
-    const sysTemplate = pu.sysprompt?.enabled === false ? '' : (pu.sysprompt?.content || '');
-    const sub = (text) => ST.substituteParams(text, { name1Override: c.meta.persona.name, name2Override: npc.name, replaceCharacterCard: false });
-    const vars = {
-        ...sceneVars(c),
-        npc: npc.name,
-        description: [npc.description, npc.stats ? `Capabilities: ${npc.stats}.` : ''].filter(Boolean).join(' '),
-        pronouns: pronounsFor(npc.gender),
-        attitude: npc.attitude || '',
-    };
-    const npcNote = sub(renderTemplate(s.templates.npc, vars));
-    const where = [vars.location ? `Where: ${vars.location}.` : '', vars.situation ? `Right now: ${vars.situation}` : ''].filter(Boolean).join(' ');
-    const system = [sub(sysTemplate), '', npcNote, where ? `[${where}]` : ''].filter(Boolean).join('\n').trim();
-    const postHistory = pu.sysprompt?.post_history ? sub(pu.sysprompt.post_history) : '';
-    const messages = npcChatMessages();
-    const finalNote = [
-        brief ? sub(renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) })) : '',
-        postHistory,
-    ].filter(Boolean).join('\n');
-    // Inside the latest user turn (or as a user turn), never a second system turn: see addNoteToChat.
-    if (finalNote) {
-        const last = messages[messages.length - 1];
-        if (last?.role === 'user') last.content = `${last.content.trimEnd()}\n\n${finalNote}`;
-        else messages.push({ role: 'user', content: finalNote });
-    }
-    if (signal?.aborted) return;
-    const raw = await callLocal({ system, messages, maxTokens: ST.responseLength || 400, profileId: s.actorProfileId });
-    const text = stripSpeakerPrefix(cleanLocalOutput(raw), npc.name);
-    if (!text) throw new Error(`The local model returned nothing for ${npc.name}.`);
-    await postNpc(npc.name, text, npc);
-    voiceLine({ kind: 'npc', name: npc.name, text, voice: npc.voice });
+async function speakNpcMember(npc, brief, { signal, length = 'normal' } = {}) {
+    const chid = await ensureNpcMember(npc);
+    await speakMember(npc.name, chid, brief, { signal, length, npc });
+    touchNpc(npc);
 }

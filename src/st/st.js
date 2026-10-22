@@ -31,7 +31,7 @@ import {
     stopGeneration,
 } from '../../../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../../../extensions.js';
-import { groups, selected_group, is_group_generating, openGroupById } from '../../../../../group-chats.js';
+import { groups, selected_group, is_group_generating, openGroupById, editGroup } from '../../../../../group-chats.js';
 import { user_avatar } from '../../../../../personas.js';
 import { power_user } from '../../../../../power-user.js';
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT, Popup } from '../../../../../popup.js';
@@ -70,6 +70,7 @@ export const ST = {
     substituteParams,
     getCharacters,
     openGroupById,
+    editGroup,
     messageFormatting,
     deactivateSendButtons,
     activateSendButtons,

@@ -263,6 +263,12 @@ async function buildCampaign(form) {
         }
         meta.standing = String(json.standing_direction || '');
         meta.objective = String(json.objective || '');
+        if (json.knowledge && typeof json.knowledge === 'object') {
+            for (const ch of partyChars) {
+                const text = Object.entries(json.knowledge).find(([k]) => k.toLowerCase() === ch.name.toLowerCase())?.[1];
+                if (text) meta.knowledge[ch.name] = String(text);
+            }
+        }
         meta.pacing.tension = Number(json.tension) || 2;
         if (json.scene?.type) meta.pacing.sceneType = json.scene.type;
 

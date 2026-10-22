@@ -381,3 +381,26 @@ test('the world keeps its own clock, set by the DM, and does not freeze during c
     assert.match(DM_RULES, /the world doesn't freeze while people talk/);
     assert.match(DM_RULES, /"world_next"/);
 });
+
+test('companion knowledge, level changes, group-check rules, chatty scenes slow the clock', async () => {
+    const { DEFAULT_TEMPLATES, renderTemplate } = await import('../src/core/notes.js');
+    const t = parseDmTurn('{"knowledge_update":{"Judy Hopps":"You were arrested for failing to stop a thief named Amber."},"level_change":{"Judy Hopps":"5","Bad":99}}');
+    assert.deepEqual(t.knowledge_update, { 'Judy Hopps': 'You were arrested for failing to stop a thief named Amber.' });
+    assert.deepEqual(t.level_change, { 'Judy Hopps': 5 }, 'levels outside 1-20 are dropped');
+    const note = renderTemplate(DEFAULT_TEMPLATES.knowledge, { knowledge: 'You were arrested.' });
+    assert.match(note, /What \{\{char\}\} knows/);
+    assert.match(note, /You were arrested\.\]/);
+    assert.equal(renderTemplate(DEFAULT_TEMPLATES.knowledge, { knowledge: '' }).includes('{{knowledge}}'), false);
+    assert.match(DM_RULES, /Group checks/);
+    assert.match(DM_RULES, /Companions are players too/);
+    assert.match(DM_RULES, /knowledge_update/);
+    assert.ok(TASKS.some(x => x.key === 'resync' && x.main), 'resync uses the main model');
+    // Real conversation: the world's clock runs at half speed.
+    const p = createPacingState();
+    applyDmPacing(p, { world_next: 2 });
+    tickPlayerTurn(p, 'breathe', { chatting: true });
+    tickPlayerTurn(p, 'breathe', { chatting: true });
+    assert.equal(p.worldClock, 1);
+    tickPlayerTurn(p, 'breathe');
+    assert.equal(p.worldClock, 0);
+});
