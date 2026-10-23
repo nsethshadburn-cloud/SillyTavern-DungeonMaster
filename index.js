@@ -1,7 +1,7 @@
 // Dungeon Master for SillyTavern: Claude runs the campaign, your local model plays the characters.
 // See DESIGN.md for how it all fits together.
 
-import { ST, MODULE } from './src/st/st.js';
+import { ST, MODULE, EXT_PATH } from './src/st/st.js';
 import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
 import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll, levelUp } from './src/st/orchestrator.js';
@@ -198,6 +198,23 @@ function registerSlashCommands() {
     }));
 }
 
+/** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
+export const LOADED_VERSION = '0.7.0-beta';
+
+/**
+ * After an update, browsers can keep running the old cached plugin code while SillyTavern shows
+ * the new version number. Compare and tell the player to hard-refresh.
+ */
+async function checkLoadedVersion() {
+    try {
+        const res = await fetch(`/${EXT_PATH}/manifest.json`, { cache: 'no-store' });
+        const onServer = (await res.json())?.version;
+        if (onServer && onServer !== LOADED_VERSION) {
+            toastr.warning(`Dungeon Master was updated to ${onServer}, but this page is still running ${LOADED_VERSION} from the browser cache. Press Ctrl+Shift+R to load the new version.`, 'Dungeon Master', { timeOut: 0, extendedTimeOut: 0 });
+        }
+    } catch { /* offline or blocked: nothing to compare */ }
+}
+
 // SillyTavern generation interceptor (named in manifest.json): hides the DM's narration from the bot.
 globalThis.dungeonMasterInterceptor = async (chat) => {
     hideNarrationFromBot(chat);
@@ -269,5 +286,6 @@ jQuery(async () => {
     // A chat may already be open. If not, make sure SillyTavern's TTS isn't left paused by us.
     if (ST.chatMetadata && Object.keys(ST.chatMetadata).length) await onChatChanged();
     else syncTtsTakeover(false);
-    console.log(`[Dungeon Master] Ready (${MODULE}).`);
+    checkLoadedVersion();
+    console.log(`[Dungeon Master] Ready (${MODULE} ${LOADED_VERSION}).`);
 });

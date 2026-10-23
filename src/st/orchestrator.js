@@ -16,7 +16,7 @@ import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing } from '../core/grid.js';
 import { openMap, refreshMap, closeMap } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01 } from '../core/dice.js';
@@ -272,6 +272,7 @@ async function turnBody(c, opts, status, signal) {
         }
         await localReplies(c, triage, playerText, status, signal);
         meta.stats.localTurns = (meta.stats.localTurns || 0) + 1;
+        await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal);
     }
 }
 
@@ -332,9 +333,45 @@ function localSpeakers(c, triage, playerText) {
     return party.length ? [party[Math.floor(random01() * party.length)]] : [];
 }
 
+/**
+ * A companion's free reply (no DM this turn) may attempt something risky on its own: picking a
+ * pocket, sneaking off, lying. Then the DM rules on it with a roll, like for the player.
+ * Only free replies are checked; replies the DM directed were already ruled on.
+ */
+async function ruleOnCompanionAttempts(c, names, status, signal) {
+    const s = settings();
+    if (!s.useHelper) return;
+    for (const name of names) {
+        if (!c.meta.party.some(p => p.name === name)) continue;
+        const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
+        if (!msg?.mes) continue;
+        let attempt;
+        try {
+            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}` });
+            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }));
+        } catch {
+            continue;
+        }
+        if (!attempt.attempt || signal.aborted) continue;
+        const reasons = ['companion_action'];
+        const model = modelFor(reasons);
+        const step = status.step(`DM rules on ${name}'s attempt (${modelLabel(model)}): ${attempt.what || 'something risky'}`);
+        try {
+            const result = await askDm({ reasons, companionAction: { name, what: attempt.what, text: msg.mes } }, { signal, model });
+            step.done(summarizeTurn(result.turn), result.usd);
+            await applyDmTurn(c, result.turn, status, signal);
+            c.meta.stats.lastTurnUsd = (c.meta.stats.lastTurnUsd || 0) + result.usd;
+        } catch (error) {
+            step.fail(error);
+        }
+        return; // one ruling per turn
+    }
+}
+
 /** No DM this turn: the right character(s) answer locally. */
 async function localReplies(c, triage, playerText, status, signal) {
     const speakers = localSpeakers(c, triage, playerText);
+    localReplies.lastSpeakers = speakers;
     // Plain roleplay: no brief, the bot plays the character freely (it still gets the scene note).
     for (const sp of speakers.filter(Boolean)) {
         if (signal.aborted) throw new Error('aborted');
@@ -586,9 +623,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
         const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';
         const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';
-        const card = r.hidden
-            ? `🎲 Someone rolls in secret…`
-            : `🎲 **${r.who}** · ${r.what}: ${result.detail} = **${result.total}** ${mark}${vs}${nat}${damageText}${outcomeText(r, judged)}`;
+        const card = `🎲 **${r.who}** · ${r.what}: ${result.detail} = **${result.total}** ${mark}${vs}${nat}${damageText}${outcomeText(r, judged)}`;
         await postDiceCard(card, { roll: { ...r, total: result.total, natural: result.natural, success: judged.success } });
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
         const outcome = judged.success === false ? r.on_fail : r.on_success;

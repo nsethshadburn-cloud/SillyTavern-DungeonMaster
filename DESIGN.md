@@ -324,6 +324,14 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.7 (from "The Hare and the Hollow")
+- That session ran cached pre-0.6 code although the server had 0.6 (Hobb posted the old way, no companion knowledge). index.js now carries LOADED_VERSION (a test keeps it equal to manifest.json) and compares it with the server's manifest on load; a mismatch shows a persistent "press Ctrl+Shift+R" warning.
+- No secret rolls: "hidden" removed from npc_rolls; every card shows who, what and the number.
+- Rules: the DM never writes a companion's words or chosen actions (nor NPC dialogue in narration); one roll per check, no re-rolls, results must matter; covert actions near the player are rolled by the actor against the player's PASSIVE Perception (-5 asleep), rolled before deciding.
+- Companion attempts: after free (non-DM) party replies, the helper classifies the reply (companionActionPrompt); an attempt triggers one DM call ("companion_action", main model) with the reply, which rules with npc_rolls. Directed replies are not re-checked (no loops).
+- NPC replies are "short" unless the DM asks for long (then "normal"); NPC template asks for one or two lines and at most one brief action. "long" length is "4-6 sentences at most". Untouched saved defaults migrate (defaultsV7).
+- Risky actions, roll results, travel/rests and events moved to the main model (Haiku made poor calls there: asking a sleeping player for an active roll, asking OOC which city).
+
 ### v0.6
 - **NPCs as group members** (st/npccards.js): first time an NPC speaks, a character card is created through SillyTavern's /api/characters/create (tagged "D&D NPC: <title>" via /tag-add), added to the group (editGroup), and the reply is generated with Generate(force_chid) exactly like a party member, with the NPC template as their note. Swipes work; GROUP_MEMBER_DRAFTED injects the NPC note (and the reply's saved brief). NPCs with 10 player turns since they last spoke leave the group after each turn (cards stay). The old side path (callLocal + postNpc) is gone; it was the source of leaked thinking (it bypassed SillyTavern's reasoning parsing).
 - **Companion knowledge**: meta.knowledge[name], written by the campaign design ("knowledge"), updated by the DM ("knowledge_update", full text, rarely), shown to the DM as WHAT COMPANIONS KNOW (MISSING entries get written on the next DM turn), and added to that companion's note through the new "knowledge" template.

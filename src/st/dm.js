@@ -122,6 +122,7 @@ const REASON_TEXT = {
     stalled: 'The scene has stalled (filler replies or going in circles). Move it forward yourself: skip ahead, arrive somewhere, or let someone or something push in.',
     drift: 'The party has been away from the plot for a while. Apply the PLOT PRESSURE stage in the pacing report, building on any pressure you set up before.',
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
+    companion_action: 'A companion just attempted something risky in their own reply (below). Rule on it like a player\'s action: roll for them in npc_rolls against a DC or the right opponent (for example the player\'s passive Perception), narrate what actually happens, and brief them only if they need to react. If it truly needs no roll, just narrate the result.',
     solo: 'No companion or NPC is with the player right now, or nobody nearby would answer. Respond as the world: what they notice, what happens, who shows up. Keep it short if nothing much happens. Absent companions stay silent.',
     checkin: 'The world moves on: a few turns have passed since it last acted. Narrate it advancing one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. Then set world_next.',
     opening: 'Open the campaign.',
@@ -139,7 +140,7 @@ const REASON_TEXT = {
  *  handUp = this model may hand the turn to the main DM model
  * @returns {Promise<{layers:string[], user:string}>}
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
@@ -190,6 +191,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
         for (const ev of events) sections.push(`- [${ev.id}] ${ev.title} (${ev.type}, danger ${ev.danger}/5): ${ev.seed}`);
     }
     if (playerMessage) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
+    if (companionAction) sections.push('', `COMPANION ATTEMPT TO RULE ON: ${companionAction.name} tries to ${companionAction.what || 'do something risky'}. Their reply: ${trimToTokens(companionAction.text, 500)}`);
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
     const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);

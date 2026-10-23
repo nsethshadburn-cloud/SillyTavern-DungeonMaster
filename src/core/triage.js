@@ -113,3 +113,23 @@ export function parseHelperTriage(text, speakers = []) {
         addressed: typeof data.addressed === 'string' ? data.addressed.trim().slice(0, 60) : '',
     };
 }
+
+/** Ask the helper whether a companion's own reply attempts something that needs a roll. */
+export function companionActionPrompt({ name, message, scene }) {
+    const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
+    const user = [
+        `Scene: ${scene || 'unknown'}`,
+        `${name} (a companion in the party) just wrote:`,
+        message,
+        '',
+        `Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.`,
+        'JSON: {"attempt": true or false, "what": "a few words: what they try, or empty"}',
+    ].join('\n');
+    return { system, user };
+}
+
+export function parseCompanionAction(text) {
+    const data = extractJson(text) || {};
+    const attempt = data.attempt === true || data.attempt === 'true';
+    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '' };
+}

@@ -64,6 +64,12 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **Companions know their story.** At the start, Claude writes each companion a private "what you know" summary (how they got here, what they're accused of, who they know), and it goes with every reply they give. The DM updates it now and then when something big changes. Older campaigns get one on the next DM turn.
 
+**Every roll is shown.** Dice cards always say who rolled, for what, and the number. If a companion sneaks or steals near you, they roll against your passive Perception; you're never asked to roll in your sleep.
+
+**Judy's own attempts get rulings.** When Judy tries something risky on her own (slipping a key, sneaking off, lying to a guard), the helper notices and the DM rules on it with a roll for her, just like your actions.
+
+**After updating:** if the plugin notices your browser is still running an older cached copy, it pops up a warning to press Ctrl+Shift+R.
+
 **Companions act like players.** In turns the DM is already handling, it can have Judy use her own abilities (Misty Step, Help, her own Perception), and her rolls show as dice cards. When a check applies to everyone (all climbing, all sneaking), the DM rolls for her too, and each of you succeeds or fails on your own roll.
 
 **Levels.** Ask the DM out of character, e.g. `((level Judy to 5))`, or type `/dmlevel Judy 5`. Claude rewrites her sheet for that level by 5e rules and her HP follows.

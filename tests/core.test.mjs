@@ -189,16 +189,16 @@ test('per-job models: Sonnet for setup, direction and combat, Haiku for the rest
     const taskModels = defaultTaskModels();
     const price = { [S]: 2, [H]: 0.1, 'claude-opus-5-5': 5 };
     const o = { hybrid: true, mainModel: S, taskModels, rank: m => price[m] ?? 0 };
-    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'drift', 'stalled', 'checkin', 'combat_action', 'combat_round']) {
+    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'drift', 'stalled', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_action']) {
         assert.equal(pickModel([k], o), S, k);
     }
-    for (const k of ['risky_action', 'roll_result', 'scene_move', 'event', 'npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes']) {
+    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes']) {
         assert.equal(pickModel([k], o), H, k);
     }
-    assert.equal(pickModel(['risky_action', 'drift'], o), S, 'the more capable model wins when jobs disagree');
-    assert.equal(pickModel(['roll_result'], { ...o, criticalRoll: true }), H, 'criticals unchanged by default');
-    assert.equal(pickModel(['roll_result'], { ...o, criticalRoll: true, criticalModel: S }), S);
-    assert.equal(pickModel(['roll_result'], { ...o, hybrid: false }), S, 'hybrid off = main model for everything');
+    assert.equal(pickModel(['ooc', 'drift'], o), S, 'the more capable model wins when jobs disagree');
+    assert.equal(pickModel(['ooc'], { ...o, criticalRoll: true }), H, 'criticals unchanged by default');
+    assert.equal(pickModel(['ooc'], { ...o, criticalRoll: true, criticalModel: S }), S);
+    assert.equal(pickModel(['ooc'], { ...o, hybrid: false }), S, 'hybrid off = main model for everything');
     assert.equal(pickModel(['some_future_job'], o), S, 'unknown jobs use the main model');
     assert.equal(pickModel(['event'], { ...o, taskModels: { ...taskModels, event: 'claude-opus-5-5' } }), 'claude-opus-5-5', 'any model per job');
     assert.equal(new Set(TASKS.map(t => t.key)).size, TASKS.length, 'job keys are unique');
@@ -231,7 +231,7 @@ test('older model settings move to per-job models', () => {
     const neverHadModels = { dmModel: 'claude-opus-5-5' };
     migrateModelSettings(neverHadModels);
     assert.equal(neverHadModels.taskModels.opening, 'claude-opus-5-5', 'main jobs follow the saved main model');
-    assert.equal(neverHadModels.taskModels.roll_result, H);
+    assert.equal(neverHadModels.taskModels.ooc, H);
 });
 
 test('DM can hand a turn up', () => {
@@ -403,4 +403,23 @@ test('companion knowledge, level changes, group-check rules, chatty scenes slow 
     assert.equal(p.worldClock, 1);
     tickPlayerTurn(p, 'breathe');
     assert.equal(p.worldClock, 0);
+});
+
+test('v0.7: no secret rolls, companions roll covert actions, version stamp matches the manifest', async () => {
+    const fsm = await import('node:fs');
+    const manifest = JSON.parse(fsm.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+    const index = fsm.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    assert.ok(index.includes(`LOADED_VERSION = '${manifest.version}'`), 'index.js LOADED_VERSION must equal manifest.json version');
+    assert.equal('hidden' in parseDmTurn('{"npc_rolls":[{"who":"X","what":"Insight","notation":"1d20","hidden":true}]}').npc_rolls[0], false);
+    assert.match(DM_RULES, /There are no secret rolls/);
+    assert.match(DM_RULES, /PASSIVE Perception/);
+    assert.match(DM_RULES, /Never re-roll/);
+    assert.match(DM_RULES, /never narrate what a companion chooses to do/);
+    const { companionActionPrompt, parseCompanionAction } = await import('../src/core/triage.js');
+    assert.match(companionActionPrompt({ name: 'Judy Hopps', message: 'x', scene: 'y' }).user, /ATTEMPT/);
+    assert.deepEqual(parseCompanionAction('{"attempt": true, "what": "slip the cuff key from his pouch"}'), { attempt: true, what: 'slip the cuff key from his pouch' });
+    assert.deepEqual(parseCompanionAction('{"attempt": false, "what": "talks"}'), { attempt: false, what: '' });
+    const { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } = await import('../src/core/notes.js');
+    assert.match(DEFAULT_TEMPLATES.npc, /one or two short lines of dialogue/);
+    assert.equal(DEFAULT_LENGTHS.long, '4-6 sentences at most');
 });

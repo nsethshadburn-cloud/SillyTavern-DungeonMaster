@@ -2,7 +2,7 @@
 
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
-import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
+import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS, OLD_DEFAULTS } from '../core/notes.js';
 import { DEFAULT_MAIN_MODEL, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
@@ -96,6 +96,17 @@ export function settings() {
         if (s.checkinEvery === 10 || s.checkinEvery === 3) s.checkinEvery = 5;
         s.worldPaceV5 = true;
         delete s.worldPaceMigrated;
+    }
+    // v0.7: untouched old defaults move to the new ones (short NPC lines, shorter "long",
+    // judgment-heavy everyday turns on the main model).
+    if (!s.defaultsV7) {
+        if (typeof s.templates?.npc === 'string' && s.templates.npc.endsWith(OLD_DEFAULTS.npcLast)) s.templates.npc = DEFAULT_TEMPLATES.npc;
+        if (s.lengths?.long === OLD_DEFAULTS.long) s.lengths.long = DEFAULT_LENGTHS.long;
+        if (s.taskModels) {
+            const main = s.dmModel || DEFAULT_MAIN_MODEL;
+            for (const k of ['risky_action', 'roll_result', 'scene_move', 'event']) if (s.taskModels[k] === 'claude-haiku-5-5') s.taskModels[k] = main;
+        }
+        s.defaultsV7 = true;
     }
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();

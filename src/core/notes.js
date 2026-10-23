@@ -33,14 +33,20 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{description}}',
         '{{npc}} uses {{pronouns}} pronouns.',
         'Attitude toward the party: {{attitude}}.',
-        'Never speak or act for {{player}} or {{party}}. Reply with 1-3 sentences, mostly dialogue. Don\'t invent new plot.]',
+        'Never speak or act for {{player}} or {{party}}, and never narrate the scene. Reply with one or two short lines of dialogue and at most one brief action. Don\'t invent new plot.]',
     ].join('\n'),
+});
+
+/** Older defaults, so saved settings that were never edited can move to the current ones. */
+export const OLD_DEFAULTS = Object.freeze({
+    npcLast: 'Never speak or act for {{player}} or {{party}}. Reply with 1-3 sentences, mostly dialogue. Don\'t invent new plot.]',
+    long: 'up to two short paragraphs',
 });
 
 export const DEFAULT_LENGTHS = Object.freeze({
     short: 'one short sentence',
     normal: '3-4 sentences, mostly dialogue, only a little action',
-    long: 'up to two short paragraphs',
+    long: '4-6 sentences at most',
 });
 
 const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge'];

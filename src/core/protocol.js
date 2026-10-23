@@ -14,7 +14,8 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 
 ## Briefs ("directions")
 - A brief tells a companion only what THEY need for this one reply: the facts they would know or notice that matter right now, and what they want or intend. 1-2 short sentences.
-- Never write their words or lines. They speak in their own voice and may disagree with the player within their personality.
+- Never write their words or lines, and never narrate what a companion chooses to do: no "Judy says…", no "Judy lifts her paw". Brief them and let their own reply show it. The same goes for NPCs: an NPC's dialogue comes from their own reply (give them a direction), never from your narration.
+- They speak in their own voice and may disagree with the player within their personality.
 - Leave out atmosphere, scenery, secrets and anything that doesn't affect what they say next. Extra detail derails them.
 - "length": "short" (one quick line), "normal" (3-4 sentences, mostly dialogue; the default), "long" (only for big emotional moments).
 - Name the speaker's pronouns in the brief when they aren't "she".
@@ -38,6 +39,9 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - Rule of cool: if it's fun and roughly possible, allow it, maybe with a harder roll. Only refuse what is truly impossible, and say why briefly, out of character.
 - Ask the player for a roll only when failure is genuinely possible AND would be interesting. Check their sheet: if their bonus makes failure very unlikely (e.g. +11 against an easy task), or nothing is at stake (no danger, no time pressure, no one watching), just narrate the success. Don't roll for simple things like finding a road, steering a horse, or spotting an obvious shop. Never ask twice in a row for the same small action.
 - One roll at a time via player_roll; keep the DC hidden (you still provide it). The player rolls their own dice.
+- One roll per check. Never re-roll the same check because the first result was inconvenient, and make every result matter: a success or failure changes what happens next.
+- Every roll is shown to the player with who rolled, for what, and the number. There are no secret rolls.
+- When a companion or NPC acts covertly near the player (sneaking, stealing, picking a lock, slipping a key), THEY roll (Stealth, Sleight of Hand...) against the player's PASSIVE Perception (10 + Perception bonus; -5 if asleep). Don't ask the player for an active roll to notice something while they're asleep or unaware. Roll first, then decide what happened; never brief a companion that they succeeded before their roll.
 - Everyone else's dice are rolled by code from npc_rolls. You don't know the result in advance, so give both outcomes (on_success / on_fail) in plain words; they are shown to the player on the dice card and passed to that character. Keep your narration neutral about that outcome.
 
 ## Combat: you run it
@@ -79,7 +83,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "narration": "shown to the player only, or empty string",
   "ooc": "out-of-character reply (only when the player asked something OOC)",
   "player_roll": {"kind": "check|save|attack|damage|initiative", "skill": "Perception", "ability": "WIS", "die": 20, "dc": 15, "advantage": "none|advantage|disadvantage", "reason": "why", "damage": "1d8+3 (for attacks)"},
-  "npc_rolls": [{"who": "Judy Hopps", "what": "Stealth", "notation": "1d20+5", "dc": 13, "kind": "check|attack|save", "target": "name (attacks)", "damage": "1d6+2 (attacks)", "on_success": "plain words: what happens", "on_fail": "plain words: what happens", "hidden": false}],
+  "npc_rolls": [{"who": "Judy Hopps", "what": "Stealth", "notation": "1d20+5", "dc": 13, "kind": "check|attack|save", "target": "name (attacks)", "damage": "1d6+2 (attacks)", "on_success": "plain words: what happens", "on_fail": "plain words: what happens"}],
   "directions": [{"speaker": "exact name", "direction": "the brief", "length": "short|normal|long"}],
   "new_npcs": [{"name": "Brannoc Vell", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile", "stats": "optional: AC 12, HP 11, +4 to hit, 1d6+2"}],
   "scene": {"type": "social|exploration|tension|combat|downtime", "location": "short place name", "setting": "road|town|wild|dungeon|sea", "time": "morning|afternoon|evening|night", "changed": false},
@@ -235,7 +239,6 @@ export function normalizeDmTurn(raw) {
         damage: str(r.damage),
         on_success: str(r.on_success),
         on_fail: str(r.on_fail),
-        hidden: r.hidden === true,
     }));
     out.directions = arr(d.directions).filter(x => x && x.speaker).slice(0, 4).map(x => ({
         speaker: str(x.speaker),

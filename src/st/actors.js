@@ -321,6 +321,6 @@ async function withActorProfile(fn) {
 
 async function speakNpcMember(npc, brief, { signal, length = 'normal' } = {}) {
     const chid = await ensureNpcMember(npc);
-    await speakMember(npc.name, chid, brief, { signal, length, npc });
+    await speakMember(npc.name, chid, brief, { signal, length: length === 'long' ? 'normal' : 'short', npc });
     touchNpc(npc);
 }
