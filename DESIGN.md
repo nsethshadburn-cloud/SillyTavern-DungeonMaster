@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.9.1
+- Character sheets from any file (st/sheetfile.js): PDFs (text and form fields; scanned PDFs have their first 4 pages rendered to images), images (downscaled to 1600px JPEG and sent to Claude as image_url parts, which SillyTavern converts to Claude image blocks), .docx/.odt (zip read with the browser's DecompressionStream, XML to text), HTML/RTF/anything text-like; binary files get a clear message. callClaude takes "images"; cost estimates add about 1600 tokens per image.
+
 ### v0.9 (textured maps)
 - Map format: "theme" (18 themes), richer terrain (planks, flagstones, grass, dirt, shallow/deep water, lava, open/locked doors, stairs, bridge) and "props" [{at, type, label}] from a fixed list; blocking props (furniture, statues, boulders) make squares unwalkable. Old maps stay valid (default theme dungeon).
 - ui/tiles.js paints everything on a canvas with a seeded RNG per square (map.seed + x,y), so floors vary tile by tile but a map always looks the same: per-slab tones, cracks, moss, grain, tufts, pebbles, ripples, wall faces where walls meet floor, floor shadows under walls, foam at water edges. Named floors keep their material colors in any theme. Props are vector-drawn. Lighting: the theme's darkness with holes cut around light props (torch, brazier, campfire, candles, lava) plus a warm glow. The base layer is cached per map; tokens (portraits, rings, HP bars), reach and selection are drawn on top each render.

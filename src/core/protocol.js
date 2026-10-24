@@ -139,7 +139,7 @@ export const PITCH_INSTRUCTIONS = `Pitch campaign ideas for a tabletop roleplayi
 {"pitches": [{"title": "short title", "hook": "2-3 sentence pitch: setup, stakes, the twist that makes it interesting"}]}
 Make the three pitches clearly different from each other.`;
 
-export const SHEET_FROM_PDF_INSTRUCTIONS = `Convert this D&D 5e character sheet (text and form-field values extracted from a PDF) into a clean reference sheet.
+export const SHEET_FROM_PDF_INSTRUCTIONS = `Convert this D&D 5e character sheet into a clean reference sheet. It may come as text and form fields from a PDF, text from a document, or pictures (a photo, screenshot or scanned page, possibly handwritten or at an angle). Read everything you can; when a value is unreadable or missing, work it out from the rest when 5e rules allow (modifiers from scores, proficiency from level), otherwise write "unknown".
 Return ONE JSON object and nothing else:
 {
   "markdown": "A readable Markdown character sheet: identity, class/level, ability scores with modifiers, proficiency bonus, saving throws, skills (with totals), AC, HP, speed, attacks (to-hit and damage), spells/slots, features & traits, equipment, personality notes. Keep every number from the source. Don't invent things that aren't there; write 'unknown' instead.",

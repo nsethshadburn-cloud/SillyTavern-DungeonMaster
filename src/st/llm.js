@@ -85,6 +85,9 @@ function hashString(str) {
     return String(h);
 }
 
+/** Rough token cost of one sheet image (Claude bills about width*height/750 tokens; ours are at most 1600px). */
+const IMAGE_TOKENS = 1600;
+
 /** Sent between context layers so the roles alternate; it never changes, so it caches. */
 const LAYER_ACK = 'Noted.';
 
@@ -100,7 +103,7 @@ export class BudgetError extends Error { }
  *  task = the job (core/models.js TASKS) whose model to use; model = use exactly this model instead
  * @returns {Promise<{text:string, usd:number, inputTokens:number, outputTokens:number, ms:number, model:string}>}
  */
-export async function callClaude({ system, layers = [], user, task = '', model: modelOverride = '', maxTokens, label, effort, force = false, signal = null }) {
+export async function callClaude({ system, layers = [], user, images = [], task = '', model: modelOverride = '', maxTokens, label, effort, force = false, signal = null }) {
     const s = settings();
     const status = budgetStatus({ ...currentSpend(), monthlyCap: Number(s.monthlyCap), nightlySoftCap: Number(s.nightlySoftCap) });
     if (status.level === 'blocked' && !force) {
@@ -114,7 +117,7 @@ export async function callClaude({ system, layers = [], user, task = '', model: 
     for (const layer of layers) {
         messages.push({ role: 'user', content: layer }, { role: 'assistant', content: LAYER_ACK });
     }
-    messages.push({ role: 'user', content: user });
+    messages.push({ role: 'user', content: images.length ? [{ type: 'text', text: user }, ...images.map(url => ({ type: 'image_url', image_url: { url } }))] : user });
     const request = {
         stream: false,
         messages,
@@ -135,7 +138,7 @@ export async function callClaude({ system, layers = [], user, task = '', model: 
     const ms = Date.now() - started;
 
     const cost = estimateCallCost({
-        blocks: cacheStates(model, [system, ...layers.flatMap(l => [l, LAYER_ACK])], user),
+        blocks: [...cacheStates(model, [system, ...layers.flatMap(l => [l, LAYER_ACK])], user), ...images.map(() => ({ text: '', tokens: IMAGE_TOKENS, cache: 'none' }))],
         outputText: text,
         thinkingAllowance: Number(s.thinkingAllowance) || 0,
         prices: pricesFor(model),

@@ -10,7 +10,7 @@ import { callClaude } from './llm.js';
 import { SHEET_FROM_PDF_INSTRUCTIONS, SHEET_FROM_CARD_INSTRUCTIONS, LEVEL_SHEET_INSTRUCTIONS } from '../core/protocol.js';
 import { extractJson, slug, shortId, trimToTokens } from '../core/text.js';
 
-async function loadPdfJs() {
+export async function loadPdfJs() {
     if (!('pdfjsLib' in window)) {
         await import('../../../../../../lib/pdf.min.mjs');
         await import('../../../../../../lib/pdf.worker.min.mjs');
@@ -66,23 +66,24 @@ function parseSheetReply(text) {
     return { markdown: String(json.markdown), stats: json.stats && typeof json.stats === 'object' ? json.stats : null };
 }
 
-/** Persona sheet from PDF. Overwrites only when the user confirmed (caller's job). */
-export async function createPersonaSheetFromPdf(personaAvatar, personaName, file, onStep = () => { }) {
-    onStep('Reading the PDF');
-    const pdf = await extractPdf(file);
-    if (!pdf.text && !Object.keys(pdf.fields).length) throw new Error('No text or form fields found in this PDF. Is it a scanned image?');
-    const fieldLines = Object.entries(pdf.fields).map(([k, v]) => `${k}: ${v}`).join('\n');
+/**
+ * Persona sheet from any file: PDF (text, form fields, or page pictures for scans), a photo or
+ * screenshot, a Word/OpenDocument file, or text. Overwrites only when the user confirmed (caller's job).
+ */
+export async function createPersonaSheetFromFile(personaAvatar, personaName, file, onStep = () => { }) {
+    onStep(`Reading ${file.name}`);
+    const { readSheetFile } = await import('./sheetfile.js');
+    const read = await readSheetFile(file);
+    if (!read.images.length && !read.text && !Object.keys(read.fields).length) throw new Error(`Couldn't find anything to read in "${file.name}".`);
+    const fieldLines = Object.entries(read.fields).map(([k, v]) => `${k}: ${v}`).join('\n');
     const user = [
         `Character (persona) name in the app: ${personaName}`,
-        '',
-        '## Form fields (name: value)',
-        trimToTokens(fieldLines || '(none)', 12000),
-        '',
-        '## Page text',
-        trimToTokens(pdf.text || '(none)', 12000),
-    ].join('\n');
+        `Source: ${read.kind} file "${file.name}"${read.images.length ? ` (${read.images.length} picture${read.images.length > 1 ? 's' : ''} attached: read everything you can see, including handwriting)` : ''}`,
+        fieldLines ? `\n## Form fields (name: value)\n${trimToTokens(fieldLines, 12000)}` : '',
+        read.text ? `\n## Text\n${trimToTokens(read.text, 12000)}` : '',
+    ].filter(Boolean).join('\n');
     onStep('Claude is converting the sheet');
-    const reply = await callClaude({ system: SHEET_FROM_PDF_INSTRUCTIONS, user, task: 'persona_sheet', label: 'persona sheet', maxTokens: 8000, effort: 'low', force: true });
+    const reply = await callClaude({ system: SHEET_FROM_PDF_INSTRUCTIONS, user, images: read.images, task: 'persona_sheet', label: 'persona sheet', maxTokens: 8000, effort: 'low', force: true });
     const sheet = parseSheetReply(reply.text);
     const fileName = `dmsheet_persona_${slug(personaName, 30)}_${shortId()}.md`;
     await writeFile(fileName, sheet.markdown);
@@ -91,6 +92,9 @@ export async function createPersonaSheetFromPdf(personaAvatar, personaName, file
     saveSettings();
     return { ...s.personaSheets[personaAvatar], usd: reply.usd };
 }
+
+/** Kept for older callers. */
+export const createPersonaSheetFromPdf = (...args) => createPersonaSheetFromFile(...args);
 
 /** Best-guess sheet for a character card. */
 export async function createCharacterSheet(characterAvatar, onStep = () => { }) {

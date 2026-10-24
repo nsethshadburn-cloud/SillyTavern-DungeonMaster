@@ -26,7 +26,7 @@ Settings, character sheets and campaigns are stored per SillyTavern install, so 
    - **Actors / Helper:** leave them on "current connection" unless you want a different server.
    - **Budget:** $20/month is set. The nightly soft cap ($0.65) makes the DM check in less often once it's reached.
    - **Voices:** pick a **DM voice** and press **Test DM voice**. Open **NPC voice pool** to switch voices on or off and fix any wrong genders.
-3. **Your character sheet:** open the **Persona** panel and click the new **📜 scroll** button. Pick your 5e PDF; Claude converts it once (about 1¢) and then it's locked.
+3. **Your character sheet:** open the **Persona** panel and click the new **📜 scroll** button. Pick your 5e sheet in any form: a PDF (fillable or scanned), a photo or screenshot of a paper sheet, a Word document, or a text file. Claude converts it once (about 1-3¢; pictures cost a little more) and then it's locked.
 4. **Thinking models (Gemma 4 / Orion):** nothing to do. In group chats SillyTavern starts each reply with "Name:", which makes these models skip thinking and garble words. In campaign chats the extension removes that one prefix automatically (other chats are untouched).
 5. Optional: lower your **Response length** to about 2048 in the left sliders panel, so the story has room in the context.
 6. **Recommended, saves the most money:** turn on Claude prompt caching. In SillyTavern's `config.yaml` (on the machine running SillyTavern), find the `claude:` section and set:

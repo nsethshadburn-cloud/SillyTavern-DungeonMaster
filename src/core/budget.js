@@ -13,7 +13,7 @@ export function cacheWriteMultiplier(ttlMinutes) {
 }
 
 /**
- * @param {{blocks:Array<{text:string, cache?:'hit'|'write'|'none'}>, outputText:string, thinkingAllowance:number,
+ * @param {{blocks:Array<{text:string, tokens?:number, cache?:'hit'|'write'|'none'}>, outputText:string, thinkingAllowance:number,
  *          prices:{input:number, output:number, cacheRead:number}, writeMultiplier?:number}} p
  * blocks are the prompt in order; prices are USD per million tokens.
  * A block marked 'hit' or 'write' only counts as cached once the prompt up to it reaches MIN_CACHE_TOKENS.
@@ -25,7 +25,7 @@ export function estimateCallCost(p) {
     let inputTokens = 0;
     let inputCost = 0;
     for (const block of p.blocks) {
-        const tokens = estimateTokens(block.text);
+        const tokens = Number.isFinite(block.tokens) ? block.tokens : estimateTokens(block.text);
         prefix += tokens;
         inputTokens += tokens;
         const cacheable = prefix >= MIN_CACHE_TOKENS;
