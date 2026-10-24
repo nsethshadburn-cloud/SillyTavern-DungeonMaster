@@ -423,3 +423,18 @@ test('v0.7: no secret rolls, companions roll covert actions, version stamp match
     assert.match(DEFAULT_TEMPLATES.npc, /one or two short lines of dialogue/);
     assert.equal(DEFAULT_LENGTHS.long, '4-6 sentences at most');
 });
+
+test('v0.8: scene maps outside combat, dead NPCs', async () => {
+    const { activeMap, normalizeMap } = await import('../src/core/grid.js');
+    const t = parseDmTurn('{"scene_map":{"title":"Flooded crypt","width":6,"height":4,"rows":["######","#..~~#","#.T..#","######"]},"npcs_dead":["Corwin Tillet"]}');
+    assert.equal(t.scene_map.title, 'Flooded crypt');
+    assert.deepEqual(t.npcs_dead, ['Corwin Tillet']);
+    assert.equal(parseDmTurn('{"scene_map":"close"}').scene_map, 'close');
+    assert.equal(parseDmTurn('{"narration":"x"}').scene_map, null);
+    const room = { title: 'Crypt', map: normalizeMap(t.scene_map), positions: {} };
+    assert.equal(activeMap({ sceneMap: room }), room, 'outside combat the scene map shows');
+    const fight = { map: room.map, positions: {} };
+    assert.equal(activeMap({ sceneMap: room, combat: fight }), fight, 'in a fight the battle map wins');
+    assert.equal(activeMap({}), null);
+    assert.match(DM_RULES, /Be conservative: never for towns/);
+});

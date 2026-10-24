@@ -8,8 +8,8 @@ import { ST, findCharacterIndex, currentGroup } from './st.js';
 import { campaign, saveDoc } from './campaign.js';
 import { pronounsFor } from '../core/notes.js';
 
-/** Player turns an NPC may sit unused in the group before they leave it. */
-export const NPC_IDLE_TURNS = 10;
+/** Player turns an NPC may sit completely unused in the group before they leave it (or they die). */
+export const NPC_IDLE_TURNS = 100;
 
 function cardDescription(npc, c) {
     return [
@@ -88,6 +88,16 @@ export function touchNpc(npc) {
     if (!c || !npc) return;
     npc.lastActiveTurn = c.meta.turn;
     saveDoc('npcs');
+}
+
+/** Take NPCs out of the group chat (their cards stay; they can be added back later). */
+export async function removeNpcsFromGroup(npcs) {
+    const group = currentGroup();
+    if (!group) return;
+    const avatars = new Set(npcs.map(n => n.avatar).filter(Boolean));
+    const before = group.members.length;
+    group.members = group.members.filter(m => !avatars.has(m));
+    if (group.members.length !== before) await ST.editGroup(group.id, true, false);
 }
 
 /** NPCs who sat unused for NPC_IDLE_TURNS player turns leave the group (their cards stay). */

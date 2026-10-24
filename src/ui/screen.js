@@ -86,7 +86,7 @@ export function renderScreen() {
     <div class="menu_button" id="dm-scr-force" title="Have the DM step in now">DM step in</div>
     <div class="menu_button" id="dm-scr-recap" title="Previously on…">Recap</div>
     <div class="menu_button" id="dm-scr-resync" title="After deleting or editing messages: Claude re-reads the chat and fixes what it has logged">Fix mismatch</div>
-    ${w.combat ? '<div class="menu_button" id="dm-scr-map" title="Battle map">Battle map</div>' : ''}
+    ${w.combat || w.sceneMap ? '<div class="menu_button" id="dm-scr-map" title="Map">Map</div>' : ''}
     <div class="menu_button" id="dm-scr-pause">${m.paused ? 'Resume' : 'Pause'}</div>
   </div>
   ${m.pendingRoll ? `<div class="dm-scr-note">Waiting for your roll: <b>${escapeHtml(m.pendingRoll.skill)}</b> <span class="menu_button" id="dm-scr-cancel-roll">Cancel</span></div>` : ''}
@@ -122,7 +122,8 @@ export function renderScreen() {
     panel.querySelector('#dm-scr-force').addEventListener('click', () => runTurn({ force: 'manual' }));
     panel.querySelector('#dm-scr-recap').addEventListener('click', async () => {
         try {
-            const r = await recap();
+            const { withDmThinking } = await import('./thinking.js');
+            const r = await withDmThinking('The Dungeon Master is writing a recap', () => recap());
             await postNarration(`**Previously…** ${r.text}`);
             voiceLine({ kind: 'dm', text: r.text });
         } catch (error) {
@@ -172,7 +173,8 @@ export async function runResync() {
     toastr.info('Re-reading the chat to fix the DM\'s logs…', 'Dungeon Master');
     try {
         const { resyncWithChat } = await import('../st/dm.js');
-        const r = await resyncWithChat();
+        const { withDmThinking } = await import('./thinking.js');
+        const r = await withDmThinking('The Dungeon Master is re-reading the chat', () => resyncWithChat());
         const { postOoc } = await import('../st/messages.js');
         await postOoc(`Fixed to match the chat: ${r.summary}`);
         const { refreshStandingPrompt } = await import('../st/actors.js');

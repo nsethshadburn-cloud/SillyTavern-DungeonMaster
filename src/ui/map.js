@@ -4,7 +4,7 @@
 // Claude never sees an image: it reads and writes the map as plain text.
 
 import { campaign } from '../st/campaign.js';
-import { parseCoord, toCoord, colName, terrainAt, distance, TERRAIN } from '../core/grid.js';
+import { parseCoord, toCoord, colName, terrainAt, distance, TERRAIN, activeMap } from '../core/grid.js';
 import { escapeHtml } from '../core/text.js';
 
 const TERRAIN_CLASS = { '.': 'floor', '#': 'wall', '~': 'water', '^': 'rough', 'T': 'cover', '+': 'door', 'o': 'pit' };
@@ -24,8 +24,8 @@ function ensurePanel() {
 
 export function openMap() {
     const c = campaign();
-    if (!c?.docs.world.combat?.map) {
-        toastr.info('No battle map right now. It appears when combat starts.', 'Dungeon Master');
+    if (!activeMap(c?.docs.world)) {
+        toastr.info('No map right now. It appears in fights and in places where exact squares matter.', 'Dungeon Master');
         return;
     }
     ensurePanel().classList.remove('dm-hidden', 'dm-map-min');
@@ -66,11 +66,12 @@ function hpOf(c, name) {
 
 function renderMap() {
     const c = campaign();
-    const combat = c?.docs.world.combat;
+    const combat = activeMap(c?.docs.world);
     if (!combat?.map) {
         closeMap();
         return;
     }
+    const inCombat = combat === c.docs.world.combat;
     const map = combat.map;
     const positions = combat.positions || {};
     const player = c.meta.persona.name;
@@ -120,7 +121,7 @@ function renderMap() {
 
     panel.innerHTML = `
 <div class="dm-map-head">
-  <b>⚔️ Battle map</b><span class="dm-muted">Round ${combat.round ?? 1}</span>
+  <b>${inCombat ? '⚔️ Battle map' : `🗺️ ${escapeHtml(combat.title || 'Map')}`}</b><span class="dm-muted">${inCombat ? `Round ${combat.round ?? 1}` : ''}</span>
   <span class="dm-map-btn fa-solid fa-window-minimize" data-act="min" title="Minimize"></span>
   <span class="dm-map-btn fa-solid fa-xmark" data-act="close" title="Close (reopen from the wand menu)"></span>
 </div>
@@ -150,7 +151,7 @@ function onCell(el) {
         if (who === c.meta.persona.name) return;
         selection.target = selection.target === who ? '' : who;
     } else {
-        const t = terrainAt(c.docs.world.combat.map, parseCoord(coord).x, parseCoord(coord).y);
+        const t = terrainAt(activeMap(c.docs.world).map, parseCoord(coord).x, parseCoord(coord).y);
         if (TERRAIN[t]?.walk === false) {
             toastr.info(`${coord} is ${TERRAIN[t].name}: you can't stand there.`, 'Battle map', { timeOut: 2500 });
             return;

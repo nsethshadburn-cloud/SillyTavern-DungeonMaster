@@ -49,6 +49,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - Every round YOU decide what each companion and enemy does, roll for them with npc_rolls, and narrate the results. Companions only get a brief with length "short" for a quick in-character line, never actions.
 - Track HP through state_changes (code applies attack damage from npc_rolls automatically). End with end_combat when it's over.
 - Battle map: a grid of rows of characters, top row first. Size it to the place (4 to 16 squares per side: a corridor might be 12x4, a clearing 12x10). Terrain: . floor, # wall, ~ water, ^ rough ground, T cover (tree, crate, pillar), + door, o pit. Squares are chess-style: columns a, b, c... left to right; rows 1, 2, 3... bottom to top. Example: "rows": ["##########", "#..T.....#", "#........#", "####+#####"].
+- Scene maps outside combat: send "scene_map" ({"title": "Flooded crypt", "width", "height", "rows"}) only where exact, tile-by-tile positions matter: a dungeon room, a trapped corridor, sneaking through a guarded area, a puzzle room. Be conservative: never for towns, roads, wilderness travel or social scenes. Send "scene_map": "close" when the party leaves that space. Use "positions" on it like in combat. If a fight starts in a mapped room, you may leave out start_combat.map and the room becomes the battle map.
 - Give everyone a starting square in "positions" ({"Judy Hopps": "c2", "Bandit 1": "f7"}). Each combat round, return "positions" for anyone who moved. One square = 5 feet; typical movement is 6 squares. Use "gone" for anyone who leaves or dies.
 - The player's own moves are THEIR choice (e.g. "move to d4"). Put them exactly where they asked when it's possible. If their square and their action don't fit together (a sword swing from 4 squares away), don't silently relocate them: either move them only as far as their movement allows toward the target and say so plainly in "ooc", or ask them in "ooc" which they meant.
 
@@ -92,6 +93,8 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "state_changes": {"hp": {"Name": -3}, "conditions_add": {"Name": ["poisoned"]}, "conditions_remove": {"Name": ["poisoned"]}, "gold": 0, "items_add": ["item"], "items_remove": ["item"], "flags": {"key": "value"}},
   "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1}], "map": {"width": 10, "height": 8, "rows": ["top row", "...", "bottom row"]}},
   "positions": {"Name": "d4"},
+  "scene_map": {"title": "short name", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"]},
+  "npcs_dead": ["names of NPCs who died this turn"],
   "end_combat": false,
   "notes_add": "private DM note for yourself (secrets, foreshadowing, NPC motives)",
   "story_add": "1-3 sentence summary for the long-term log: when a scene ends or something important happens (arrival somewhere new, capture, escape, a reveal, a beat completed)",
@@ -206,6 +209,8 @@ export function normalizeDmTurn(raw) {
         story_add: str(d.story_add),
         event: normalizeEventChoice(d.event),
         positions: normalizePositions(d.positions),
+        scene_map: d.scene_map === 'close' || d.scene_map === null ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String) } : null),
+        npcs_dead: arr(d.npcs_dead).map(String).filter(Boolean),
         standing_direction: str(d.standing_direction),
         objective: str(d.objective),
         need_files: arr(d.need_files).map(String).filter(Boolean),

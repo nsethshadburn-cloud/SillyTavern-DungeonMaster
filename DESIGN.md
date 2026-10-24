@@ -324,6 +324,11 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.8
+- "The Dungeon Master is thinking…" bubble (ui/thinking.js): display-only DOM element in #chat while a DM call, companion ruling, resync or recap runs.
+- Scene maps: DM field "scene_map" ({title,width,height,rows} or "close"), stored as world.sceneMap {title,map,positions}; grid.activeMap() picks the battle map in combat, else the scene map; "positions" apply to it outside combat; a fight starting in a mapped room reuses that map, and the room comes back after the fight. Rules ask for it only where exact squares matter.
+- NPCs: NPC_IDLE_TURNS 100 (speaking or being addressed counts); DM field "npcs_dead" marks them dead (never picked again) and removes them from the group.
+
 ### v0.7 (from "The Hare and the Hollow")
 - That session ran cached pre-0.6 code although the server had 0.6 (Hobb posted the old way, no companion knowledge). index.js now carries LOADED_VERSION (a test keeps it equal to manifest.json) and compares it with the server's manifest on load; a mismatch shows a persistent "press Ctrl+Shift+R" warning.
 - No secret rolls: "hidden" removed from npc_rolls; every card shows who, what and the number.

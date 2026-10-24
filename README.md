@@ -64,6 +64,12 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **Companions know their story.** At the start, Claude writes each companion a private "what you know" summary (how they got here, what they're accused of, who they know), and it goes with every reply they give. The DM updates it now and then when something big changes. Older campaigns get one on the next DM turn.
 
+**The DM is thinking.** While Claude works, a "The Dungeon Master is thinking…" bubble shows at the bottom of the chat.
+
+**Maps outside fights.** In places where exact squares matter (a dungeon room, a trapped corridor, sneaking past guards) the DM can open a tile map, used sparingly; it closes when you leave. If a fight breaks out there, the room becomes the battle map.
+
+**NPCs stay around.** NPCs stay in the group chat until they die or go 100 turns without being spoken to or speaking; they can always be added back.
+
 **Every roll is shown.** Dice cards always say who rolled, for what, and the number. If a companion sneaks or steals near you, they roll against your passive Perception; you're never asked to roll in your sleep.
 
 **Judy's own attempts get rulings.** When Judy tries something risky on her own (slipping a key, sneaking off, lying to a guard), the helper notices and the DM rules on it with a roll for her, just like your actions.

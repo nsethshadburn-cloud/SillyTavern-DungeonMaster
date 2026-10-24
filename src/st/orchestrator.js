@@ -8,7 +8,8 @@ import { campaign, saveMeta, saveDoc } from './campaign.js';
 import { callLocal, BudgetError } from './llm.js';
 import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
 import { modelLabel } from '../core/models.js';
-import { rotateIdleNpcs } from './npccards.js';
+import { rotateIdleNpcs, removeNpcsFromGroup, touchNpc } from './npccards.js';
+import { withDmThinking } from '../ui/thinking.js';
 import { makeSpeak, refreshStandingPrompt, speakerCandidates } from './actors.js';
 import { postNarration, postOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
@@ -179,7 +180,10 @@ async function turnBody(c, opts, status, signal) {
                     const npcNames = (c.docs.npcs || []).map(n => n.name);
                     const known = matchName(h.addressed, [...meta.party.map(p => p.name), ...npcNames, meta.persona.name]);
                     if (!known) triage.unknownAddressee = h.addressed;
-                    else if (npcNames.includes(known)) triage.speakers = [known, ...triage.speakers.filter(s => s !== known)].slice(0, 2);
+                    else if (npcNames.includes(known)) {
+                        triage.speakers = [known, ...triage.speakers.filter(s => s !== known)].slice(0, 2);
+                        touchNpc(c.docs.npcs.find(n => n.name === known));
+                    }
                 }
                 step.done(`${triage.category}${triage.unknownAddressee ? ` · talking to ${triage.unknownAddressee} (new)` : ''}${triage.speakers.length ? ` → ${triage.speakers.join(', ')}` : ''}`);
             } catch (error) {
@@ -237,13 +241,13 @@ async function turnBody(c, opts, status, signal) {
         const step = status.step(`DM is thinking (${modelLabel(model)}) · ${reasons.join(', ')}`);
         let result;
         try {
-            result = await askDm({
+            result = await withDmThinking('The Dungeon Master is thinking', () => askDm({
                 reasons,
                 playerMessage: playerText,
                 rollResolution,
                 events,
                 oocText: opts.oocText || triage.oocText || '',
-            }, { signal, model });
+            }, { signal, model }));
             step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
             turnUsd += result.usd;
         } catch (error) {
@@ -357,7 +361,7 @@ async function ruleOnCompanionAttempts(c, names, status, signal) {
         const model = modelFor(reasons);
         const step = status.step(`DM rules on ${name}'s attempt (${modelLabel(model)}): ${attempt.what || 'something risky'}`);
         try {
-            const result = await askDm({ reasons, companionAction: { name, what: attempt.what, text: msg.mes } }, { signal, model });
+            const result = await withDmThinking(`The Dungeon Master is ruling on ${name}'s attempt`, () => askDm({ reasons, companionAction: { name, what: attempt.what, text: msg.mes } }, { signal, model }));
             step.done(summarizeTurn(result.turn), result.usd);
             await applyDmTurn(c, result.turn, status, signal);
             c.meta.stats.lastTurnUsd = (c.meta.stats.lastTurnUsd || 0) + result.usd;
@@ -519,8 +523,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
     if (t.start_combat && !world.combat) {
         const companions = meta.party.map(p => ({ name: p.name, stats: statsForName(p.name, meta) }));
         const combat = startCombat(world, t.start_combat, companions);
-        combat.map = normalizeMap(t.start_combat.map || {});
-        combat.positions = {};
+        // A fight in a mapped room uses that room unless the DM sent its own battle map.
+        const roomMap = !t.start_combat.map && world.sceneMap?.map ? world.sceneMap : null;
+        combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
+        combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
         mapChanged = true;
         initiativeCard = `⚔️ **Initiative**\n${combat.order.map(o => `- ${o.name}: **${o.init}**`).join('\n')}\n*(${meta.persona.name}: roll your own initiative when asked)*`;
     }
@@ -537,9 +543,40 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         mapChanged = true;
     }
     if (t.end_combat && world.combat) {
+        const finalPositions = world.combat.positions;
+        const sameRoom = world.sceneMap?.map && world.combat.map === world.sceneMap.map;
         endCombat(world);
-        closeMap();
+        if (sameRoom) {
+            world.sceneMap.positions = finalPositions;
+            refreshMap();
+        } else if (!world.sceneMap) {
+            closeMap();
+        }
         status.note('Combat over');
+    }
+    // Scene maps outside combat (a dungeon room where exact squares matter).
+    if (t.scene_map === 'close' && world.sceneMap) {
+        world.sceneMap = null;
+        if (!world.combat) closeMap();
+    } else if (t.scene_map && typeof t.scene_map === 'object') {
+        world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap(t.scene_map), positions: {} };
+        mapChanged = true;
+    }
+    if (!world.combat && world.sceneMap?.map) {
+        const friends = [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))];
+        const { positions } = applyPositions(world.sceneMap.map, world.sceneMap.positions, t.positions);
+        world.sceneMap.positions = placeMissing(world.sceneMap.map, positions, friends, 'party');
+        mapChanged = true;
+    }
+    // NPCs who died leave the group chat.
+    if (t.npcs_dead.length) {
+        const dead = new Set(t.npcs_dead.map(n => n.toLowerCase()));
+        const fallen = (c.docs.npcs || []).filter(n => dead.has(n.name.toLowerCase()));
+        for (const npc of fallen) npc.dead = true;
+        if (fallen.length) {
+            saveDoc('npcs');
+            await removeNpcsFromGroup(fallen);
+        }
     }
     applyDmPacing(meta.pacing, t, { worldEvery: Number(settings().checkinEvery) || 5 });
     if (t.beats_completed.length) {
@@ -636,8 +673,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         saveDoc('rolls_log');
         saveDoc('world');
     }
-    if (mapChanged && world.combat) {
-        if (t.start_combat) openMap();
+    if (mapChanged && (world.combat || world.sceneMap)) {
+        if (t.start_combat || (t.scene_map && typeof t.scene_map === 'object')) openMap();
         else refreshMap();
     }
 

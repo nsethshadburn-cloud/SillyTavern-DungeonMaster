@@ -49,7 +49,7 @@ async function onChatChanged() {
     }
     const active = campaign();
     syncTtsTakeover(Boolean(active && !active.meta.paused));
-    if (active?.docs.world.combat?.map) refreshMap();
+    if (active?.docs.world.combat?.map || active?.docs.world.sceneMap?.map) refreshMap();
     renderScreen();
     updateMenuState();
 }
@@ -106,7 +106,7 @@ function addWandMenu() {
         ['dm-menu-start', 'fa-dice-d20', 'Start D&D campaign', () => openWizard()],
         ['dm-menu-screen', 'fa-scroll', 'DM Screen', () => toggleScreen()],
         ['dm-menu-step-in', 'fa-hat-wizard', 'DM: step in now', () => runTurn({ force: 'manual' })],
-        ['dm-menu-map', 'fa-chess-board', 'Battle map', () => toggleMap()],
+        ['dm-menu-map', 'fa-chess-board', 'Map', () => toggleMap()],
         ['dm-menu-resync', 'fa-rotate', 'DM: fix mismatch with chat', () => runResync()],
     ];
     for (const [id, icon, label, fn] of items) {
@@ -199,7 +199,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.7.0-beta';
+export const LOADED_VERSION = '0.8.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

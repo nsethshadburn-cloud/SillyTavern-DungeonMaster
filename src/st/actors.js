@@ -148,7 +148,7 @@ export function hideNarrationFromBot(chat) {
 export function speakerCandidates() {
     const c = campaign();
     if (!c) return [];
-    const npcsHere = (c.docs.npcs || []).filter(n => !c.docs.world.location || n.lastSeen === c.docs.world.location).map(n => n.name);
+    const npcsHere = (c.docs.npcs || []).filter(n => !n.dead && (!c.docs.world.location || n.lastSeen === c.docs.world.location)).map(n => n.name);
     return [...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n)), ...npcsHere];
 }
 

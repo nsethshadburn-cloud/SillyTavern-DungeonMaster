@@ -49,6 +49,13 @@ function clampSize(n, fallback) {
  * Normalize a map from the DM: {width, height, rows:[top row ... bottom row]}.
  * Unknown characters become floor; short rows are padded; extra rows/cols are cut.
  */
+/** The map on screen: the battle map during a fight, otherwise the DM's scene map (if any). */
+export function activeMap(world) {
+    if (world?.combat?.map) return world.combat;
+    if (world?.sceneMap?.map) return world.sceneMap;
+    return null;
+}
+
 export function normalizeMap(raw) {
     const r = raw && typeof raw === 'object' ? raw : {};
     const rowsIn = Array.isArray(r.rows) ? r.rows.map(String) : [];
