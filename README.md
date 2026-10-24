@@ -66,6 +66,8 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **The DM is thinking.** While Claude works, a "The Dungeon Master is thinking…" bubble shows at the bottom of the chat.
 
+**Textured maps.** Maps are painted, not flat squares: stone slabs with cracks and moss, wood grain, grass tufts, cobbles, water with ripples, glowing lava, plus furniture and items (chests, barrels, tables, braziers, altars, coffins, bones, webs, campfires and more). Every tile is drawn with its own variation, so nothing visibly repeats, and dark places like crypts and caves are lit by their torches and braziers. Each map has a theme (crypt, cave, tavern, forest, castle...). Hover or tap a square to see what's there.
+
 **Maps outside fights.** In places where exact squares matter (a dungeon room, a trapped corridor, sneaking past guards) the DM can open a tile map, used sparingly; it closes when you leave. If a fight breaks out there, the room becomes the battle map.
 
 **NPCs stay around.** NPCs stay in the group chat until they die or go 100 turns without being spoken to or speaking; they can always be added back.

@@ -5,16 +5,45 @@
 export const MIN_SIZE = 4;
 export const MAX_SIZE = 16;
 
-/** Terrain characters Claude may use in map rows. */
+/** Terrain characters Claude may use in map rows. "." is the theme's own floor (stone, planks, grass...). */
 export const TERRAIN = Object.freeze({
-    '.': { name: 'floor', walk: true, cover: false },
-    '#': { name: 'wall', walk: false, cover: true },
-    '~': { name: 'water', walk: true, cover: false },
-    '^': { name: 'rough ground', walk: true, cover: false },
-    'T': { name: 'cover (tree, crate, pillar)', walk: false, cover: true },
-    '+': { name: 'door', walk: true, cover: false },
+    '.': { name: 'floor (the theme\'s usual floor)', walk: true, cover: false },
+    '_': { name: 'wooden planks', walk: true, cover: false },
+    '=': { name: 'flagstones or cobbles', walk: true, cover: false },
+    ',': { name: 'grass', walk: true, cover: false },
+    ':': { name: 'dirt or mud', walk: true, cover: false },
+    '^': { name: 'rubble or rough ground (difficult)', walk: true, cover: false },
+    '~': { name: 'shallow water (difficult)', walk: true, cover: false },
+    'w': { name: 'deep water', walk: false, cover: false },
+    'L': { name: 'lava', walk: false, cover: false },
     'o': { name: 'pit or hole', walk: false, cover: false },
+    '#': { name: 'wall', walk: false, cover: true },
+    'T': { name: 'tree outdoors, stone pillar indoors', walk: false, cover: true },
+    '+': { name: 'closed door', walk: true, cover: false },
+    '/': { name: 'open door', walk: true, cover: false },
+    'D': { name: 'locked door', walk: false, cover: true },
+    '<': { name: 'stairs up', walk: true, cover: false },
+    '>': { name: 'stairs down', walk: true, cover: false },
+    'b': { name: 'bridge or walkway', walk: true, cover: false },
 });
+
+/** Map themes: they set the palette and what "." and "#" look like. */
+export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'ship']);
+
+/** Things placed on top of the terrain: "blocks" = can't stand there; "light" = radius in squares. */
+export const PROPS = Object.freeze({
+    chest: { name: 'chest', blocks: true }, barrel: { name: 'barrel', blocks: true, cover: true }, crate: { name: 'crate', blocks: true, cover: true },
+    table: { name: 'table', blocks: true, cover: true }, chair: { name: 'chair' }, bed: { name: 'bed', blocks: true }, bookshelf: { name: 'bookshelf', blocks: true, cover: true },
+    torch: { name: 'wall torch', light: 3 }, brazier: { name: 'brazier', blocks: true, light: 4 }, campfire: { name: 'campfire', blocks: true, light: 4 }, candles: { name: 'candles', light: 2 },
+    altar: { name: 'altar', blocks: true, cover: true }, statue: { name: 'statue', blocks: true, cover: true }, pillar: { name: 'pillar', blocks: true, cover: true }, throne: { name: 'throne', blocks: true },
+    coffin: { name: 'coffin', blocks: true, cover: true }, well: { name: 'well', blocks: true }, fountain: { name: 'fountain', blocks: true }, cage: { name: 'cage', blocks: true },
+    anvil: { name: 'anvil', blocks: true }, cauldron: { name: 'cauldron', blocks: true }, lever: { name: 'lever' }, rug: { name: 'rug' }, banner: { name: 'banner' },
+    bones: { name: 'bones' }, skull: { name: 'skull' }, web: { name: 'spider web' }, pot: { name: 'pot or urn' }, sack: { name: 'sacks' }, trap: { name: 'trap (known)' },
+    boulder: { name: 'boulder', blocks: true, cover: true }, bush: { name: 'bush', cover: true }, log: { name: 'fallen log', cover: true }, stalagmite: { name: 'stalagmite', blocks: true, cover: true },
+    crystal: { name: 'crystals', blocks: true }, mushroom: { name: 'mushrooms' }, tent: { name: 'tent', blocks: true }, cart: { name: 'cart', blocks: true, cover: true },
+});
+
+export const PROPS_LEGEND = Object.keys(PROPS).join(', ');
 
 export const TERRAIN_LEGEND = Object.entries(TERRAIN).map(([ch, t]) => `${ch} ${t.name}`).join(', ');
 
@@ -56,6 +85,27 @@ export function activeMap(world) {
     return null;
 }
 
+/** The prop standing on a square, if any. */
+export function propAt(map, x, y) {
+    return (map.props || []).find(p => p.x === x && p.y === y) ?? null;
+}
+
+function normalizeProps(raw, w, h) {
+    const list = Array.isArray(raw) ? raw
+        : raw && typeof raw === 'object' ? Object.entries(raw).map(([at, type]) => ({ at, type }))
+            : [];
+    const out = [];
+    for (const item of list) {
+        const at = typeof item === 'string' ? item.split('@')[1] : item?.at;
+        const type = String(typeof item === 'string' ? item.split('@')[0] : item?.type ?? '').trim().toLowerCase();
+        const p = parseCoord(at, { w, h });
+        if (!p || !PROPS[type] || out.some(o => o.x === p.x && o.y === p.y)) continue;
+        out.push({ x: p.x, y: p.y, type, label: typeof item === 'object' && item.label ? String(item.label).slice(0, 40) : '' });
+        if (out.length >= 40) break;
+    }
+    return out;
+}
+
 export function normalizeMap(raw) {
     const r = raw && typeof raw === 'object' ? raw : {};
     const rowsIn = Array.isArray(r.rows) ? r.rows.map(String) : [];
@@ -71,7 +121,8 @@ export function normalizeMap(raw) {
         }
         rows.push(row);
     }
-    return { w, h, rows };
+    const theme = THEMES.includes(String(r.theme ?? '').toLowerCase()) ? String(r.theme).toLowerCase() : 'dungeon';
+    return { w, h, rows, theme, props: normalizeProps(r.props, w, h), seed: Number(r.seed) || Math.floor(Math.random() * 1e9) };
 }
 
 /** Terrain character at a square (rows are stored top to bottom). */
@@ -82,6 +133,7 @@ export function terrainAt(map, x, y) {
 
 export function isWalkable(map, x, y) {
     if (x < 0 || y < 0 || x >= map.w || y >= map.h) return false;
+    if (PROPS[propAt(map, x, y)?.type]?.blocks) return false;
     return TERRAIN[terrainAt(map, x, y)]?.walk !== false;
 }
 
@@ -154,5 +206,6 @@ export function renderMapText(map, positions = {}) {
         lines.push(`${String(y + 1).padStart(2, ' ')}  ${row.trimEnd()}`);
     }
     const tokens = Object.entries(positions).map(([n, c]) => `${n} ${c}`).join('; ');
-    return `${lines.join('\n')}\n(@ = someone stands there) Positions: ${tokens || 'none'}\nLegend: ${TERRAIN_LEGEND}.`;
+    const props = (map.props || []).map(p => `${p.type}${p.label ? ` (${p.label})` : ''} ${toCoord(p.x, p.y)}`).join(', ');
+    return `Theme: ${map.theme || 'dungeon'}\n${lines.join('\n')}\n(@ = someone stands there) Positions: ${tokens || 'none'}\nProps: ${props || 'none'}\nLegend: ${TERRAIN_LEGEND}.`;
 }

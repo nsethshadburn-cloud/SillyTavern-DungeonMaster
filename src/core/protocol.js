@@ -48,8 +48,13 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - When a fight starts, set start_combat with the enemies and a battle map (see below).
 - Every round YOU decide what each companion and enemy does, roll for them with npc_rolls, and narrate the results. Companions only get a brief with length "short" for a quick in-character line, never actions.
 - Track HP through state_changes (code applies attack damage from npc_rolls automatically). End with end_combat when it's over.
-- Battle map: a grid of rows of characters, top row first. Size it to the place (4 to 16 squares per side: a corridor might be 12x4, a clearing 12x10). Terrain: . floor, # wall, ~ water, ^ rough ground, T cover (tree, crate, pillar), + door, o pit. Squares are chess-style: columns a, b, c... left to right; rows 1, 2, 3... bottom to top. Example: "rows": ["##########", "#..T.....#", "#........#", "####+#####"].
-- Scene maps outside combat: send "scene_map" ({"title": "Flooded crypt", "width", "height", "rows"}) only where exact, tile-by-tile positions matter: a dungeon room, a trapped corridor, sneaking through a guarded area, a puzzle room. Be conservative: never for towns, roads, wilderness travel or social scenes. Send "scene_map": "close" when the party leaves that space. Use "positions" on it like in combat. If a fight starts in a mapped room, you may leave out start_combat.map and the room becomes the battle map.
+- Maps: a grid of rows of characters, top row first, plus a "theme" and "props". Size it to the place (4 to 16 squares per side: a corridor 12x4, a hall 14x10). Squares are chess-style: columns a, b, c... left to right; rows 1, 2, 3... bottom to top.
+  Terrain: . the theme's floor, _ wooden planks, = flagstones/cobbles, , grass, : dirt/mud, ^ rubble (difficult), ~ shallow water (difficult), w deep water, L lava, o pit, # wall, T tree outdoors / pillar indoors, + closed door, / open door, D locked door, < stairs up, > stairs down, b bridge.
+  Themes (set the look and darkness): dungeon, crypt, cave, mine, sewer, castle, temple, prison, tavern, library, house, town, forest, camp, swamp, snow, desert, ship.
+  Props (placed on a square, painted on the map): chest, barrel, crate, table, chair, bed, bookshelf, torch, brazier, campfire, candles, altar, statue, pillar, throne, coffin, well, fountain, cage, anvil, cauldron, lever, rug, banner, bones, skull, web, pot, sack, trap (only once it's been found), boulder, bush, log, stalagmite, crystal, mushroom, tent, cart. Format: "props": [{"at": "c4", "type": "chest", "label": "iron-bound chest"}]. Barrels, crates, tables, statues, pillars, boulders and the like block movement and give cover.
+  Build rooms that are fun to look at and to fight in: walls that enclose the space with doors where exits are; a floor that changes in patches (planks by the bar, flagstones near the hearth, a puddle, rubble where the ceiling fell); 4-10 props that tell the room's story (bones beside the cage, a knocked-over table, a cold campfire); at least one light source in dark places (torch, brazier, campfire, candles; lava glows); cover and chokepoints that make tactics matter; one standout feature (an altar, a chasm with a bridge, a flooded corner). Never a bare empty box.
+  Example: {"theme": "crypt", "width": 10, "height": 7, "rows": ["##########", "#..^...<.#", "#.T....T.#", "+........#", "#.T..o.T.#", "#....~~..#", "####/#####"], "props": [{"at": "e4", "type": "altar"}, {"at": "b6", "type": "brazier"}, {"at": "i6", "type": "brazier"}, {"at": "c2", "type": "coffin"}, {"at": "h2", "type": "bones"}, {"at": "f3", "type": "skull"}]}
+- Scene maps outside combat: send "scene_map" ({"title": "Flooded crypt", "theme", "width", "height", "rows", "props"}) only where exact, tile-by-tile positions matter: a dungeon room, a trapped corridor, sneaking through a guarded area, a puzzle room. Be conservative: never for towns, roads, wilderness travel or social scenes. Send "scene_map": "close" when the party leaves that space. Use "positions" on it like in combat. If a fight starts in a mapped room, you may leave out start_combat.map and the room becomes the battle map.
 - Give everyone a starting square in "positions" ({"Judy Hopps": "c2", "Bandit 1": "f7"}). Each combat round, return "positions" for anyone who moved. One square = 5 feet; typical movement is 6 squares. Use "gone" for anyone who leaves or dies.
 - The player's own moves are THEIR choice (e.g. "move to d4"). Put them exactly where they asked when it's possible. If their square and their action don't fit together (a sword swing from 4 squares away), don't silently relocate them: either move them only as far as their movement allows toward the target and say so plainly in "ooc", or ask them in "ooc" which they meant.
 
@@ -91,9 +96,9 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "tension": 0,
   "beats_completed": ["beat id from the plot, e.g. A1.2"],
   "state_changes": {"hp": {"Name": -3}, "conditions_add": {"Name": ["poisoned"]}, "conditions_remove": {"Name": ["poisoned"]}, "gold": 0, "items_add": ["item"], "items_remove": ["item"], "flags": {"key": "value"}},
-  "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1}], "map": {"width": 10, "height": 8, "rows": ["top row", "...", "bottom row"]}},
+  "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
   "positions": {"Name": "d4"},
-  "scene_map": {"title": "short name", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"]},
+  "scene_map": {"title": "short name", "theme": "crypt", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "e4", "type": "altar"}]},
   "npcs_dead": ["names of NPCs who died this turn"],
   "end_combat": false,
   "notes_add": "private DM note for yourself (secrets, foreshadowing, NPC motives)",
@@ -209,7 +214,7 @@ export function normalizeDmTurn(raw) {
         story_add: str(d.story_add),
         event: normalizeEventChoice(d.event),
         positions: normalizePositions(d.positions),
-        scene_map: d.scene_map === 'close' || d.scene_map === null ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String) } : null),
+        scene_map: d.scene_map === 'close' || d.scene_map === null ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), theme: str(d.scene_map.theme), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String), props: d.scene_map.props } : null),
         npcs_dead: arr(d.npcs_dead).map(String).filter(Boolean),
         standing_direction: str(d.standing_direction),
         objective: str(d.objective),
