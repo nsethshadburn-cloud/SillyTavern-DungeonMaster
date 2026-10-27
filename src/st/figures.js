@@ -77,7 +77,7 @@ async function describe(kind, avatar, name, text, c, custom = wishesFor(kind, av
         'Describe their map figure.',
     ].filter(Boolean).join('\n');
     const picture = await pictureOf(kind, avatar);
-    const reply = await callClaude({ system: SPRITE_INSTRUCTIONS, user, images: picture ? [picture] : [], task: 'sprite', label: `map figure for ${name}`, maxTokens: 500, effort: 'low' });
+    const reply = await callClaude({ system: SPRITE_INSTRUCTIONS, user, images: picture ? [picture] : [], task: 'sprite', label: `map figure for ${name}`, maxTokens: 3000, effort: 'low' });
     const json = extractJson(reply.text);
     if (!json) throw new Error(`Claude didn't describe ${name}'s figure.`);
     const look = normalizeLook(json);
