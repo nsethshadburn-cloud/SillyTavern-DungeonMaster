@@ -573,9 +573,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.start_combat && !world.combat) {
         const companions = meta.party.map(p => ({ name: p.name, stats: statsForName(p.name, meta) }));
         const combat = startCombat(world, t.start_combat, companions);
-        // A fight in a mapped room uses that room unless the DM sent its own battle map.
-        const roomMap = !t.start_combat.map && world.sceneMap?.map ? world.sceneMap : null;
-        const here = !t.start_combat.map && !roomMap ? currentPlace(c) : null;
+        // Inside a place the fight is always on the place's own map, where everyone already stands
+        // (never a new battle map). Elsewhere: a mapped room becomes the battle map unless the DM sent one.
+        const here = currentPlace(c);
+        const roomMap = !here && !t.start_combat.map && world.sceneMap?.map ? world.sceneMap : null;
         if (here) {
             const floorId = here.place.state.positions[meta.persona.name]?.floor ?? here.place.state.floor;
             combat.map = JSON.parse(JSON.stringify(floorById(here.place, floorId).map));
