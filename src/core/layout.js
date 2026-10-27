@@ -589,12 +589,14 @@ function tryBuild(plan, seed, shrink) {
         place.stairs.push({ id: `S${++stairN}`, a: { floor: a.floor, x: pa[0], y: pa[1], room: a.id }, b: { floor: b.floor, x: pb[0], y: pb[1], room: b.id } });
     }
     // Ways out: a door in an outside wall of each exit room; windows on outside walls of lit rooms above ground.
+    const outsideOf = {};
     for (const room of Object.values(place.rooms)) {
         const c = chars[room.floor], rc = room.rect;
         const outer = [];
         for (let x = rc.x; x < rc.x + rc.w; x++) { outer.push([x, rc.y - 1, 0, -1], [x, rc.y + rc.h, 0, 1]); }
         for (let y = rc.y; y < rc.y + rc.h; y++) { outer.push([rc.x - 1, y, -1, 0], [rc.x + rc.w, y, 1, 0]); }
         const outside = outer.filter(([x, y, dx, dy]) => c[y]?.[x] === '#' && (c[y + dy]?.[x + dx] ?? '%') === '%' && !doorAt.has(`${room.floor}:${x},${y}`));
+        outsideOf[room.id] = outside;
         if (room.exit && outside.length) {
             const [x, y] = outside[Math.floor(outside.length / 2)];
             const d = addDoor(room.floor, x, y, 'door', [room.id, null], { exit: true });
@@ -606,8 +608,17 @@ function tryBuild(plan, seed, shrink) {
             outside.forEach(([x, y], i) => { if (i % 3 === 1 && c[y][x] === '#' && !doorAt.has(`${room.floor}:${x},${y}`)) c[y][x] = bars ? 'H' : '|'; });
         }
     }
-    // Every room marked as a way out must really have a door to the outside; otherwise try another layout.
-    if (plan.rooms.some(rm => rm.exit && place.rooms[rm.id] && !place.exits.some(e => place.doors[e.door]?.rooms.includes(rm.id)))) return null;
+    // An exit room walled in by other rooms on this layout isn't a way out here. The place still needs
+    // one: if no exit room reached the outside, the lowest room above ground with an outside wall gets the door.
+    for (const rm of Object.values(place.rooms)) if (rm.exit && !place.exits.some(e => place.doors[e.door]?.rooms.includes(rm.id))) rm.exit = false;
+    if (!place.exits.length) {
+        const pick = Object.values(place.rooms).filter(rm => outsideOf[rm.id]?.length).sort((a, b) => Math.abs(levelOf(a.floor)) - Math.abs(levelOf(b.floor)))[0];
+        if (!pick) return null;
+        const [x, y] = outsideOf[pick.id][Math.floor(outsideOf[pick.id].length / 2)];
+        const d = addDoor(pick.floor, x, y, 'door', [pick.id, null], { exit: true });
+        place.exits.push({ floor: pick.floor, x, y, door: d.id });
+        pick.exit = true;
+    }
     // Keep the squares in front of every door (the way out included), every staircase and every window clear.
     for (const d of Object.values(place.doors)) for (const [dx, dy] of DIRS) reserve(d.floor, d.x + dx, d.y + dy);
     for (const f of Object.keys(chars)) chars[f].forEach((row, y) => row.forEach((ch, x) => { if (ch === '|' || ch === 'H') for (const [dx, dy] of DIRS) reserve(f, x + dx, y + dy); }));
