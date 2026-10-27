@@ -44,36 +44,37 @@ export const HEADWEAR = ['none', 'hood', 'helmet', 'hat', 'crown', 'bandana'];
 export const WEAPONS = ['none', 'sword', 'dagger', 'axe', 'mace', 'club', 'spear', 'staff', 'bow', 'claws'];
 export const HAIRSTYLES = ['short', 'long', 'ponytail', 'bun', 'mohawk', 'none'];
 export const BUILDS = ['small', 'medium', 'large'];
+export const FACIAL_HAIR = ['none', 'stubble', 'mustache', 'beard'];
 
 /** The NPC and monster library: a base look, plus color variants so several can share a map. */
 export const LIBRARY = {
     human_guard: { species: 'human', outfit: 'armor', head: 'helmet', weapon: 'spear', outfitColors: ['#4a5a7a', '#7a2a2a', '#3a5a3a', '#5a4a6a'] },
     human_knight: { species: 'human', outfit: 'armor', head: 'helmet', weapon: 'sword', outfitColors: ['#c9a227', '#7a2a2a', '#2a4a7a'] },
     human_noble: { species: 'human', outfit: 'vest', head: 'none', weapon: 'none', outfitColors: ['#5a2a6a', '#2a4a6a', '#6a2a2a', '#2a5a4a'], accentColors: ['#c9a227'] },
-    human_lady: { species: 'human', outfit: 'dress', head: 'none', weapon: 'none', hair: 'long', outfitColors: ['#8a2a4a', '#2a4a7a', '#4a6a3a', '#6a3a7a'], accentColors: ['#e8d9a8'] },
-    human_servant: { species: 'human', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#3b3836', '#5a5048', '#2a2a3a'], accentColors: ['#f2efe8'] },
-    human_peasant: { species: 'human', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#7a6a4a', '#5a6a4a', '#7a5a3a', '#6a5a5a'] },
-    human_merchant: { species: 'human', outfit: 'vest', head: 'hat', weapon: 'none', outfitColors: ['#2a5a4a', '#6a4a2a', '#4a3a6a'], accentColors: ['#c9a227'] },
+    human_lady: { species: 'human', female: true, outfit: 'dress', head: 'none', weapon: 'none', hair: 'long', outfitColors: ['#8a2a4a', '#2a4a7a', '#4a6a3a', '#6a3a7a'], accentColors: ['#e8d9a8'] },
+    human_servant: { species: 'human', female: 'some', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#3b3836', '#5a5048', '#2a2a3a'], accentColors: ['#f2efe8'] },
+    human_peasant: { species: 'human', female: 'some', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#7a6a4a', '#5a6a4a', '#7a5a3a', '#6a5a5a'] },
+    human_merchant: { species: 'human', female: 'some', outfit: 'vest', head: 'hat', weapon: 'none', outfitColors: ['#2a5a4a', '#6a4a2a', '#4a3a6a'], accentColors: ['#c9a227'] },
     human_thug: { species: 'human', outfit: 'leather', head: 'bandana', weapon: 'club', outfitColors: ['#5a3a20', '#3b3330', '#4a4030'], accentColors: ['#7a2a2a', '#2a3a5a'] },
-    human_bandit: { species: 'human', outfit: 'leather', head: 'hood', weapon: 'dagger', outfitColors: ['#3a4a2a', '#4a3a2a', '#2a2a2a'] },
-    human_archer: { species: 'human', outfit: 'leather', head: 'hood', weapon: 'bow', outfitColors: ['#3a5a2a', '#5a4a2a'] },
+    human_bandit: { species: 'human', female: 'some', outfit: 'leather', head: 'hood', weapon: 'dagger', outfitColors: ['#3a4a2a', '#4a3a2a', '#2a2a2a'] },
+    human_archer: { species: 'human', female: 'some', outfit: 'leather', head: 'hood', weapon: 'bow', outfitColors: ['#3a5a2a', '#5a4a2a'] },
     human_cultist: { species: 'human', outfit: 'robe', head: 'hood', weapon: 'dagger', outfitColors: ['#5a1a1a', '#2a1a2a', '#1a1a1a'], accentColors: ['#c9a227', '#9a2a2a'] },
-    human_priest: { species: 'human', outfit: 'robe', head: 'none', weapon: 'mace', outfitColors: ['#e8e2d6', '#d8c8a8'], accentColors: ['#c9a227'] },
-    human_mage: { species: 'human', outfit: 'robe', head: 'hat', weapon: 'staff', outfitColors: ['#2a3a7a', '#5a2a7a', '#2a5a5a'], accentColors: ['#c9a227'] },
-    human_child: { species: 'human', build: 'small', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#7a5a3a', '#4a6a8a', '#8a4a4a'] },
+    human_priest: { species: 'human', female: 'some', outfit: 'robe', head: 'none', weapon: 'mace', outfitColors: ['#e8e2d6', '#d8c8a8'], accentColors: ['#c9a227'] },
+    human_mage: { species: 'human', female: 'some', outfit: 'robe', head: 'hat', weapon: 'staff', outfitColors: ['#2a3a7a', '#5a2a7a', '#2a5a5a'], accentColors: ['#c9a227'] },
+    human_child: { species: 'human', female: 'some', young: true, build: 'small', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#7a5a3a', '#4a6a8a', '#8a4a4a'] },
     human_butler: { species: 'human', outfit: 'vest', head: 'none', weapon: 'none', hair: 'short', outfitColors: ['#1f1f24'], accentColors: ['#f2efe8'] },
     human_brute: { species: 'human', build: 'large', outfit: 'rags', head: 'none', weapon: 'axe', outfitColors: ['#5a4a3a', '#4a3a30'] },
-    elf: { species: 'elf', outfit: 'leather', head: 'none', weapon: 'bow', outfitColors: ['#3a6a3a', '#5a6a3a', '#3a4a6a'] },
+    elf: { species: 'elf', female: 'some', outfit: 'leather', head: 'none', weapon: 'bow', outfitColors: ['#3a6a3a', '#5a6a3a', '#3a4a6a'] },
     dwarf: { species: 'dwarf', outfit: 'armor', head: 'helmet', weapon: 'axe', outfitColors: ['#7a5a3a', '#5a5a6a'] },
-    halfling: { species: 'halfling', outfit: 'vest', head: 'none', weapon: 'dagger', outfitColors: ['#5a7a3a', '#7a5a2a', '#3a5a7a'] },
+    halfling: { species: 'halfling', female: 'some', outfit: 'vest', head: 'none', weapon: 'dagger', outfitColors: ['#5a7a3a', '#7a5a2a', '#3a5a7a'] },
     orc: { species: 'orc', outfit: 'leather', head: 'none', weapon: 'axe', outfitColors: ['#4a3a2a', '#3b3330', '#5a3a2a'] },
     goblin: { species: 'goblin', outfit: 'rags', head: 'none', weapon: 'dagger', outfitColors: ['#5a4a3a', '#4a4a2a', '#6a3a2a'] },
-    tiefling: { species: 'tiefling', outfit: 'robe', head: 'none', weapon: 'staff', outfitColors: ['#2a1a2a', '#3a2a4a', '#4a1a1a'] },
-    rabbitfolk: { species: 'rabbit', outfit: 'leather', head: 'none', weapon: 'dagger', outfitColors: ['#5a3a20', '#3a4a5a', '#5a5a3a'] },
-    catfolk: { species: 'cat', outfit: 'vest', head: 'none', weapon: 'dagger', outfitColors: ['#6a2a2a', '#2a4a5a', '#4a3a2a'] },
-    foxfolk: { species: 'fox', outfit: 'tunic', head: 'none', weapon: 'sword', outfitColors: ['#2a4a3a', '#4a2a2a', '#3a3a5a'] },
+    tiefling: { species: 'tiefling', female: 'some', outfit: 'robe', head: 'none', weapon: 'staff', outfitColors: ['#2a1a2a', '#3a2a4a', '#4a1a1a'] },
+    rabbitfolk: { species: 'rabbit', female: 'some', outfit: 'leather', head: 'none', weapon: 'dagger', outfitColors: ['#5a3a20', '#3a4a5a', '#5a5a3a'] },
+    catfolk: { species: 'cat', female: 'some', outfit: 'vest', head: 'none', weapon: 'dagger', outfitColors: ['#6a2a2a', '#2a4a5a', '#4a3a2a'] },
+    foxfolk: { species: 'fox', female: 'some', outfit: 'tunic', head: 'none', weapon: 'sword', outfitColors: ['#2a4a3a', '#4a2a2a', '#3a3a5a'] },
     wolffolk: { species: 'wolf', outfit: 'leather', head: 'none', weapon: 'axe', outfitColors: ['#3b3330', '#4a3a2a'] },
-    mousefolk: { species: 'mouse', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#5a6a4a', '#7a5a3a'] },
+    mousefolk: { species: 'mouse', female: 'some', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#5a6a4a', '#7a5a3a'] },
     lizardfolk: { species: 'lizard', outfit: 'leather', head: 'none', weapon: 'spear', outfitColors: ['#4a3a20', '#3a3a2a'] },
     skeleton: { species: 'skeleton', outfit: 'none', head: 'none', weapon: 'sword', outfitColors: ['#e8e2cc'] },
     zombie: { species: 'zombie', outfit: 'rags', head: 'none', weapon: 'none', outfitColors: ['#4a4a3a', '#3a3a4a', '#5a3a3a'] },
@@ -92,7 +93,7 @@ export function presetFor(text) {
         [/skeleton|bones\b/, 'skeleton'], [/zombie|ghoul|corpse|undead/, 'zombie'], [/ghost|spirit|specter|spectre|phantom|wraith|apparition/, 'ghost'],
         [/harengon|rabbit|bunny|hare\b/, 'rabbitfolk'], [/tabaxi|cat ?folk|\bcat\b/, 'catfolk'], [/fox/, 'foxfolk'], [/mouse|mice/, 'mousefolk'], [/lizard|kobold|dragonborn/, 'lizardfolk'],
         [/\borc|half-orc/, 'orc'], [/goblin|hobgoblin/, 'goblin'], [/tiefling|devil|demon/, 'tiefling'], [/\bdwarf|dwarven/, 'dwarf'], [/halfling|gnome/, 'halfling'], [/\belf|elven|drow/, 'elf'],
-        [/knight|captain|commander|paladin/, 'human_knight'], [/guard|soldier|watch|sentry|warden|jailer|turnkey/, 'human_guard'], [/butler|valet|steward/, 'human_butler'],
+        [/knight|captain|commander|paladin/, 'human_knight'], [/\b(guards?|soldiers?|watch(man|men)?|sentry|sentries|warden|jailer|turnkey)\b/, 'human_guard'], [/butler|valet|steward/, 'human_butler'],
         [/maid|servant|cook|housekeeper|footman/, 'human_servant'], [/lady|queen|princess|duchess|countess|baroness|madam/, 'human_lady'],
         [/noble|lord|king|prince|duke|count|baron|aristocrat|magistrate/, 'human_noble'], [/cultist|acolyte|zealot/, 'human_cultist'], [/priest|cleric|monk|nun|bishop/, 'human_priest'],
         [/mage|wizard|sorcer|warlock|witch|alchemist/, 'human_mage'], [/archer|hunter|ranger|scout/, 'human_archer'], [/bandit|thief|rogue|cutpurse|assassin/, 'human_bandit'],
@@ -108,8 +109,21 @@ function hashText(s) {
     return h >>> 0;
 }
 
-/** A library figure in one of its color variants (the same name always gets the same one). */
-export function libraryLook(key, variant = 0) {
+const FEMALE_WORDS = /\b(she|her|woman|women|lady|ladies|girl|maid|maiden|wife|mother|sister|daughter|aunt|grandmother|queen|princess|duchess|countess|baroness|madam|mistress|widow|nun|priestess|sorceress|witch|matron|crone|hag|barmaid|waitress|heiress|abbess)\b/;
+const MALE_WORDS = /\b(he|him|his|man|men|lord|boy|husband|father|brother|son|uncle|grandfather|king|prince|duke|count|baron|sir|monk|butler|footman|valet|barman|widower|abbot)\b/;
+
+/** 'female' or 'male' when the words say so ("the cook, a stout old woman"), else ''. */
+export function sexFromText(text) {
+    const t = String(text || '').toLowerCase();
+    const f = t.match(FEMALE_WORDS)?.index ?? Infinity, m = t.match(MALE_WORDS)?.index ?? Infinity;
+    return f === m ? '' : f < m ? 'female' : 'male';
+}
+
+/**
+ * A library figure in one of its color variants (the same name always gets the same one).
+ * sex: 'female' / 'male' when known; otherwise the library decides (and "either" figures alternate).
+ */
+export function libraryLook(key, variant = 0, sex = '') {
     const base = LIBRARY[key] ?? LIBRARY.human_peasant;
     const n = Math.abs(Math.round(Number(variant) || 0));
     if (base.beast) {
@@ -117,11 +131,15 @@ export function libraryLook(key, variant = 0) {
         return { beast: base.beast, fur: b.furs[n % b.furs.length] };
     }
     const sp = SPECIES[base.species] ?? SPECIES.human;
+    const female = sex === 'female' || (sex !== 'male' && (base.female === true || (base.female === 'some' && n % 2 === 1)));
+    const plain = base.young || sp.fur || sp.undead || sp.beard;
     return normalizeLook({
         species: base.species,
         build: base.build ?? sp.build ?? 'medium',
         outfit: base.outfit, head: base.head, weapon: base.weapon,
-        hair: base.hair ?? HAIRSTYLES[(n * 3 + 1) % 4],
+        female, young: base.young,
+        facialHair: female || plain ? 'none' : ['none', 'stubble', 'beard', 'mustache', 'none'][(n * 2 + 1) % 5],
+        hair: base.hair ?? (female ? ['long', 'ponytail', 'bun', 'long'][(n * 3 + 1) % 4] : ['short', 'short', 'none', 'long', 'mohawk'][(n * 3 + 1) % 5]),
         skin: sp.skins[(n * 7 + 2) % sp.skins.length],
         hairColor: sp.hairs[(n * 5 + 1) % sp.hairs.length],
         outfitColor: base.outfitColors[n % base.outfitColors.length],
@@ -130,8 +148,9 @@ export function libraryLook(key, variant = 0) {
 }
 
 /** The look for an NPC by name and description, with a variant that's stable for that name. */
-export function lookForNpc(name, description = '', key = '') {
-    return libraryLook(LIBRARY[key] ? key : presetFor(`${name} ${description}`), hashText(name) % 7);
+export function lookForNpc(name, description = '', key = '', gender = '') {
+    const sex = gender === 'male' || gender === 'female' ? gender : sexFromText(`${name} ${description}`);
+    return libraryLook(LIBRARY[key] ? key : presetFor(`${name} ${description}`), hashText(name) % 7, sex);
 }
 
 const hex = v => (/^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim().toLowerCase() : null);
@@ -155,11 +174,19 @@ export function normalizeLook(raw) {
         accentColor: hex(d.accentColor) ?? '#c9a227',
         head: pickIn(d.head, HEADWEAR, 'none'),
         weapon: pickIn(d.weapon, WEAPONS, 'none'),
-        female: d.female === true,
+        female: d.female === true || d.female === 'true',
+        facialHair: d.female === true || d.female === 'true' ? 'none' : pickIn(d.facialHair, FACIAL_HAIR, 'none'),
+        young: d.young === true,
     };
 }
 
 // ---------- colors ----------
+
+function mix(a, b, f) {
+    const ca = parseInt(a.slice(1), 16), cb = parseInt(b.slice(1), 16);
+    const ch = [16, 8, 0].map(sh => Math.round(((ca >> sh) & 255) * (1 - f) + ((cb >> sh) & 255) * f));
+    return `#${ch.map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
 
 function shade(hexColor, f) {
     const n = parseInt(hexColor.slice(1), 16);
@@ -168,14 +195,15 @@ function shade(hexColor, f) {
 }
 
 // Palette slots.
-const O = 1, SK = 2, SKD = 3, HR = 4, HRD = 5, OF = 6, OFD = 7, AC = 8, EYE = 9, MET = 10, METD = 11, WOOD = 12, WH = 13, PINK = 14, BOOT = 15, BLK = 16, GOLD = 17, HORN = 18, SKL = 19;
+const O = 1, SK = 2, SKD = 3, HR = 4, HRD = 5, OF = 6, OFD = 7, AC = 8, EYE = 9, MET = 10, METD = 11, WOOD = 12, WH = 13, PINK = 14, BOOT = 15, BLK = 16, GOLD = 17, HORN = 18, SKL = 19, STB = 20;
 
 function paletteFor(look) {
-    const p = new Array(20).fill(null);
+    const p = new Array(21).fill(null);
     const skin = look.skin ?? look.fur ?? '#9aa0a8';
     p[O] = '#17131a';
     p[SK] = skin; p[SKD] = shade(skin, -0.22); p[SKL] = shade(skin, 0.28);
     p[HR] = look.hairColor ?? shade(skin, -0.15); p[HRD] = shade(p[HR], -0.25);
+    p[STB] = mix(shade(skin, -0.12), p[HRD], 0.45);
     p[OF] = look.outfitColor ?? '#5a4a3a'; p[OFD] = shade(p[OF], -0.3);
     p[AC] = look.accentColor ?? '#c9a227';
     p[EYE] = look.eyes ?? '#2a2030';
@@ -279,6 +307,8 @@ function humanoid(look, pose) {
     const hl = tl - 1 + lean + (large ? 0 : 0), ht = tt - headH;
     const robe = ['robe', 'dress'].includes(look.outfit) || ghost;
     const fur = sp.fur;
+    // Men get a heavier, sterner look (brow, nose, jaw, shoulders); women and children keep the soft face.
+    const masc = !look.female && !look.young && !ghost && !skeleton;
 
     // Tail (behind everything).
     if (sp.tail === 'puff') px.rect(tl - 2 + lean, hip - 2 + bob, 2, 2, WH);
@@ -325,6 +355,13 @@ function humanoid(look, pose) {
             for (let y = hip; y <= feet; y++) { const w = torsoW + 1 + Math.floor((y - hip) / 2); px.rect(12 - Math.ceil(w / 2) + lean, y, w, 1, y === feet ? OFD : OF); }
             px.rect(12 - 1 + (pose.front ?? 0) / 2, feet, 2, 1, BOOT);
         }
+        // Men: broad, square shoulders (a pixel wider each side, tapering to the waist).
+        if (masc) {
+            const top = look.outfit === 'none' ? SK : look.outfit === 'armor' ? MET : OF, side = look.outfit === 'none' ? SKD : look.outfit === 'armor' ? METD : OFD;
+            px.rect(tl - 1 + lean, tt, 1, 2, side);
+            px.rect(tl + torsoW + lean, tt, 1, 2, top);
+            if (look.outfit === 'armor') { px.set(tl - 1 + lean, tt, MET); px.set(tl + torsoW + lean, tt, WH); }
+        }
     }
 
     // Front leg.
@@ -346,11 +383,29 @@ function humanoid(look, pose) {
     if (sp.snout === 'small') { H(8, 4, SK); H(8, 5, SKL); H(8, 4, PINK); }
     else if (sp.snout === 'long') { px.rect(hl + 8, ht + 4, 2, 2, SK); px.rect(hl + 8, ht + 5, 2, 1, SKL); H(9, 4, BLK); }
     if (sp.tusks) { H(6, headH - 2, WH); H(4, headH - 2, WH); }
-    // Eyes (closed for a blink).
+    // Men: a square jaw, a nose, a set mouth.
+    if (masc) {
+        H(7, headH - 1, SK); H(6, headH - 1, SKD);
+        if (!sp.snout) { H(8, 4, SK); H(8, 5, SKD); }
+        if (!sp.tusks && !zombie) { H(5, 6, SKD); H(6, 6, SKD); }
+    }
+    // Eyes (closed for a blink). Men: a heavy brow over small dark eyes.
     if (skeleton) { px.rect(hl + 3, ht + 3, 2, 2, BLK); px.rect(hl + 6, ht + 3, 2, 2, BLK); H(5, 6, BLK); }
+    else if (masc) {
+        const brow = fur ? SKD : HRD;
+        H(2, 3, brow); H(3, 3, brow); H(5, 3, brow); H(6, 3, brow); H(7, 3, brow);
+        if (pose.blink) { H(3, 4, BLK); H(6, 4, BLK); } else { H(3, 4, EYE); H(6, 4, EYE); H(4, 4, WH); H(7, 4, WH); }
+    }
     else if (pose.blink) { H(3, 4, BLK); H(4, 4, BLK); H(6, 4, BLK); }
     else { H(3, 3, WH); H(3, 4, EYE); H(6, 3, WH); H(6, 4, EYE); if (ghost) { H(3, 4, BLK); H(6, 4, BLK); } }
     if (zombie) { H(2, 6, SKD); H(5, 6, BLK); }
+    // Facial hair.
+    if (masc && !fur && !sp.beard) {
+        const fh = look.facialHair;
+        if (fh === 'stubble') { px.rect(hl + 2, ht + headH - 2, 6, 2, STB); H(2, headH - 3, STB); H(5, 6, SKD); H(6, 6, SKD); }
+        if (fh === 'mustache') { H(4, 5, HR); H(5, 5, HR); H(6, 5, HR); H(7, 5, HR); H(4, 6, HRD); H(5, 6, HRD); H(6, 6, HRD); H(7, 6, HRD); }
+        if (fh === 'beard') { px.rect(hl + 2, ht + headH - 3, 6, 3, HR); px.rect(hl + 3, ht + headH, 4, 1, HRD); H(5, 5, HR); H(6, 5, HR); H(7, 5, HR); H(5, 6, SKD); H(6, 6, SKD); }
+    }
     // Hair.
     if (!fur && !skeleton && !ghost && look.head !== 'hood' && look.head !== 'helmet') {
         const st = look.hair;
@@ -527,7 +582,8 @@ Return ONE JSON object and nothing else:
 {
   "species": "${Object.keys(SPECIES).join('|')}",
   "build": "small|medium|large",
-  "female": true,
+  "female": "true for a woman or girl, false for a man or boy (men are drawn with a heavier brow, jaw and shoulders)",
+  "facialHair": "${FACIAL_HAIR.join('|')} (men only)",
   "skin": "#hex (skin, or main fur color for furry folk)",
   "hair": "${HAIRSTYLES.join('|')} (furry folk and the bald: none)",
   "hairColor": "#hex",

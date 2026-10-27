@@ -87,6 +87,7 @@ export function renderScreen() {
     <div class="menu_button" id="dm-scr-recap" title="Previously on…">Recap</div>
     <div class="menu_button" id="dm-scr-resync" title="After deleting or editing messages: Claude re-reads the chat and fixes what it has logged">Fix mismatch</div>
     ${w.combat || w.sceneMap ? '<div class="menu_button" id="dm-scr-map" title="Map">Map</div>' : ''}
+    <div class="menu_button" id="dm-scr-figures" title="See and redraw your party's little map figures">Map figures</div>
     <div class="menu_button" id="dm-scr-pause">${m.paused ? 'Resume' : 'Pause'}</div>
   </div>
   ${m.pendingRoll ? `<div class="dm-scr-note">Waiting for your roll: <b>${escapeHtml(m.pendingRoll.skill)}</b> <span class="menu_button" id="dm-scr-cancel-roll">Cancel</span></div>` : ''}
@@ -120,6 +121,7 @@ export function renderScreen() {
         if (q) askDmNow(String(q));
     });
     panel.querySelector('#dm-scr-force').addEventListener('click', () => runTurn({ force: 'manual' }));
+    panel.querySelector('#dm-scr-figures')?.addEventListener('click', () => import('./figures-window.js').then(m => m.openFiguresWindow()));
     panel.querySelector('#dm-scr-recap').addEventListener('click', async () => {
         try {
             const { withDmThinking } = await import('./thinking.js');

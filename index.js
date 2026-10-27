@@ -21,7 +21,8 @@ import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
 import { forgetPlaces, loadCurrentPlace, requestBuild } from './src/st/atlas.js';
 import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
-import { ensureFigures, redoFigure } from './src/st/figures.js';
+import { ensureFigures, redoFigure, partyFigures } from './src/st/figures.js';
+import { openFiguresWindow } from './src/ui/figures-window.js';
 
 let pendingUserMessage = false;
 const BREAK_HOURS = 6;
@@ -122,6 +123,7 @@ function addWandMenu() {
         ['dm-menu-step-in', 'fa-hat-wizard', 'DM: step in now', () => runTurn({ force: 'manual' })],
         ['dm-menu-map', 'fa-chess-board', 'Map', () => toggleMap()],
         ['dm-menu-resync', 'fa-rotate', 'DM: fix mismatch with chat', () => runResync()],
+        ['dm-menu-figures', 'fa-person-rays', 'Map figures', () => openFiguresWindow()],
     ];
     for (const [id, icon, label, fn] of items) {
         const el = document.createElement('div');
@@ -199,14 +201,29 @@ function registerSlashCommands() {
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmfigure',
-        helpString: 'Redraw the little map figure for you or a companion, e.g. /dmfigure Judy',
-        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'name', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
+        helpString: 'Redraw the little map figure for you or a companion, with your own instructions if you like: /dmfigure Judy give her a red cloak and a bow',
+        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'name, then your instructions (optional)', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
         callback: async (_args, text) => {
+            const raw = String(text || '').trim();
+            // The longest party name (or first name) the text starts with; the rest is the instructions.
+            const names = partyFigures().flatMap(f => [f.name, f.name.split(/\s+/)[0]]).sort((a, b) => b.length - a.length);
+            const hit = names.find(n => raw.toLowerCase().startsWith(n.toLowerCase()));
+            const custom = hit ? raw.slice(hit.length).replace(/^[\s:,-]+/, '') : '';
             try {
-                await redoFigure(String(text || '').trim());
+                toastr.info('Drawing the map figure…', 'Dungeon Master', { timeOut: 2500 });
+                await redoFigure(hit ?? raw, custom || null);
+                toastr.success('New map figure ready. /dmfigures shows it.', 'Dungeon Master', { timeOut: 3000 });
             } catch (error) {
                 toastr.error(String(error?.message || error), 'Dungeon Master');
             }
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmfigures',
+        helpString: 'See your party\'s little map figures (animated) and redraw them with your own instructions.',
+        callback: async () => {
+            openFiguresWindow();
             return '';
         },
     }));
@@ -246,7 +263,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.15.0-beta';
+export const LOADED_VERSION = '0.15.1-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

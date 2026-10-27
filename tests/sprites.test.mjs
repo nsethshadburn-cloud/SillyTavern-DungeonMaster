@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildSprite, normalizeLook, libraryLook, lookForNpc, presetFor, LIBRARY, SPECIES, SIZE, ANIM_TIMING, SPRITE_INSTRUCTIONS } from '../src/core/sprites.js';
+import { buildSprite, normalizeLook, libraryLook, lookForNpc, presetFor, sexFromText, LIBRARY, SPECIES, SIZE, ANIM_TIMING, SPRITE_INSTRUCTIONS } from '../src/core/sprites.js';
 
 const pixels = frame => frame.reduce((n, c) => n + (c ? 1 : 0), 0);
 
@@ -61,8 +61,30 @@ test('NPCs get a fitting library figure, the same look every time, and look diff
     assert.equal(presetFor('Bandit 2'), 'human_bandit');
     assert.equal(presetFor('wolf'), 'wolf');
     assert.equal(presetFor('somebody'), 'human_peasant');
+    assert.notEqual(presetFor('a gentle forest guardian'), 'human_guard', 'guardian is not a guard');
+    assert.equal(presetFor('a city watch guard'), 'human_guard');
     assert.deepEqual(lookForNpc('Guard Hal', 'a watch guard'), lookForNpc('Guard Hal', 'a watch guard'), 'stable');
     const guards = ['Guard 1', 'Guard 2', 'Guard 3', 'Guard 4'].map(n => JSON.stringify(lookForNpc(n, 'guard')));
     assert.ok(new Set(guards).size >= 2, 'several guards on one map are not all identical');
     assert.equal(lookForNpc('Anyone', '', 'giant_spider').beast, 'spider', 'the DM\'s pick wins');
+});
+
+test('men and women are easy to tell apart; the DM, the words or the library decide which', () => {
+    const base = { species: 'human', hair: 'short', outfit: 'tunic', weapon: 'sword' };
+    const man = buildSprite(normalizeLook({ ...base, female: false })).anims.idle[0];
+    const woman = buildSprite(normalizeLook({ ...base, female: true })).anims.idle[0];
+    assert.ok(man.filter((c, i) => c !== woman[i]).length >= 10, 'brow, nose, jaw and shoulders differ');
+    assert.equal(normalizeLook({ female: 'true', facialHair: 'beard' }).facialHair, 'none', 'no beards on women');
+    assert.equal(normalizeLook({ facialHair: 'beard' }).facialHair, 'beard');
+    assert.equal(sexFromText('Old Martha, the cook, a stout woman'), 'female');
+    assert.equal(sexFromText('a gruff man who keeps the gate'), 'male');
+    assert.equal(sexFromText('somebody'), '');
+    assert.equal(libraryLook('human_lady', 0).female, true);
+    assert.equal(libraryLook('human_guard', 1).female, false);
+    assert.equal(lookForNpc('Martha', 'the cook', '', 'female').female, true, "the DM's gender wins");
+    assert.equal(lookForNpc('Martha', 'the cook, an old woman').female, true);
+    const peasants = [0, 1, 2, 3].map(v => libraryLook('human_peasant', v).female);
+    assert.ok(peasants.includes(true) && peasants.includes(false), 'crowds are mixed');
+    assert.equal(libraryLook('human_child', 0).young, true, 'children keep the soft face');
+    assert.match(SPRITE_INSTRUCTIONS, /facialHair/);
 });
