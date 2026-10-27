@@ -225,7 +225,7 @@ export function normalizeDmTurn(raw) {
         story_add: str(d.story_add),
         event: normalizeEventChoice(d.event),
         positions: normalizePositions(d.positions),
-        scene_map: d.scene_map === 'close' || d.scene_map === null ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), theme: str(d.scene_map.theme), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String), props: d.scene_map.props } : null),
+        scene_map: d.scene_map === 'close' ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), theme: str(d.scene_map.theme), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String), props: d.scene_map.props } : null),
         npcs_dead: arr(d.npcs_dead).map(String).filter(Boolean),
         standing_direction: str(d.standing_direction),
         objective: str(d.objective),

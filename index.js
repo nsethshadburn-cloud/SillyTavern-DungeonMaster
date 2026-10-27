@@ -9,7 +9,7 @@ import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, s
 import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig } from './src/st/voices.js';
 import { toggleMap, refreshMap, closeMap } from './src/ui/map.js';
 import { postDiceCard } from './src/st/messages.js';
-import { forgetAll } from './src/st/storage.js';
+import { forgetAll, flushWrites } from './src/st/storage.js';
 import { recap } from './src/st/dm.js';
 import { mountSettingsPanel, renderSpend, refreshProfileSelects } from './src/ui/settings-panel.js';
 import { mountPersonaButton } from './src/ui/persona.js';
@@ -27,6 +27,12 @@ async function onChatChanged() {
     pendingUserMessage = false;
     stopVoices();
     closeMap();
+    // Finish the previous campaign's queued saves before its files are reloaded or dropped.
+    try {
+        await flushWrites();
+    } catch (error) {
+        console.error('[Dungeon Master] Saving before the chat change failed', error);
+    }
     forgetAll();
     clearActive();
     clearPrompts();
@@ -199,7 +205,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.10.0-beta';
+export const LOADED_VERSION = '0.10.1-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

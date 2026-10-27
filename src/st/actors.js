@@ -12,7 +12,7 @@ import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
 import { addNpcs, isAway } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
-import { trimToTokens, stripSpeakerPrefix, matchName } from '../core/text.js';
+import { trimToTokens, stripSpeakerPrefix, matchName, nameKey } from '../core/text.js';
 
 const KEY_NOTE = 'DM_NOTE';
 const LEGACY_KEYS = ['DM_DIRECTION', 'DM_STANDING'];
@@ -163,13 +163,15 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
     const c = campaign();
     if (!c) return null;
     const partyNames = c.meta.party.map(p => p.name);
-    const partyMatch = matchName(speaker, partyNames);
+    const exactNpc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(speaker));
+    // An exact NPC name beats a loose match on a companion ("Nick the barkeep" vs "Nick Wilde").
+    const partyMatch = partyNames.find(n => nameKey(n) === nameKey(speaker)) ?? (exactNpc ? null : matchName(speaker, partyNames));
     if (partyMatch) {
         await speakPartyMember(partyMatch, brief, { signal, length });
         return 'party';
     }
     const npcMatch = matchName(speaker, (c.docs.npcs || []).map(n => n.name));
-    let npc = (c.docs.npcs || []).find(n => n.name === npcMatch);
+    let npc = exactNpc ?? (c.docs.npcs || []).find(n => n.name === npcMatch);
     if (!npc) {
         // The DM briefed someone it never registered: add them so they keep a voice and a memory.
         [npc] = addNpcs(c.docs.npcs, [{ name: speaker, description: '', gender: 'any', attitude: 'neutral' }], c.docs.world.location);

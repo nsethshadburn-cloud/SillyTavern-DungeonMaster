@@ -478,3 +478,13 @@ test('v0.10: refusals become a deadlock, "just happened" reaches companions', as
     assert.equal(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: '' }).includes('{{happened}}'), false);
     assert.ok(TASKS.some(t => t.key === 'deadlock' && t.main));
 });
+
+test('v0.10.1 fixes: scene_map null keeps the map, 2d20kh1 has a natural die', () => {
+    assert.equal(parseDmTurn('{"scene_map": null}').scene_map, null, 'null means no change');
+    assert.equal(parseDmTurn('{"scene_map": "close"}').scene_map, 'close');
+    const seq = [20, 3];
+    const adv = roll('2d20kh1+5', { rng: () => seq.shift() });
+    assert.equal(adv.natural, 20);
+    assert.equal(judge(adv.total, 30, adv.natural, 'attack').critical, true);
+    assert.equal(roll('2d20+1', { rng: () => 7 }).natural, null, 'two kept d20s have no single natural');
+});

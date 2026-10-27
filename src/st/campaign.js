@@ -114,8 +114,9 @@ export function saveMeta() {
 
 export function saveDoc(key) {
     if (!active) return;
-    const id = active.meta.id;
-    writeLater(fileName(id, key), () => active && active.meta.id === id ? active.docs[key] : null);
+    // Bound to this campaign's docs, so a save queued just before switching chats still lands.
+    const docs = active.docs;
+    writeLater(fileName(active.meta.id, key), () => docs[key]);
 }
 
 export async function saveAllNow() {

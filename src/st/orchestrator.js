@@ -264,7 +264,7 @@ async function turnBody(c, opts, status, signal) {
         }
         if (reasons.includes('stalled')) pacing.fillerStreak = 0;
         if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
-        await applyDmTurn(c, result.turn, status, signal, { events });
+        await applyDmTurn(c, result.turn, status, signal, { events, reasons });
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
         meta.stats.lastTurnUsd = turnUsd;
@@ -487,7 +487,7 @@ function outcomeText(r, judged) {
 }
 
 /** Apply everything the DM decided, in a sensible order. */
-export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
+export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [] } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
 
@@ -543,6 +543,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
         }
         if (rejected.length) console.warn('[Dungeon Master] Ignored invalid map moves:', rejected);
         mapChanged = true;
+    }
+    // Each DM combat turn is a new round (a roll's result finishes the round it was asked in).
+    if (world.combat && !t.start_combat && reasons.includes('combat_round') && !reasons.includes('roll_result')) {
+        world.combat.round = (world.combat.round || 1) + 1;
     }
     if (t.end_combat && world.combat) {
         const finalPositions = world.combat.positions;
@@ -686,6 +690,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
     for (const d of t.directions) {
         if (signal.aborted) throw new Error('aborted');
         const speaker = d.speaker;
+        const deadNpc = (c.docs.npcs || []).find(n => n.dead && nameKey(n.name) === nameKey(speaker));
+        if (deadNpc) {
+            status.note(`${deadNpc.name} is dead`);
+            continue;
+        }
         if (isAway(world, speaker)) {
             status.note(`${speaker} isn't with you right now`);
             continue;
@@ -722,15 +731,22 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
 export async function runOpening(opening) {
     const c = campaign();
     if (!c) return;
+    // A message sent during the opening waits for it, like during any turn.
+    running = true;
     const status = beginTurn('Opening scene');
     try {
-        const t = opening;
-        await applyDmTurn(c, t, status, new AbortController().signal);
+        await applyDmTurn(c, opening, status, new AbortController().signal, { reasons: ['opening'] });
         status.finish('The adventure begins');
     } catch (error) {
         console.error(error);
         status.finish('Opening had a problem');
         toastr.error(String(error?.message || error), 'Dungeon Master');
+    } finally {
+        running = false;
+        if (rerunRequested) {
+            rerunRequested = false;
+            setTimeout(() => runTurn(), 50);
+        }
     }
 }
 

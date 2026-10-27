@@ -104,7 +104,7 @@ export function roll(notation, options = {}) {
                 dropped.push(...drop);
                 faces = keep;
             }
-            if (term.sides === 20 && term.count === 1 && natural === null) natural = faces[0];
+            if (term.sides === 20 && faces.length === 1 && natural === null) natural = faces[0];
             detailParts.push(`${index && term.sign > 0 ? '+ ' : ''}${term.sign < 0 ? '- ' : ''}${term.count}d${term.sides} (${faces.join(', ')})`);
         }
         rolls.push(...faces);

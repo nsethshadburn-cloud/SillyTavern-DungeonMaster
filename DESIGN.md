@@ -324,6 +324,17 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.10.1 (code sweep)
+- Saves: a campaign file save queued just before switching chats is now written (it was dropped), and queued saves are flushed before the next chat's files load.
+- Voices: stopping playback (swipe, chat change) could leave the old play loop running beside the new one, so two lines played at once. Only the newest loop runs now.
+- Dice auto-read: deleting messages while a roll was pending stopped SillyTavern's dice from being read until the chat grew past its old length.
+- Maps: `"scene_map": null` (Claude's "no change") closed the room map; only `"close"` closes it now.
+- Combat: the round counter never moved past 1. Each DM combat turn is a new round (a roll result finishes the round it was asked in).
+- The opening's `world_next` from the campaign design is used (it was dropped, so the world always started at the default pace).
+- NPC rolls with advantage written as 2d20kh1 now have a natural die, so their crits and natural 1s count.
+- An NPC whose first name matches a companion's ("Nick the barkeep" vs "Nick Wilde") is no longer voiced as the companion; dead NPCs given a brief are skipped instead of rejoining the group.
+- DM replies that never parse still go into the campaign's cost log; the opening scene blocks a concurrent turn like any other turn.
+
 ### v0.10 (from "Chains of Tessaly")
 - DM silence: narration is empty by default and only written for an action/roll result, a new scene or time skip, something new arriving, what a check reveals, or setting up a roll; 2-4 sentences, a paragraph only for a new place, time skip or big reveal; no recaps of unchanged details. World turns act through briefs and narrate only on arrivals, place changes or time skips.
 - Never play the player: what the player SAYS is never turned into what they DO; actions on the player are narrated as attempts or resolved with contested rolls.

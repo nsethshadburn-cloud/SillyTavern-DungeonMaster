@@ -347,6 +347,7 @@ async function buildCampaign(form) {
             directions: json.directions,
             new_npcs: json.new_npcs,
             tension: json.tension,
+            world_next: json.world_next,
         });
         const { runOpening } = await import('../st/orchestrator.js');
         const { loadForCurrentChat } = await import('../st/campaign.js');

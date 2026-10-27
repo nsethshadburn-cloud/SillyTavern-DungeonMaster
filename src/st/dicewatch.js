@@ -27,6 +27,9 @@ export function scan() {
     if (!pr || pr.autoResult || c.meta.paused || settings().autoReadDice === false) return;
     if (!Number.isInteger(pr.chatIndex)) return; // requested by an older version: typed rolls only
     const chat = ST.chat;
+    // Messages were deleted since the request: don't wait for the chat to grow past the old spot.
+    if (pr.chatIndex > chat.length) pr.chatIndex = chat.length;
+    if ((pr.scanned ?? 0) > chat.length) pr.scanned = chat.length;
     pr.scanned = Math.max(pr.scanned ?? pr.chatIndex, pr.chatIndex);
     let changed = false;
     for (; pr.scanned < chat.length; pr.scanned++) {

@@ -240,8 +240,9 @@ export function voiceLine({ kind, name = '', text, voice = '' }) {
 
 async function playQueue() {
     playing = true;
+    const gen = generation;
     try {
-        while (queue.length) {
+        while (queue.length && gen === generation) {
             const item = queue.shift();
             const url = await item.audio;
             if (!url || item.gen !== generation) {
@@ -251,7 +252,8 @@ async function playQueue() {
             await playUrl(url);
         }
     } finally {
-        playing = false;
+        // A stop may have started a newer loop already; only the current loop clears the flag.
+        if (gen === generation) playing = false;
     }
 }
 

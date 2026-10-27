@@ -238,7 +238,10 @@ async function askDmOnce(args, { label, signal, model }) {
         usd += reply.usd;
         turn = parseDmTurn(reply.text);
     }
-    if (!turn) throw new Error('The DM did not return a usable answer.');
+    if (!turn) {
+        logCost(`${label} (unusable reply) · ${modelLabel(reply.model)}`, usd);
+        throw new Error('The DM did not return a usable answer.');
+    }
     logCost(`${label} · ${modelLabel(reply.model)}`, usd);
     return { turn, usd, raw: reply.text, model: reply.model };
 }
