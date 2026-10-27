@@ -162,9 +162,10 @@ function renderMap(center = false) {
     }
     const map = b.map;
     const waiting = b.kind === 'place' ? (b.place.state.waiting ?? {}) : {};
+    const party = new Set([c.meta.persona.name, ...c.meta.party.map(p => p.name)]);
     const roster = Object.entries(b.positions).map(([name, coord]) => {
         const hp = hpOf(c, name);
-        const cls = b.enemies.has(name) ? 'foe' : b.people?.has(name) ? 'other' : 'friend';
+        const cls = b.enemies.has(name) ? 'foe' : party.has(name) ? 'friend' : 'other';
         return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} <b>${coord}</b>${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}</span>`;
     }).join('');
     const exploring = b.kind === 'place';

@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence } from '../core/world.js';
 import { callLocal } from './llm.js';
@@ -92,6 +92,8 @@ export async function loadCurrentPlace(c = campaign()) {
     if (!at?.key) return null;
     const place = await loadPlace(at.key, c);
     if (!place) c.docs.world.place = null;
+    // Older versions kept NPCs the DM placed where the map never drew them: make them the place's people.
+    else if (adoptStrays(place, [c.meta.persona.name, ...c.meta.party.map(p => p.name)])) savePlace(at.key, c);
     return place;
 }
 
@@ -278,6 +280,11 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
             st.positions[n] = { floor: lead.floor, ...spot };
         }
         taken.add(`${st.positions[n].x},${st.positions[n].y}`);
+    }
+    // Nobody of the place stands on a party member's square (the start can be a guard's spot).
+    const partySquares = new Set(names.map(n => st.positions[n]).filter(p => p?.floor === lead.floor).map(p => `${p.x},${p.y}`));
+    for (const g of Object.values(place.guards)) {
+        if (g.state !== 'gone' && g.floor === lead.floor && partySquares.has(`${g.x},${g.y}`)) placePerson(place, g.name, { floor: g.floor, x: g.x, y: g.y });
     }
     st.floor = lead.floor;
     c.docs.world.place = { key, floor: lead.floor };

@@ -14,8 +14,8 @@ import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } f
 import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
-import { normalizeMap, applyPositions, placeMissing, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
-import { applyPlaceChanges, floorById, walkable } from '../core/explore.js';
+import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
+import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear } from '../core/explore.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
@@ -553,6 +553,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             combat.map = JSON.parse(JSON.stringify(floorById(here.place, floorId).map));
             combat.inPlace = { key: here.key, floor: floorId };
             combat.positions = Object.fromEntries(Object.entries(here.place.state.positions).filter(([, p]) => p.floor === floorId).map(([n, p]) => [n, toCoord(p.x, p.y)]));
+            // The place's people on this floor join the board where they stand: the enemies among
+            // them, and anyone the party can see (bystanders stay on the map during the fight).
+            const seen = computeVisible(here.place, floorId, Object.values(here.place.state.positions).filter(p => p.floor === floorId));
+            const foeKeys = new Set(Object.keys(combat.enemies || {}).map(nameKey));
+            for (const g of Object.values(here.place.guards)) {
+                if (g.state === 'gone' || g.floor !== floorId) continue;
+                if (foeKeys.has(nameKey(g.name)) || seen[g.y * combat.map.w + g.x]) combat.positions[g.name] = toCoord(g.x, g.y);
+            }
         } else {
             combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
             combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
@@ -575,7 +583,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             moves[name] = toCoord(ok.x, ok.y);
         }
         const { positions, rejected } = applyPositions(world.combat.map, world.combat.positions, moves);
-        world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
+        if (world.combat.inPlace) {
+            const lead = parseCoord(positions[meta.persona.name], world.combat.map);
+            world.combat.positions = placeNear(world.combat.map, placeNear(world.combat.map, positions, friends, lead, 1), foes, lead, 3);
+        } else {
+            world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
+        }
         // Downed enemies leave the board.
         for (const [name, e] of Object.entries(world.combat.enemies || {})) {
             if (e.hp <= 0) delete world.combat.positions[name];
@@ -592,9 +605,20 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const here = currentPlace(c);
         if (here) {
             const floorId = world.combat.inPlace.floor, map = floorById(here.place, floorId).map;
+            const party = new Set([meta.persona.name, ...meta.party.map(p => p.name)].map(nameKey));
             for (const name of partyOnMap(c)) {
                 const pt = parseCoord(world.combat.positions?.[name], map);
                 if (pt) here.place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
+            }
+            for (const [name, e] of Object.entries(world.combat.enemies || {})) {
+                const g = personByName(here.place, name);
+                if (e.hp <= 0) { if (g) g.state = 'gone'; continue; }
+                const pt = parseCoord(world.combat.positions?.[name], map);
+                if (pt) placePerson(here.place, name, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
+            }
+            for (const [name, cd] of Object.entries(world.combat.positions || {})) {
+                const g = personByName(here.place, name), pt = parseCoord(cd, map);
+                if (g && pt && !party.has(nameKey(name)) && !world.combat.enemies?.[name]) Object.assign(g, { floor: floorId, x: pt.x, y: pt.y, room: roomAt(here.place, floorId, pt.x, pt.y)?.id ?? g.room });
             }
             savePlace(here.key, c);
         }
@@ -620,22 +644,37 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         mapChanged = true;
     }
     const inside = currentPlace(c);
-    if (inside && (t.place_changes || (!world.combat && Object.keys(t.positions || {}).length))) {
+    const partyNames = [meta.persona.name, ...meta.party.map(p => p.name)];
+    const strays = inside ? adoptStrays(inside.place, partyNames) : 0;
+    if (inside && (strays || t.place_changes || (!world.combat && Object.keys(t.positions || {}).length))) {
         const { key, place } = inside;
+        const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
         if (t.place_changes) {
-            const log = applyPlaceChanges(place, t.place_changes);
+            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
         }
         if (!world.combat) {
-            const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
             const map = floorById(place, floorId).map;
+            const missed = [];
             for (const [name, coord] of Object.entries(t.positions || {})) {
-                const pt = parseCoord(coord, map);
-                const guard = place.guards[name];
-                if (!pt || !walkable(place, floorId, pt.x, pt.y)) continue;
-                if (guard) Object.assign(guard, { floor: floorId, x: pt.x, y: pt.y });
-                else place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
+                if (coord === null || /^(gone|removed|dead|fled|left)$/i.test(String(coord))) {
+                    const g = personByName(place, name);
+                    if (g) g.state = 'gone';
+                    continue;
+                }
+                const member = partyNames.find(n => nameKey(n) === nameKey(name));
+                if (member) {
+                    const pt = parseCoord(coord, map);
+                    const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
+                    if (spot) place.state.positions[member] = { floor: floorId, ...spot };
+                    else missed.push(`${name} → ${coord}`);
+                    continue;
+                }
+                const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
+                const info = { description: npc ? [npc.role, npc.description].filter(Boolean).join('. ') : '', hostile: npc?.attitude === 'hostile', gender: npc?.gender };
+                if (!placePerson(place, npc?.name ?? name, coord, { floor: floorId, info })) missed.push(`${name} → ${coord}`);
             }
+            if (missed.length) status.note(`Couldn't place on the map: ${missed.join(', ')}`);
         }
         look(c, key, place);
         savePlace(key, c);

@@ -4,8 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById } from '../src/core/explore.js';
-import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap } from '../src/core/grid.js';
+import { roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
 import { MANOR_PLAN, TOWN_PLAN } from './fixtures/manor-plan.mjs';
@@ -295,7 +295,7 @@ test('people on the map: guards are hostile, residents and shopkeepers are not; 
     assert.equal(place.guards['Old Martha'].hostile, false);
     assert.ok(inRect(place.rooms.A.rect, place.guards['Old Martha'].x, place.guards['Old Martha'].y));
     const log = applyPlaceChanges(place, { guards: { 'Ghost Girl': { room: 'B', description: 'a pale child who wants help', hostile: false } } });
-    assert.match(log[0], /Ghost Girl is in B/);
+    assert.match(log[0], /Ghost Girl at [a-z]+\d+/);
     assert.ok(inRect(place.rooms.B.rect, place.guards['Ghost Girl'].x, place.guards['Ghost Girl'].y));
     assert.match(placeSummary(place), /Graves \(hostile\)/);
     assert.match(placeSummary(place), /Old Martha: the cook/);
@@ -403,4 +403,40 @@ test('windows: break and climb out, barred windows, the DM bars every window', (
     applyPlaceChanges(jail, { add_props: [{ type: 'barrel', at: `${colName(e.x)}${e.y + 1}`, floor: e.floor, label: 'barricade' }] });
     const barrel = floorById(jail, e.floor).map.props.find(p => p.label === 'barricade');
     assert.ok(barrel?.obstacle && barrel.id, 'added on purpose, with an id');
+});
+
+test('the DM can put anyone on the map by square or room, and they are drawn (not kept where the map never looks)', () => {
+    const place = generatePlace(MANOR_PLAN, 4);
+    const floor = place.floors[0], map = floor.map;
+    const room = Object.values(place.rooms).find(r => r.floor === floor.id);
+    // A square inside a wall: they stand on the nearest open square instead of vanishing.
+    let wall = null;
+    for (let y = 0; y < map.h && !wall; y++) for (let x = 0; x < map.w && !wall; x++) if (terrainAt(map, x, y) === '#' && walkable(place, floor.id, x + 1, y)) wall = { x, y };
+    const g = placePerson(place, 'Bandit Captain', toCoord(wall.x, wall.y), { floor: floor.id, info: { hostile: true } });
+    assert.ok(g && walkable(place, floor.id, g.x, g.y), 'on an open square');
+    assert.ok(Math.max(Math.abs(g.x - wall.x), Math.abs(g.y - wall.y)) <= 2, 'right next to where the DM said');
+    assert.equal(place.guards['Bandit Captain'].hostile, true);
+    // By room name, and through place_changes with a plain square.
+    assert.ok(placePerson(place, 'Old Tom', room.name, { floor: floor.id }), 'a room name works');
+    applyPlaceChanges(place, { guards: { 'Sister Wren': toCoord(g.x, g.y) } }, { floor: floor.id });
+    assert.ok(place.guards['Sister Wren'], 'someone new from a plain square');
+    assert.ok(Object.values(place.guards).filter(p => p.floor === floor.id && p.x === g.x && p.y === g.y).length === 1, 'nobody shares a square');
+    assert.equal(placePerson(place, 'Nobody', 'the moon'), null, 'nonsense is refused, not stored');
+    // Older chats: NPCs stuck in the party's own position list become people on the map.
+    place.state.positions = { Amber: { floor: floor.id, x: g.x, y: g.y }, 'Mister Pell': { floor: floor.id, x: g.x, y: g.y } };
+    assert.equal(adoptStrays(place, ['Amber', 'Judy']), 1);
+    assert.deepEqual(Object.keys(place.state.positions), ['Amber']);
+    assert.ok(place.guards['Mister Pell'], 'Mister Pell is one of the place\'s people now');
+});
+
+test('a fight on a big floor: newcomers arrive near the party, not across the building', () => {
+    const map = normalizeMap({ width: 16, height: 16, rows: Array(16).fill('.'.repeat(16)) });
+    const lead = { x: 2, y: 2 };
+    const pos = placeNear(map, { Amber: toCoord(2, 2) }, ['Wolf 1', 'Wolf 2'], lead, 3);
+    for (const n of ['Wolf 1', 'Wolf 2']) {
+        const p = parseCoord(pos[n], map);
+        const d = Math.abs(p.x - lead.x) + Math.abs(p.y - lead.y);
+        assert.ok(d >= 3 && d <= 5, `${n} is a few steps away (${d})`);
+    }
+    assert.notEqual(pos['Wolf 1'], pos['Wolf 2']);
 });

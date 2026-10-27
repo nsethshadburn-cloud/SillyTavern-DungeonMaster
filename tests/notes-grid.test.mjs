@@ -33,8 +33,11 @@ test('grid coordinates, terrain and positions', () => {
     assert.equal(isWalkable(map, 2, 3), false, 'c4 is a wall (top row)');
     assert.equal(isWalkable(map, 2, 1), false, 'c2 is cover');
     const { positions, rejected } = applyPositions(map, {}, { Judy: 'b1', Bandit: 'c4', Wolf: 'z9', Amber: 'a2' });
-    assert.deepEqual(positions, { Judy: 'b1', Amber: 'a2' });
-    assert.equal(rejected.length, 2);
+    assert.equal(positions.Judy, 'b1');
+    assert.equal(positions.Amber, 'a2');
+    assert.ok(positions.Bandit && positions.Bandit !== 'c4' && isWalkable(map, parseCoord(positions.Bandit, map).x, parseCoord(positions.Bandit, map).y), 'a square in a wall becomes the nearest open one');
+    assert.deepEqual(rejected, ['Wolf→z9'], 'only squares off the map are dropped');
+    delete positions.Bandit;
     const placed = placeMissing(map, positions, ['Rowan'], 'party');
     assert.ok(placed.Rowan && placed.Rowan.endsWith('1'));
     const enemies = placeMissing(map, placed, ['Bandit'], 'enemy');

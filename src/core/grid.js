@@ -224,8 +224,21 @@ export function distance(a, b) {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
 
+/** The nearest open square to (x, y), spiralling out; null if none within reach. */
+export function nearestWalkable(map, x, y, taken = new Set(), reach = 4) {
+    for (let d = 0; d <= reach; d++) {
+        for (let dx = -d; dx <= d; dx++) for (let dy = -d; dy <= d; dy++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+            const c = toCoord(x + dx, y + dy);
+            if (isWalkable(map, x + dx, y + dy) && !taken.has(c)) return { x: x + dx, y: y + dy };
+        }
+    }
+    return null;
+}
+
 /**
- * Apply position updates {name: "d4"}; invalid or blocked squares are ignored.
+ * Apply position updates {name: "d4"}. A blocked or taken square becomes the nearest open one;
+ * squares off the map are ignored.
  * @returns {{positions: Record<string,string>, rejected: string[]}}
  */
 export function applyPositions(map, positions, updates) {
@@ -237,13 +250,49 @@ export function applyPositions(map, positions, updates) {
             continue;
         }
         const p = parseCoord(coord, map);
-        if (!p || !isWalkable(map, p.x, p.y)) {
+        const taken = new Set(Object.entries(next).filter(([n]) => n !== name).map(([, c]) => c));
+        const spot = p ? nearestWalkable(map, p.x, p.y, taken) : null;
+        if (!spot) {
             rejected.push(`${name}→${coord}`);
             continue;
         }
-        next[name] = toCoord(p.x, p.y);
+        next[name] = toCoord(spot.x, spot.y);
     }
     return { positions: next, rejected };
+}
+
+/**
+ * Put anyone without a square near `center` (walking distance, through open squares), at least
+ * `minSteps` away: newcomers to a fight on a big floor arrive close by, not across the building.
+ */
+export function placeNear(map, positions, names, center, minSteps = 3) {
+    const next = { ...(positions || {}) };
+    const missing = names.filter(n => !next[n]);
+    if (!missing.length || !center) return next;
+    const taken = new Set(Object.values(next));
+    const seen = new Set([`${center.x},${center.y}`]);
+    const queue = [[center.x, center.y, 0]];
+    const spots = [];
+    for (let i = 0; i < queue.length && queue.length < 4000; i++) {
+        const [x, y, d] = queue[i];
+        if (d >= minSteps && !taken.has(toCoord(x, y))) spots.push({ x, y });
+        if (spots.length >= missing.length * 3 || d > 14) break;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + dx, ny = y + dy, k = `${nx},${ny}`;
+            if (seen.has(k) || !isWalkable(map, nx, ny)) continue;
+            seen.add(k);
+            queue.push([nx, ny, d + 1]);
+        }
+    }
+    // Closer squares are a fallback when the room is small.
+    if (spots.length < missing.length) for (const [x, y] of queue) if (!taken.has(toCoord(x, y)) && !(x === center.x && y === center.y) && !spots.some(s => s.x === x && s.y === y)) spots.push({ x, y });
+    for (const name of missing) {
+        const s = spots.shift();
+        if (!s) break;
+        next[name] = toCoord(s.x, s.y);
+        taken.add(next[name]);
+    }
+    return next;
 }
 
 /** Put anyone without a square somewhere sensible: party on the bottom rows, others on top. */

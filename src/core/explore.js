@@ -252,10 +252,11 @@ function findByIdOrName(list, key) {
 
 /**
  * Apply the DM's changes to a place. Returns plain lines for the turn's status ("D4 is open").
- * changes: {doors: {D4: "open"}, traps: {T2: "found"}, items: {I3: "taken"}, guards: {"Graves": "G4" | "gone" | "alert"},
+ * changes: {doors: {D4: "open"}, traps: {T2: "found"}, items: {I3: "taken"}, guards: {"Graves": "G4" | "ab14" | "gone" | "alert"},
  *           rooms: {G4: {lit: true}}, reveal: ["G7"]}
+ * floor: the party's floor (squares like "ab14" are on it)
  */
-export function applyPlaceChanges(place, changes) {
+export function applyPlaceChanges(place, changes, { floor = place.state?.floor } = {}) {
     const log = [];
     const c = changes && typeof changes === 'object' ? changes : {};
     for (const [id, raw] of Object.entries(c.doors || {})) {
@@ -289,28 +290,31 @@ export function applyPlaceChanges(place, changes) {
         log.push(`${item.name}: ${v}`);
     }
     for (const [name, raw] of Object.entries(c.guards || {})) {
-        let g = place.guards[name] ?? Object.values(place.guards).find(x => nameKey(x.name) === nameKey(name));
-        // Someone new on the map: {"room": "G5", "description": "the cook", "hostile": false}.
+        let g = personByName(place, name);
+        // Someone new on the map, or moved: {"at": "ab14" | "room": "G5", "description": "the cook", "hostile": false}.
         if (raw && typeof raw === 'object') {
-            const roomId = place.rooms[raw.room] ? raw.room : g?.room;
-            if (!roomId) continue;
-            g ??= place.guards[String(name).slice(0, 60)] = { name: String(name).slice(0, 60), description: '', hostile: false, room: roomId, patrol: [roomId], step: 0, floor: place.rooms[roomId].floor, x: 0, y: 0, state: 'patrol' };
+            const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : null);
+            const info = { description: raw.description, hostile: raw.hostile === true };
+            g = where ? placePerson(place, name, where, { floor, info }) : null;
+            if (!g) { log.push(`couldn't place ${name} (no square or room given)`); continue; }
             if (raw.description) g.description = String(raw.description).slice(0, 240);
             if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
-            if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(String).filter(id => place.rooms[id]);
-            if (!g.patrol.length) g.patrol = [roomId];
-            moveGuardTo(place, g, roomId);
-            g.state = 'patrol';
-            log.push(`${g.name} is in ${roomId}`);
+            if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(id => findRoom(place, id)?.id).filter(Boolean);
+            if (!g.patrol.length && g.room) g.patrol = [g.room];
+            g.state = raw.state === 'alert' ? 'alert' : 'patrol';
+            log.push(`${g.name} at ${coord(g.x, g.y)}`);
             continue;
         }
-        if (!g) continue;
         const v = String(raw);
-        if (/^(gone|dead|left|removed)$/i.test(v)) g.state = 'gone';
-        else if (/^(alert|hunting|chasing)$/i.test(v)) g.state = 'alert';
-        else if (/^(calm|patrol|patrolling)$/i.test(v)) g.state = 'patrol';
-        else if (place.rooms[v]) { moveGuardTo(place, g, v); }
-        log.push(`${g.name}: ${v}`);
+        if (/^(gone|dead|left|removed)$/i.test(v)) { if (g) g.state = 'gone'; }
+        else if (/^(alert|hunting|chasing)$/i.test(v)) { if (g) g.state = 'alert'; }
+        else if (/^(calm|patrol|patrolling)$/i.test(v)) { if (g) g.state = 'patrol'; }
+        else {
+            // A square or a room: move them there (someone new appears there).
+            g = placePerson(place, name, v, { floor });
+            if (!g) { log.push(`couldn't place ${name} at ${v}`); continue; }
+        }
+        if (g) log.push(`${g.name}: ${v}`);
     }
     for (const [id, v] of Object.entries(c.rooms || {})) {
         const rm = place.rooms[id];
@@ -458,6 +462,87 @@ export function moveGuardTo(place, g, roomId, r = Math.random) {
     Object.assign(g, { room: roomId, floor: rm.floor, x: at.x, y: at.y });
 }
 
+/** The nearest square someone can stand on, spiralling out from (x, y); null if none within reach. */
+export function openSquareNear(place, floorId, x, y, taken = new Set(), reach = 8) {
+    const map = floorById(place, floorId).map;
+    const cx = Math.min(map.w - 1, Math.max(0, x)), cy = Math.min(map.h - 1, Math.max(0, y));
+    for (let d = 0; d <= reach; d++) {
+        for (let dx = -d; dx <= d; dx++) for (let dy = -d; dy <= d; dy++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+            const nx = cx + dx, ny = cy + dy;
+            if (walkable(place, floorId, nx, ny) && !taken.has(`${nx},${ny}`)) return { x: nx, y: ny };
+        }
+    }
+    return null;
+}
+
+/** A room by its id ("G5") or its name ("the kitchen"). */
+export function findRoom(place, ref) {
+    const s = String(ref ?? '').trim();
+    if (!s) return null;
+    return place.rooms[s] ?? Object.values(place.rooms).find(r => r.id.toLowerCase() === s.toLowerCase() || nameKey(r.name || '') === nameKey(s.replace(/^the\s+/i, ''))) ?? null;
+}
+
+/** Find someone among a place's people by name. */
+export function personByName(place, name) {
+    return place.guards[name] ?? Object.values(place.guards).find(g => nameKey(g.name) === nameKey(name)) ?? null;
+}
+
+/**
+ * Put someone on a place's map, or move them: to a square ("ab14", on `floor`), a room ("G5" or its
+ * name), or {floor, x, y}. A blocked square becomes the nearest open one. Anyone new becomes one of
+ * the place's people (drawn on the map, listed for the DM) with `info` ({description, hostile}).
+ * @returns the person, or null if `where` isn't a square or room of this place
+ */
+export function placePerson(place, name, where, { floor = place.state?.floor, info = {}, taken = null } = {}) {
+    const clean = String(name || '').trim().slice(0, 60);
+    if (!clean) return null;
+    // Squares other people already stand on (party and the place's people), unless told otherwise.
+    const busy = f => taken ?? new Set([...Object.entries(place.state?.positions || {}).map(([, p]) => p), ...Object.values(place.guards).filter(g => g.state !== 'gone' && nameKey(g.name) !== nameKey(clean))].filter(p => p && p.floor === f).map(p => `${p.x},${p.y}`));
+    let spot = null, floorId = floor ?? place.floors[0].id;
+    if (where && typeof where === 'object' && Number.isFinite(where.x)) {
+        floorId = where.floor ?? floorId;
+        spot = openSquareNear(place, floorId, where.x, where.y, busy(floorId));
+    } else {
+        // Room ids ("G4") look like squares: an exact room id wins, then a square ("ab14"), then a room name.
+        const exact = place.rooms[String(where ?? '').trim()];
+        const pt = exact ? null : parseCoord(where, floorById(place, floorId).map);
+        if (pt) spot = openSquareNear(place, floorId, pt.x, pt.y, busy(floorId));
+        else {
+            const rm = exact ?? findRoom(place, where);
+            if (!rm) return null;
+            floorId = rm.floor;
+            spot = freeInRoom(place, rm);
+        }
+    }
+    if (!spot) return null;
+    const room = roomAt(place, floorId, spot.x, spot.y)?.id ?? null;
+    let g = personByName(place, clean);
+    if (!g) {
+        g = place.guards[clean] = { name: clean, description: String(info.description || '').slice(0, 240), hostile: info.hostile === true, room, patrol: room ? [room] : [], step: 0, floor: floorId, x: spot.x, y: spot.y, state: 'patrol' };
+        if (info.gender === 'male' || info.gender === 'female') g.gender = info.gender;
+    }
+    Object.assign(g, { floor: floorId, x: spot.x, y: spot.y, room: room ?? g.room ?? null });
+    if (g.state === 'gone') g.state = 'patrol';
+    return g;
+}
+
+/**
+ * Anyone other than the party who ended up in the party's own position list (older versions put
+ * NPCs there; the map never drew them) becomes one of the place's people. Returns how many moved.
+ */
+export function adoptStrays(place, partyNames) {
+    const party = new Set(partyNames.map(nameKey));
+    let n = 0;
+    for (const [name, p] of Object.entries(place.state?.positions || {})) {
+        if (party.has(nameKey(name))) continue;
+        delete place.state.positions[name];
+        if (p && Number.isFinite(p.x) && !personByName(place, name)) placePerson(place, name, p);
+        n++;
+    }
+    return n;
+}
+
 /** Guards on patrol walk to their next room now and then. Returns who moved where. */
 export function tickGuards(place, r = Math.random, chance = 0.5) {
     const moved = [];
@@ -515,7 +600,7 @@ export function placeSummary(place) {
     const guards = Object.values(place.guards);
     if (guards.length) {
         lines.push('', '## People on the map');
-        for (const g of guards) lines.push(`- ${g.name}${g.hostile !== false ? ' (hostile)' : ''}: ${g.description}${g.patrol.length > 1 ? ` Patrols ${g.patrol.join('→')}.` : ` Stays in ${g.room}.`}`);
+        for (const g of guards) lines.push(`- ${g.name}${g.hostile !== false ? ' (hostile)' : ''}: ${g.description}${g.patrol.length > 1 ? ` Patrols ${g.patrol.join('→')}.` : ` Stays in ${g.room ?? 'a corridor'}.`}`);
     }
     return lines.join('\n');
 }
@@ -553,7 +638,7 @@ export function placeView(place, partyNames) {
     if (traps.length) lines.push(`Traps known/used: ${traps.join(', ')}.`);
     const taken = Object.values(place.items).filter(i => i.state === 'taken' || i.found).map(i => `${i.id} ${i.name} ${i.state === 'taken' ? 'taken' : 'found'}`);
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone').map(g => `${g.name} in ${g.room}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}`);
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}`);
     if (guards.length) lines.push(`People now: ${guards.join('; ')}.`);
     const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
     if (waiting.length) lines.push(`Companions who chose not to follow: ${waiting.join('; ')}.`);
