@@ -125,8 +125,8 @@ export function companionActionPrompt({ name, message, scene, places = [], askAt
         message,
         '',
         askAttempt ? `1. Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
-        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now, not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}` : '',
-        `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty"' : ''}}`,
+        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now, not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it)?` : '',
+        `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty", "hide": true or false' : ''}}`,
     ].filter(Boolean).join('\n');
     return { system, user };
 }
@@ -135,5 +135,6 @@ export function parseCompanionAction(text, places = []) {
     const data = extractJson(text) || {};
     const attempt = data.attempt === true || data.attempt === 'true';
     const go = String(data.go ?? '').trim();
-    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: places.some(p => p.id === go) ? go : '' };
+    const ok = places.some(p => p.id === go);
+    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '', ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}) };
 }

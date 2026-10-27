@@ -78,6 +78,14 @@ export const PROPS = Object.freeze({
 });
 
 /** Furniture too heavy to shove without a roll (the DM rules on it). Everything else that blocks can be pushed freely. */
+/** Hiding places: inside (only your eyes peek out), underneath, or crouched behind. */
+export const HIDE = Object.freeze({
+    wardrobe: 'in', barrel: 'in', chest: 'in', coffin: 'in', cabinet: 'in', hay: 'in', tent: 'in', kennel: 'in', bush: 'in', cart: 'under', trough: 'behind',
+    bed: 'under', table: 'under', desk: 'under', counter: 'behind', workbench: 'under', pew: 'under', stall: 'behind',
+    bookshelf: 'behind', statue: 'behind', pillar: 'behind', crate: 'behind', boulder: 'behind', altar: 'behind', throne: 'behind', sofa: 'behind',
+    dresser: 'behind', armor: 'behind', piano: 'behind', clock: 'behind', tombstone: 'behind', cauldron: 'behind', fireplace: 'behind', stalagmite: 'behind', fountain: 'behind', well: 'behind', plant: 'behind', anvil: 'behind',
+});
+
 export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence']);
 
 /** Furniture with a back and a front: drawn turned so its back is against the wall it stands by. */

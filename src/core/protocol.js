@@ -115,7 +115,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 
 ## NPCs and content
 - NPCs have wants, fears and agendas. Invent fitting names (never real people or celebrities).
-- Map figures: every NPC, enemy, guard and person on a map gets a little animated figure. Give each one "sprite": the closest from ${FIGURES} (variants in color are picked automatically).
+- Map figures: every NPC, enemy, guard and person on a map gets a little animated figure. Give each one "sprite": the closest from ${FIGURES} for what THAT person is (a cook is human_cook, a jailer human_jailer, a farmer human_farmer); different people get different figures. Leave it out if nothing fits: the code picks from their description. Colors vary automatically.
 - The FIRST time any NPC appears, add them to "new_npcs" (check "NPCS MET" first), with a short "role" (their job or title and how they relate to the party: "watch captain, Judy's commander"). Companions see these roles, so one person is never mistaken for two.
 - Intense and dark themes are fine (danger, violence, horror, moral weight). No explicit sexual content: cut away or steer.
 
@@ -128,12 +128,12 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "player_roll": {"kind": "check|save|attack|damage|initiative", "skill": "Perception", "ability": "WIS", "die": 20, "dc": 15, "advantage": "none|advantage|disadvantage", "reason": "why", "damage": "1d8+3 (for attacks)", "bonus": "only when their sheet has no number for it in skills or tools"},
   "npc_rolls": [{"who": "Judy Hopps", "what": "Stealth", "notation": "1d20+5", "dc": 13, "kind": "check|attack|save", "target": "name (attacks)", "damage": "1d6+2 (attacks)", "on_success": "plain words: what happens", "on_fail": "plain words: what happens"}],
   "directions": [{"speaker": "exact name", "direction": "the brief", "length": "short|normal|long"}],
-  "new_npcs": [{"name": "Brannoc Vell", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile", "stats": "optional: AC 12, HP 11, +4 to hit, 1d6+2", "sprite": "human_merchant"}],
+  "new_npcs": [{"name": "Brannoc Vell", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile", "stats": "optional: AC 12, HP 11, +4 to hit, 1d6+2", "sprite": "the figure that fits THIS person (see Map figures)"}],
   "scene": {"type": "social|exploration|tension|combat|downtime", "location": "short place name", "setting": "road|town|wild|dungeon|sea", "time": "morning|afternoon|evening|night", "changed": false},
   "tension": 0,
   "beats_completed": ["beat id from the plot, e.g. A1.2"],
   "state_changes": {"hp": {"Name": -3}, "conditions_add": {"Name": ["poisoned"]}, "conditions_remove": {"Name": ["poisoned"]}, "gold": 0, "items_add": ["item"], "items_remove": ["item"], "flags": {"key": "value"}},
-  "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1, "sprite": "human_bandit"}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
+  "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1, "sprite": "the figure that fits this enemy"}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
   "positions": {"Name": "d4"},
   "dashing": ["names who take the Dash action this combat round"],
   "scene_map": {"title": "short name", "theme": "crypt", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "e4", "type": "altar"}]},
@@ -396,6 +396,7 @@ const PLACE_JSON = `{
   "name": "the place's name",
   "kind": "mansion|castle|dungeon|cave|prison|temple|crypt|tower|sewer|mine|ship|house|tavern|...",
   "theme": "mansion|castle|dungeon|crypt|cave|mine|sewer|temple|prison|tavern|library|house|cabin|ship",
+  "condition": "kept|worn|ruined (kept: lived in and looked after; worn: in use but run down; ruined: abandoned, old, overgrown)",
   "summary": "3-5 sentences for yourself: what this place is, who rules it and why, what's going on inside, where the way out is and what stands in the way",
   "fog": true,
   "floors": [{"id": "B", "name": "Cellars", "level": -1}, {"id": "G", "name": "Ground floor", "level": 0}],
@@ -411,8 +412,8 @@ const PLACE_JSON = `{
     "windows": "normal|barred|none (leave out for the usual)"
   }],
   "links": [{"a": "B1", "b": "B2", "via": "door|arch|locked|secret|stairs", "key": "Kennel Key (locked doors only)", "dc": 15}],
-  "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"], "sprite": "human_butler"}],
-  "people": [{"name": "Old Martha", "description": "the cook, frightened of her master", "room": "G5", "sprite": "human_servant"}],
+  "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"], "sprite": "the figure that fits them"}],
+  "people": [{"name": "Old Martha", "description": "the cook, frightened of her master", "room": "G5", "sprite": "the figure that fits them"}],
   "barred_windows": false,
   "start": "B1"
 }`;
@@ -432,8 +433,9 @@ What makes a great place (follow all of it):
 - Shape it like a real building. Hallways ("long" type hallway or gallery) join wings; big rooms (great hall, ballroom, entrance hall) are hubs; small rooms (closets, cells, studies, baths) hang off them. Add loops (two ways into an area) so exploring isn't one straight line, and a few dead ends with rewards.
 - Floors connect only through "stairs" links: at least one between neighboring floors, two for a big floor (a grand stair and a servants' stair are classic). Links between rooms on the same floor are doors, arches, locked or secret doors.
 - Gating: 2-4 locked doors whose keys are found elsewhere in the place (the code makes sure every key can be reached before its door), 1-3 secret doors (a DC to find) that lead somewhere worth it, maybe one locked door with no key that can only be picked or forced.
+- Layout that fits the place. A kept-up place (a lived-in mansion, a working prison, a castle, a temple) is ORGANIZED like a real building: each floor has a main hallway (type "hallway", or the foyer on the ground floor) with most rooms opening off it, in a sensible order (the foyer and public rooms near the entrance, kitchen beside the dining room with the pantry and servants' rooms behind it, bedrooms upstairs off the landing hallway, a prison's cells in a cell block with the guard room at its end). Link rooms to their hallway, not in long chains of rooms through rooms. It's tidy: furniture, no bones, blood or rubble lying around. Only a ruined place (an old dungeon, a cave, an abandoned keep) is a maze: winding passages, dead ends, rooms reached through rooms, mess and decay.
 - The start ("start") is the id of the room the party is in RIGHT NOW (see WHERE THE PARTY IS RIGHT NOW and "The party starts"): if they're locked in a cell, "start" is that cell (type "cell"), and everyone in the party starts in it. The way out ("exit": true on that room) is where the story needs it, usually far from the start, behind the place's main challenge.
-- Trap kinds fit the floor they're on: stone floors get loose flagstones, pressure plates, pits or spikes; only wooden floors get rotten boards.
+- Traps are hidden squares: nobody notices them for free. They show only when someone searches the room with a Perception or Investigation roll that beats the trap's DC (the code reveals them and tells you), or when someone steps on one (it springs). Make them varied and purposeful: pressure plates (darts, poison gas, a jet of fire, a falling block, an alarm bell), tripwires (a crossbow, a swinging blade, a net), covered pits, spike pits, poison needles, glyphs of warding, scything blades. Only ruins and abandoned places get decay hazards (rotten boards, crumbling floors, loose ceiling): a place that's kept up (a lived-in mansion, a working prison) never has them. Kinds fit the floor (rotten boards only on wooden floors).
 - Danger that's fair: traps only where they make sense (the master's private wing, a vault, a study), 3-8 for a big place, with a hint in the room's description. Guards or creatures only if the story has them; give each a name, a one-line description and a patrol of 2-5 rooms on one floor, and keep them away from the start so the party can plan. "people" are everyone else who belongs there and isn't hostile (servants, other prisoners, a ghost who wants help): they're on the map too, and the party can talk to them.
 - Windows: rooms on outer walls get windows the party can break and climb out of. If the story keeps them in (a prison, a captor's house), set "barred_windows": true, or "windows": "barred" on the rooms that matter. Leave a way out somewhere, even if it's hard.
 - Atmosphere: lit rooms are lived-in public rooms; dark ones are cellars, unused wings, secrets. Use "marks" (blood, scratches, papers, stain) and story props to show what happened in a room.

@@ -174,7 +174,14 @@ export const PROP_ART = {
         } else if (/spike|blade|scythe/.test(kind)) {
             ctx.fillStyle = 'rgba(30,30,34,0.6)'; ctx.fillRect(cx - s * 0.32, cy - s * 0.32, s * 0.64, s * 0.64);
             for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) poly(ctx, [[cx - s * 0.22 + i * s * 0.22 - s * 0.06, cy - s * 0.18 + j * s * 0.2 + s * 0.06], [cx - s * 0.22 + i * s * 0.22, cy - s * 0.18 + j * s * 0.2 - s * 0.08], [cx - s * 0.22 + i * s * 0.22 + s * 0.06, cy - s * 0.18 + j * s * 0.2 + s * 0.06]], '#a9aeb8');
-        } else if (/net|snare|rope|wire/.test(kind)) {
+        } else if (/glyph|rune|sigil|ward/.test(kind)) {
+            ctx.strokeStyle = 'rgba(150,120,255,0.85)'; ctx.lineWidth = s / 28;
+            ctx.beginPath(); ctx.arc(cx, cy, s * 0.28, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); for (let i = 0; i < 5; i++) { const a = -Math.PI / 2 + i * Math.PI * 4 / 5; ctx[i ? 'lineTo' : 'moveTo'](cx + Math.cos(a) * s * 0.24, cy + Math.sin(a) * s * 0.24); } ctx.closePath(); ctx.stroke();
+        } else if (/tripwire|trip wire|wire/.test(kind)) {
+            line(ctx, cx - s * 0.48, cy + s * 0.05, cx + s * 0.48, cy - s * 0.05, 'rgba(220,220,230,0.9)', Math.max(1, s / 40));
+            ellipse(ctx, cx - s * 0.46, cy + s * 0.05, s * 0.04, s * 0.04, '#3a3a40'); ellipse(ctx, cx + s * 0.46, cy - s * 0.05, s * 0.04, s * 0.04, '#3a3a40');
+        } else if (/net|snare|rope/.test(kind)) {
             for (let i = -2; i <= 2; i++) { line(ctx, cx + i * s * 0.12, cy - s * 0.3, cx + i * s * 0.12, cy + s * 0.3, 'rgba(190,160,110,0.9)', s / 30); line(ctx, cx - s * 0.3, cy + i * s * 0.12, cx + s * 0.3, cy + i * s * 0.12, 'rgba(190,160,110,0.9)', s / 30); }
         } else {
             // A pressure plate (darts, gas, a falling block...): a slightly sunken square.

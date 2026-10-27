@@ -30,7 +30,7 @@ export function lockedLine(name, r) {
 
 /** Ways to try to get free, for the tap menu on yourself: [label, icon, what the player does]. */
 export function escapeOptions(name, r) {
-    if (!r.locked && r.look !== 'cuffs') return [];
+    if (!r.locked && r.look !== 'cuffs') return [['Search for traps', 'fa-magnifying-glass', `*${name} carefully searches the room for traps.* (Perception)`]];
     const out = [];
     if (r.look === 'cage') {
         out.push(['Pick the lock', 'fa-key', `*${name} works at the cage's lock.* (Sleight of Hand with thieves' tools)`]);

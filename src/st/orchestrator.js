@@ -16,7 +16,7 @@ import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear } from '../core/explore.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
@@ -374,8 +374,8 @@ async function ruleOnCompanionAttempts(c, names, status, signal) {
             continue;
         }
         if (attempt.go && !signal.aborted) {
-            const went = await companionGoTo(c, name, attempt.go);
-            if (went) status.note(`${name} goes to the ${went} and stays there`);
+            const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide });
+            if (went) status.note(attempt.hide ? `${name} hides ${went}` : `${name} goes to the ${went} and stays there`);
         }
         if (!attempt.attempt || signal.aborted) continue;
         const reasons = ['companion_action'];
@@ -403,10 +403,10 @@ async function companionMovesOnMap(c, name, status, signal) {
     if (!msg?.mes) return;
     try {
         const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false });
-        const { go } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId }), places);
+        const { go, hide } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId }), places);
         if (!go || signal.aborted) return;
-        const went = await companionGoTo(c, name, go);
-        if (went) status.note(`${name} goes to the ${went} and stays there`);
+        const went = await companionGoTo(c, name, go, { hide });
+        if (went) status.note(hide ? `${name} hides ${went}` : `${name} goes to the ${went} and stays there`);
     } catch (error) {
         console.warn('[Dungeon Master] companion move check failed', error);
     }
@@ -461,8 +461,11 @@ async function resolvePlayerRoll(c, parsed, status) {
         saveDoc('world');
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
+    const search = pr.kind !== 'damage' && /perception|investigation|search/i.test(`${pr.skill} ${pr.reason || ''}`) ? searchForTraps(c, meta.persona.name, total) : null;
+    if (search?.found.length) { await postNote(`⚠️ Searching ${search.room}, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
+    const searchText = search ? ` Searching ${search.room} with that roll, the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
     if (pr.kind === 'damage') return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
-    return `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
+    return searchText + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
 }
 
 /**
@@ -719,7 +722,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (member) {
                     const pt = parseCoord(coord, map);
                     const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
-                    if (spot) place.state.positions[member] = { floor: floorId, ...spot };
+                    if (spot) { place.state.positions[member] = { floor: floorId, ...spot }; if (place.state.hidden?.[member]) delete place.state.hidden[member]; }
                     else missed.push(`${name} → ${coord}`);
                     continue;
                 }
@@ -846,6 +849,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         await postDiceCard(card, { roll: { ...r, total: result.total, natural: result.natural, success: judged.success } });
         if (r.kind === 'attack') playAnim(matchName(r.who, Object.keys(world.combat?.positions || {})) ?? r.who, 'attack');
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
+        if (/perception|investigation|search/i.test(r.what || '')) {
+            const searcher = matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]);
+            const search = searcher ? searchForTraps(c, searcher, result.total) : null;
+            if (search?.found.length) { await postNote(`⚠️ ${searcher} spots: ${search.found.join(', ')}.`); refreshMap(); }
+        }
         const outcome = judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {
             const key = matchName(r.who, [...meta.party.map(p => p.name), ...c.docs.npcs.map(n => n.name)]) || r.who;

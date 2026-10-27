@@ -27,6 +27,13 @@ const VIA = ['door', 'arch', 'locked', 'secret', 'stairs', 'cell'];
 const KIND_THEME = { mansion: 'mansion', manor: 'mansion', estate: 'mansion', house: 'house', castle: 'castle', keep: 'castle', fortress: 'castle', tower: 'castle', palace: 'castle', dungeon: 'dungeon', prison: 'prison', jail: 'prison', asylum: 'prison', cave: 'cave', caves: 'cave', cavern: 'cave', mine: 'mine', crypt: 'crypt', tomb: 'crypt', catacombs: 'crypt', temple: 'temple', church: 'temple', cathedral: 'temple', monastery: 'temple', sewer: 'sewer', sewers: 'sewer', ship: 'ship', cabin: 'cabin', lodge: 'cabin', tavern: 'tavern', inn: 'tavern', library: 'library', academy: 'library' };
 /** Themes where mansion-style walls and floors (wallpaper, carpet) would look wrong. */
 const ROUGH = new Set(['dungeon', 'cave', 'crypt', 'prison', 'sewer', 'mine']);
+/** Places that are kept up unless the story says otherwise; and words that mean they aren't. */
+const KEPT_KINDS = /mansion|manor|estate|house|home|palace|castle|keep|fortress|citadel|temple|church|cathedral|monastery|abbey|shrine|prison|jail|gaol|stockade|asylum|tavern|inn|library|academy|school|tower|ship|lodge|cabin|guild|bank|museum|hospital|barracks|office|shop|hall/;
+const RUINED_WORDS = /abandon|ruin|derelict|haunted|forgotten|crumbl|collapsed|overgrown|decay|desert(ed)?|lost|ancient|old dungeon|sunken|flooded/;
+/** Mess that a kept-up place doesn't have lying around (furniture stays). */
+const MESS = new Set(['bones', 'skull', 'blood', 'scratches', 'web', 'debris', 'rubble', 'puddle', 'cracks', 'moss', 'rat', 'trash', 'broken_glass']);
+/** Hazards that come from decay, not from someone setting a trap. */
+const DECAY = /rot|crumbl|collaps|loose|weak|unstable|sagging|cave-?in|falling ceiling/;
 
 // ---------- the plan ----------
 
@@ -162,6 +169,12 @@ export function normalizePlan(raw) {
     }
     const themeIn = str(d.theme).toLowerCase();
     const theme = THEMES.includes(themeIn) ? themeIn : KIND_THEME[kind] ?? 'dungeon';
+    // Kept up (orderly, tidy), worn (lived in, a bit run down) or ruined (a maze, mess, decay).
+    const condIn = str(d.condition).toLowerCase();
+    const words = `${str(d.name)} ${kind} ${str(d.summary)} ${str(d.why)}`.toLowerCase();
+    const condition = ['kept', 'worn', 'ruined'].includes(condIn) ? condIn : RUINED_WORDS.test(words) ? 'ruined' : KEPT_KINDS.test(kind) ? 'kept' : 'ruined';
+    // A kept-up place has no decay hazards: anything like that becomes a trap someone set on purpose.
+    if (condition === 'kept') for (const r of rooms) for (const t of r.traps) if (DECAY.test(t.kind.toLowerCase())) t.kind = 'pressure plate (darts)';
     return {
         normalized: true,
         name: str(d.name).slice(0, 80) || 'Unnamed place',
@@ -170,6 +183,7 @@ export function normalizePlan(raw) {
         fog: typeof d.fog === 'boolean' ? d.fog : true,
         barred: d.barred_windows === true,
         summary: str(d.summary).slice(0, 1200),
+        condition,
         floors, rooms, links, guards, start,
     };
 }
@@ -311,20 +325,39 @@ function buildFloor(r, plan, floor, rects, shrink, doors) {
     if (anchor) visit(anchor.id);
     for (const x of here) if (!seen.has(x.id)) visit(x.id);
     const corridorNeeded = [];
-    const hall = here.find(x => x.cellBlock);
-    if (hall) {
-        const cells = sameFloor.filter(l => l.via === 'cell' && (l.a === hall.id || l.b === hall.id)).map(l => (l.a === hall.id ? l.b : l.a)).slice(0, 28);
-        const perSide = Math.ceil(cells.length / 2), cw = 3, ch = 3;
-        rects[hall.id] = { x: 0, y: 0, w: Math.max(5, perSide * (cw + 1) - 1), h: 2 };
-        grid.place(rects[hall.id], hall.id);
-        cells.forEach((id, i) => {
-            const rect = { x: Math.floor(i / 2) * (cw + 1), y: i % 2 === 0 ? 2 + 1 : -1 - ch, w: cw, h: ch };
-            rects[id] = rect;
-            grid.place(rect, id);
+    // A jail's cell block, or (in a kept-up place) the floor's main hallway, goes down first as a
+    // spine: the hallway, with the rooms off it in two neat rows along its sides.
+    const linkedTo = id => sameFloor.filter(l => l.a === id || l.b === id).map(l => (l.a === id ? l.b : l.a));
+    const block = here.find(x => x.cellBlock);
+    const spine = block ?? (plan.condition === 'kept'
+        ? here.filter(x => ['hallway', 'gallery', 'foyer'].includes(x.type) && linkedTo(x.id).length >= 3).sort((a, b) => linkedTo(b.id).length - linkedTo(a.id).length)[0]
+        : null);
+    const placed = new Set();
+    if (spine) {
+        const along = (block ? sameFloor.filter(l => l.via === 'cell' && (l.a === spine.id || l.b === spine.id)).map(l => (l.a === spine.id ? l.b : l.a)) : linkedTo(spine.id)).slice(0, 28);
+        const size = id => (block ? { w: 3, h: 3 } : dims[id]);
+        // Each room goes on the side that's shorter so far.
+        const sides = [[], []], len = [0, 0];
+        for (const id of along) { const s = len[0] <= len[1] ? 0 : 1; sides[s].push(id); len[s] += size(id).w + 1; }
+        const hallH = block ? 2 : Math.min(3, Math.max(2, Math.round(Math.max(...along.map(id => size(id).w), 3) / 4)));
+        rects[spine.id] = { x: 0, y: 0, w: Math.max(5, Math.max(...len) - 1), h: hallH };
+        grid.place(rects[spine.id], spine.id);
+        placed.add(spine.id);
+        sides.forEach((ids, s) => {
+            let x = 0;
+            for (const id of ids) {
+                const { w, h } = size(id);
+                const rect = { x, y: s === 0 ? hallH + 1 : -1 - h, w, h };
+                if (!grid.canPlace(rect)) continue;
+                rects[id] = rect;
+                grid.place(rect, id);
+                placed.add(id);
+                x += w + 1;
+            }
         });
     }
     for (const id of order) {
-        if (rects[id] && here.some(x => x.id === id) && hall) continue;
+        if (placed.has(id)) continue;
         const { w, h } = dims[id];
         if (!Object.keys(rects).some(k => here.some(x => x.id === k))) {
             rects[id] = { x: 0, y: 0, w, h };
@@ -380,7 +413,7 @@ function roomTiles(rect) {
 }
 
 /** Furnish one room on a finished floor. ctx: {chars (2D, [y][x]), props, blocked:Set, reserved:Set} */
-function furnish(r, room, rect, ctx, theme) {
+function furnish(r, room, rect, ctx, theme, condition = 'ruined') {
     const recipe = recipeFor(room.type);
     const inside = (x, y) => x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
     const charAt = (x, y) => ctx.chars[y]?.[x] ?? '%';
@@ -489,6 +522,7 @@ function furnish(r, room, rect, ctx, theme) {
     const rough = ROUGH.has(theme);
     for (const [type, where, [lo, hi], opt = {}] of recipe.items) {
         if (rough && ['painting', 'mirror', 'chandelier'].includes(type) && !['crypt', 'chapel'].includes(room.type)) continue;
+        if (condition === 'kept' && MESS.has(type)) continue;
         let n = int(r, lo, hi);
         if (area < 16) n = Math.min(n, Math.max(lo, 1));
         else if (area > 60) n = Math.max(n, hi);
@@ -630,7 +664,10 @@ function tryBuild(plan, seed, shrink) {
         const rect = { x: rc.x + ox, y: rc.y + oy, w: rc.w, h: rc.h };
         const lit = room.lit ?? recipeFor(room.type).lit ?? false;
         place.rooms[room.id] = { id: room.id, name: room.name, type: room.type, floor: room.floor, rect, lit, description: room.description, exit: room.exit };
-        floorMap(room.floor).areas.push({ ...rect, ...areaStyle(r, room, plan.theme, levelOf(room.floor)), lit, room: room.id });
+        const style = areaStyle(r, room, plan.theme, levelOf(room.floor));
+        // Grime: a kept-up place is clean; a ruin is filthier than usual.
+        if (plan.condition === 'kept') delete style.grime; else if (plan.condition === 'ruined' && style.grime) style.grime = Math.min(1, style.grime * 1.3);
+        floorMap(room.floor).areas.push({ ...rect, ...style, lit, room: room.id });
     }
     // Doors.
     let doorN = 0;
@@ -723,7 +760,7 @@ function tryBuild(plan, seed, shrink) {
         const map = floorMap(pr.floor);
         const blocked = new Set();
         const res = new Set([...reserved].filter(k => k.startsWith(`${pr.floor}:`)).map(k => k.slice(pr.floor.length + 1)));
-        furnish(r, room, pr.rect, { chars: chars[pr.floor], props: map.props, blocked, reserved: res }, plan.theme);
+        furnish(r, room, pr.rect, { chars: chars[pr.floor], props: map.props, blocked, reserved: res }, plan.theme, plan.condition);
     }
     // Traps, items, keys, guards.
     const blockedAt = (floor, x, y) => floorMap(floor).props.some(p => PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));

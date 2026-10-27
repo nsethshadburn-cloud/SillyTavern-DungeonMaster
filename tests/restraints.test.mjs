@@ -24,7 +24,7 @@ test('rope, grabs and cages lock movement; cuffs bind the hands only; shackles s
     assert.ok(escapeOptions('Amber', restraintOf(['tied up'])).some(([l]) => /Struggle/.test(l)));
     assert.ok(escapeOptions('Amber', restraintOf(['caged'])).some(([l]) => /lock/i.test(l)));
     assert.ok(escapeOptions('Amber', restraintOf(['cuffed'])).length, 'cuffs can be slipped even though you can walk');
-    assert.equal(escapeOptions('Amber', restraintOf(['poisoned'])).length, 0);
+    assert.deepEqual(escapeOptions('Amber', restraintOf(['poisoned'])).map(([l]) => l), ['Search for traps'], 'free: tap yourself to search the room');
 });
 
 test('anyone can be tied up: party, enemies, and NPCs outside a fight', () => {

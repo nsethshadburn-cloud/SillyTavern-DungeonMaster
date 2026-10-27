@@ -424,6 +424,8 @@ test('v0.7: no secret rolls, companions roll covert actions, version stamp match
     const places = [{ id: 'p12', name: 'the hay (in this room)' }, { id: 'R5', name: 'Guard room (next door)' }];
     assert.equal(parseCompanionAction('{"attempt": false, "go": "p12"}', places).go, 'p12', 'she goes to hide in the hay');
     assert.equal(parseCompanionAction('{"go": "the moon"}', places).go, '', 'only real places');
+    assert.equal(parseCompanionAction('{"go": "p12", "hide": true}', places).hide, true, 'she hides in the hay');
+    assert.equal(parseCompanionAction('{"go": "p12"}', places).hide, undefined);
     assert.match(companionActionPrompt({ name: 'Judy', message: "I'll hide in the hay.", places }).user, /p12 = the hay/);
     const { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } = await import('../src/core/notes.js');
     assert.match(DEFAULT_TEMPLATES.npc, /one or two short lines of dialogue/);

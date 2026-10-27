@@ -15,7 +15,7 @@ import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, fi
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
-import { PROPS } from '../core/grid.js';
+import { PROPS, HIDE } from '../core/grid.js';
 import { personByName, openSquareNear } from '../core/explore.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
@@ -189,7 +189,7 @@ export function goTargets(c, name) {
  * room or to a room next door. They walk there and stay (they no longer follow the player).
  * Returns what they went to, or '' if they can't (tied up, no way there).
  */
-export async function companionGoTo(c, name, targetId) {
+export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || lockedReason(c, name)) return '';
     const { key, place } = cur;
@@ -225,9 +225,66 @@ export async function companionGoTo(c, name, targetId) {
     }
     place.state.waiting ??= {};
     place.state.waiting[name] = true;
+    if (place.state.hidden?.[name]) delete place.state.hidden[name];
+    if (hide && prop && HIDE[prop.type]) hideAt(c, name, prop.id);
     savePlace(key, c);
     refreshMap();
-    return prop ? (prop.label || PROPS[prop.type]?.name || prop.type) : room.name;
+    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} the ` : ''}${prop.label || PROPS[prop.type]?.name || prop.type}` : room.name;
+}
+
+/**
+ * Someone searched the room they're in (a Perception or Investigation roll of `total`): every
+ * hidden trap in that room with a DC at or under the roll shows up on the map. Returns what was found.
+ */
+export function searchForTraps(c, name, total) {
+    const cur = currentPlace(c);
+    const pos = cur && whereIs(cur.place, name);
+    if (!pos || !Number.isFinite(total)) return null;
+    const { key, place } = cur;
+    const rm = roomAt(place, pos.floor, pos.x, pos.y);
+    const near = t => (rm ? t.room === rm.id : Math.max(Math.abs(t.x - pos.x), Math.abs(t.y - pos.y)) <= 3);
+    const inRoom = Object.values(place.traps).filter(t => t.floor === pos.floor && near(t));
+    const found = inRoom.filter(t => t.state === 'hidden' && total >= t.dc);
+    for (const t of found) {
+        t.state = 'found';
+        const prop = floorById(place, t.floor).map.props.find(p => p.trap === t.id);
+        if (prop) prop.hidden = false;
+    }
+    if (found.length) { floorById(place, pos.floor).map.version = (floorById(place, pos.floor).map.version || 0) + 1; savePlace(key, c); }
+    return { room: rm?.name ?? 'the passage', found: found.map(t => `${t.kind} (${t.id})`), missed: inRoom.filter(t => t.state === 'hidden').length };
+}
+
+/** How someone is hidden right now ({prop, mode: 'in'|'under'|'behind', at}), or null. */
+export function hiding(c, name) {
+    return currentPlace(c)?.place.state.hidden?.[name] ?? null;
+}
+
+/**
+ * Someone hides in, under or behind a thing next to them (they must already be beside it). Inside
+ * or underneath, they move onto its square; behind it, they crouch where they are.
+ */
+export function hideAt(c, name, propId) {
+    const cur = currentPlace(c);
+    if (!cur) return null;
+    const { key, place } = cur;
+    const pos = place.state.positions[name];
+    const map = pos && floorById(place, pos.floor).map;
+    const prop = map?.props.find(p => p.id === propId);
+    const mode = prop && HIDE[prop.type];
+    if (!mode) return null;
+    if (mode !== 'behind') Object.assign(pos, { x: prop.x, y: prop.y });
+    place.state.hidden ??= {};
+    place.state.hidden[name] = { prop: prop.id, mode, at: Date.now() };
+    savePlace(key, c);
+    return { mode, name: prop.label || PROPS[prop.type]?.name || prop.type };
+}
+
+/** Come out of hiding (walking anywhere does this too). */
+export function unhide(c, name) {
+    const cur = currentPlace(c);
+    if (!cur?.place.state.hidden?.[name]) return;
+    delete cur.place.state.hidden[name];
+    savePlace(cur.key, c);
 }
 
 /** Companions who walk along with the player right now (not the ones who chose to stay, or who can't move). */
@@ -584,6 +641,7 @@ export async function walkTo(target, redraw = () => { }) {
     const lead = place.state.positions[names[0]];
     if (!lead) return;
     if (stuck(c)) return;
+    if (place.state.hidden?.[names[0]]) delete place.state.hidden[names[0]];
     const { isRunning } = await import('./orchestrator.js');
     if (isRunning()) { toastr.info('The DM is busy. Move when the turn is done.', 'Map', { timeOut: 2500 }); return; }
     const floorId = lead.floor;
@@ -640,20 +698,12 @@ export async function walkTo(target, redraw = () => { }) {
         return moved;
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
-    const passive = passivePerception(c);
     let event = null, handoff = null;
     try {
         for (const [x, y] of path) {
-            // A hidden trap on the next square: spotted (stop before it) or sprung (stop on it).
+            // A trap on the next square. Hidden ones stay hidden until someone searches the room
+            // (a Perception or Investigation roll) or steps on one: then it springs.
             const trap = Object.values(place.traps).find(t => t.floor === floorId && t.x === x && t.y === y && (t.state === 'hidden' || t.state === 'found'));
-            if (trap && trap.state === 'hidden' && passive >= trap.dc) {
-                trap.state = 'found';
-                const prop = floorById(place, floorId).map.props.find(p => p.trap === trap.id);
-                if (prop) prop.hidden = false;
-                floorById(place, floorId).map.version = (floorById(place, floorId).map.version || 0) + 1;
-                await postNote(`⚠️ Someone notices a ${trap.kind} just ahead (passive Perception ${passive}).`);
-                break;
-            }
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') setDoorState(place, d, 'open');
             lead.x = x; lead.y = y;
@@ -668,6 +718,8 @@ export async function walkTo(target, redraw = () => { }) {
             await sleep(95);
             if (trap && trap.state === 'hidden') {
                 trap.state = 'sprung';
+                const sprungProp = floorById(place, floorId).map.props.find(p => p.trap === trap.id);
+                if (sprungProp) { sprungProp.hidden = false; floorById(place, floorId).map.version = (floorById(place, floorId).map.version || 0) + 1; }
                 const room = place.rooms[trap.room];
                 event = `${names[0]} stepped on a hidden ${trap.kind} (${trap.id}) in ${room?.name ?? 'a passage'}: DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}. Ask for the save (player_roll) and narrate it.`;
                 break;

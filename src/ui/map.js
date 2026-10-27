@@ -7,10 +7,10 @@
 // Claude never sees an image: it reads and writes maps as plain text.
 
 import { campaign } from '../st/campaign.js';
-import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, reachable, speedSquares, propAt } from '../core/grid.js';
+import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason } from '../st/atlas.js';
+import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, unhide, hiding } from '../st/atlas.js';
 import { conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight } from '../core/explore.js';
@@ -386,6 +386,11 @@ function drawTokens(ctx, c, b, tile, now, restore) {
         const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : '#8fb4d9';
         const hp = hpOf(c, name);
         const held = restraintOf(conditionsOf(c.docs.world, name));
+        const hid = b.kind === 'place' ? b.place.state.hidden?.[name] : null;
+        if (hid) {
+            drawHidden(ctx, c, name, hid, px, py, tile, now, figures);
+            continue;
+        }
         if (figures) {
             // A colored ring on the floor, the figure standing on it.
             ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -429,6 +434,40 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             ctx.fillStyle = b.enemies.has(name) ? '#ff5252' : pct > 0.5 ? '#4caf50' : pct > 0.25 ? '#ffb300' : '#e53935';
             ctx.fillRect(px + 8, py + tile - 7, (tile - 16) * pct, 5);
         }
+    }
+}
+
+/**
+ * Someone hiding. For half a second they duck into their spot (sinking and fading); then: inside or
+ * under something, only a pair of eyes peeks out (blinking now and then); behind something, a faint
+ * crouched figure.
+ */
+function drawHidden(ctx, c, name, hid, px, py, tile, now, figures) {
+    const started = motion.get(name)?.hideStart ?? 0;
+    const t = Math.min(1, (now - started) / 500);
+    if (figures && t < 1) {
+        ctx.save();
+        ctx.globalAlpha = 1 - t;
+        ctx.beginPath(); ctx.rect(px, py, tile, tile); ctx.clip();
+        drawFigure(ctx, figureFor(name), px, py - tile * 0.06 + t * tile * 0.5, tile, { anim: 'idle', elapsed: now });
+        ctx.restore();
+        return;
+    }
+    if (hid.mode === 'behind') {
+        ctx.save();
+        ctx.globalAlpha = 0.42;
+        ctx.beginPath(); ctx.rect(px, py + tile * 0.25, tile, tile * 0.75); ctx.clip();
+        if (figures) drawFigure(ctx, figureFor(name), px, py + tile * 0.18, tile, { anim: 'idle', elapsed: now + nameOffset(name) });
+        ctx.restore();
+    }
+    // The eyes: two little whites with dark pupils, closing for a moment now and then.
+    const cx = px + tile / 2, cy = py + (hid.mode === 'under' ? tile * 0.7 : hid.mode === 'in' ? tile * 0.42 : tile * 0.5);
+    const blink = (now + nameOffset(name)) % 3400 < 160;
+    for (const dx of [-0.09, 0.09]) {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(cx + dx * tile - tile * 0.06, cy - tile * 0.05, tile * 0.12, tile * 0.1);
+        if (blink) { ctx.fillStyle = '#e8e2d6'; ctx.fillRect(cx + dx * tile - tile * 0.045, cy, tile * 0.09, Math.max(1, tile * 0.015)); continue; }
+        ctx.fillStyle = '#f2efe8'; ctx.fillRect(cx + dx * tile - tile * 0.045, cy - tile * 0.03, tile * 0.09, tile * 0.06);
+        ctx.fillStyle = '#17131a'; ctx.fillRect(cx + dx * tile, cy - tile * 0.025, tile * 0.035, tile * 0.05);
     }
 }
 
@@ -580,9 +619,11 @@ function openMenu(ev, c, b, who, view, canvas) {
 function openSelfMenu(ev, c) {
     const me = c.meta.persona.name;
     const r = restraintOf(conditionsOf(c.docs.world, me));
-    const options = escapeOptions(me, r);
+    const options = escapeOptions(me, r).map(([label, icon, text]) => [label, icon, async () => sendAsPlayer(text)]);
+    const hid = hiding(c, me);
+    if (hid) options.unshift(['Come out', 'fa-person-walking', async () => { unhide(c, me); renderMap(); }]);
     if (!options.length) return false;
-    showMenu(ev, me, r.reason || r.look || '', options.map(([label, icon, text]) => [label, icon, async () => sendAsPlayer(text)]));
+    showMenu(ev, me, hid ? `hiding ${hid.mode} something` : r.reason || r.look || '', options);
     return true;
 }
 
@@ -593,7 +634,7 @@ function thingAt(b, sq) {
     const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
     if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
     const prop = propAt(b.map, sq.x, sq.y);
-    if (!prop || !PROPS[prop.type]?.blocks) return null;
+    if (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type])) return null;
     return { kind: 'prop', prop, name: prop.label || PROPS[prop.type]?.name || prop.type, spot: { x: prop.x, y: prop.y, w: prop.w, h: prop.h } };
 }
 
@@ -616,7 +657,17 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
     } else {
         const p = thing.prop;
         const light = isLight(p);
+        const how = HIDE[p.type];
         actions = [
+            ...(how ? [[`Hide ${how === 'in' ? 'in' : how === 'under' ? 'under' : 'behind'} it`, 'fa-user-secret', async () => {
+                if (!(await near())) return;
+                const h = hideAt(c, player, p.id);
+                if (!h) return;
+                motion.set(player, { ...(motion.get(player) ?? {}), hideStart: performance.now() });
+                setMapAction(`${player} hides ${h.mode} the ${h.name} (${p.id} at ${where}). If anyone might see or come looking, they roll Stealth; otherwise just note it.`);
+                sendAsPlayer(`*${player} hides ${h.mode} the ${h.name}.*`);
+                done();
+            }]] : []),
             ['Search', 'fa-magnifying-glass', async () => { if (!(await near())) return; setMapAction(`${player} searches the ${thing.name} (${p.id} at ${where}). Say what they find, if anything (items in this room are in the place notes).`); sendAsPlayer(`*${player} searches the ${thing.name}.*`); done(); }],
             ['Smash', 'fa-hammer', async () => { if (!(await near())) return; setMapAction(`${player} tries to smash the ${thing.name} (${p.id} at ${where}). Ask for a Strength (Athletics) roll, harder for sturdy things; on a success set place_changes.props {"${p.id}": "broken"}. It's noisy.`); sendAsPlayer(`*${player} tries to smash the ${thing.name}.*`); done(); }],
             ['Push', 'fa-hand-back-fist', async () => { if (!(await near())) return; openPushMenu(ev, c, thing, light, redraw, done); }],

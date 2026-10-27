@@ -66,6 +66,20 @@ export const LIBRARY = {
     human_child: { species: 'human', female: 'some', young: true, build: 'small', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#7a5a3a', '#4a6a8a', '#8a4a4a'] },
     human_butler: { species: 'human', outfit: 'vest', head: 'none', weapon: 'none', hair: 'short', outfitColors: ['#1f1f24'], accentColors: ['#f2efe8'] },
     human_brute: { species: 'human', build: 'large', outfit: 'rags', head: 'none', weapon: 'axe', outfitColors: ['#5a4a3a', '#4a3a30'] },
+    human_cook: { species: 'human', female: 'some', outfit: 'tunic', head: 'bandana', weapon: 'none', outfitColors: ['#e8e2d6', '#d8d0c0'], accentColors: ['#c9a227', '#7a2a2a'] },
+    human_smith: { species: 'human', build: 'large', outfit: 'leather', head: 'none', weapon: 'mace', outfitColors: ['#4a3a2a', '#3b3330'], accentColors: ['#7a5a3a'] },
+    human_jailer: { species: 'human', outfit: 'leather', head: 'none', weapon: 'club', outfitColors: ['#3b3330', '#2a2a2a', '#4a3a2a'], accentColors: ['#b8c0c8', '#7a5a2a'] },
+    human_farmer: { species: 'human', female: 'some', outfit: 'tunic', head: 'hat', weapon: 'none', outfitColors: ['#8a7a4a', '#6a7a3a', '#7a6a4a'], accentColors: ['#c9a227', '#5a4a2a'] },
+    human_laborer: { species: 'human', female: 'some', outfit: 'vest', head: 'bandana', weapon: 'none', outfitColors: ['#6a5a4a', '#4a4a3a', '#5a4a3a'], accentColors: ['#8a3a2a', '#3a5a7a'] },
+    human_sailor: { species: 'human', female: 'some', outfit: 'tunic', head: 'bandana', weapon: 'dagger', outfitColors: ['#2a4a7a', '#e8e2d6', '#3a3a5a'], accentColors: ['#9a2a2a', '#2a2a2a'] },
+    human_miner: { species: 'human', build: 'large', outfit: 'rags', head: 'helmet', weapon: 'axe', outfitColors: ['#5a5048', '#4a4440'] },
+    human_scholar: { species: 'human', female: 'some', outfit: 'robe', head: 'none', weapon: 'none', outfitColors: ['#5a4a3a', '#3a4a3a', '#4a3a4a'], accentColors: ['#c9a227'] },
+    human_bard: { species: 'human', female: 'some', outfit: 'vest', head: 'hat', weapon: 'dagger', outfitColors: ['#7a2a4a', '#2a6a5a', '#7a5a1a'], accentColors: ['#e0b83a', '#e8e2d6'] },
+    human_healer: { species: 'human', female: 'some', outfit: 'robe', head: 'hood', weapon: 'staff', outfitColors: ['#5a7a5a', '#e8e2d6', '#6a8a7a'], accentColors: ['#9a2a2a'] },
+    human_beggar: { species: 'human', female: 'some', outfit: 'rags', head: 'hood', weapon: 'none', outfitColors: ['#5a5048', '#4a4440', '#6a5a4a'] },
+    human_elder: { species: 'human', female: 'some', outfit: 'robe', head: 'none', weapon: 'staff', hair: 'short', outfitColors: ['#6a6a6a', '#5a4a3a', '#4a4a5a'] },
+    human_executioner: { species: 'human', build: 'large', outfit: 'none', head: 'hood', weapon: 'axe', outfitColors: ['#1a1a1a'] },
+    human_townsfolk: { species: 'human', female: 'some', outfit: 'tunic', head: 'none', weapon: 'none', outfitColors: ['#4a6a8a', '#8a4a4a', '#5a7a4a', '#7a6a8a', '#8a7a5a'] },
     elf: { species: 'elf', female: 'some', outfit: 'leather', head: 'none', weapon: 'bow', outfitColors: ['#3a6a3a', '#5a6a3a', '#3a4a6a'] },
     dwarf: { species: 'dwarf', outfit: 'armor', head: 'helmet', weapon: 'axe', outfitColors: ['#7a5a3a', '#5a5a6a'] },
     halfling: { species: 'halfling', female: 'some', outfit: 'vest', head: 'none', weapon: 'dagger', outfitColors: ['#5a7a3a', '#7a5a2a', '#3a5a7a'] },
@@ -88,21 +102,33 @@ export const LIBRARY = {
 /** Pick a library figure from what an NPC or enemy is called and described as. */
 export function presetFor(text) {
     const t = String(text || '').toLowerCase();
+    const w = list => new RegExp(`\\b(${list})\\b`);
     const rules = [
-        [/\b(giant )?spider/, 'giant_spider'], [/\b(rat|rats)\b/, 'rat'], [/\b(horse|pony|steed|mare|stallion)\b/, 'horse'], [/\bbear\b/, 'bear'], [/\bboar\b/, 'boar'],
+        [/\b(giant )?spiders?\b/, 'giant_spider'], [/\b(rat|rats)\b/, 'rat'], [/\b(horse|pony|steed|mare|stallion)\b/, 'horse'], [/\bbear\b/, 'bear'], [/\bboar\b/, 'boar'],
         [/\b(hound|mastiff|dog|cur)\b/, 'hound'], [/\b(lion|panther|tiger|big cat|leopard)\b/, 'big_cat'],
         [/\b(wolf|wolves|warg)\b(?!.*folk)/, /folk|man\b|woman\b/.test(t) ? 'wolffolk' : 'wolf'],
-        [/skeleton|bones\b/, 'skeleton'], [/zombie|ghoul|corpse|undead/, 'zombie'], [/ghost|spirit|specter|spectre|phantom|wraith|apparition/, 'ghost'],
-        [/harengon|rabbit|bunny|hare\b/, 'rabbitfolk'], [/tabaxi|cat ?folk|\bcat\b/, 'catfolk'], [/fox/, 'foxfolk'], [/mouse|mice/, 'mousefolk'], [/lizard|kobold|dragonborn/, 'lizardfolk'],
-        [/\borc|half-orc/, 'orc'], [/goblin|hobgoblin/, 'goblin'], [/tiefling|devil|demon/, 'tiefling'], [/\bdwarf|dwarven/, 'dwarf'], [/halfling|gnome/, 'halfling'], [/\belf|elven|drow/, 'elf'],
-        [/knight|captain|commander|paladin/, 'human_knight'], [/\b(guards?|soldiers?|watch(man|men)?|sentry|sentries|warden|jailer|turnkey)\b/, 'human_guard'], [/butler|valet|steward/, 'human_butler'],
-        [/maid|servant|cook|housekeeper|footman/, 'human_servant'], [/lady|queen|princess|duchess|countess|baroness|madam/, 'human_lady'],
-        [/noble|lord|king|prince|duke|count|baron|aristocrat|magistrate/, 'human_noble'], [/cultist|acolyte|zealot/, 'human_cultist'], [/priest|cleric|monk|nun|bishop/, 'human_priest'],
-        [/mage|wizard|sorcer|warlock|witch|alchemist/, 'human_mage'], [/archer|hunter|ranger|scout/, 'human_archer'], [/bandit|thief|rogue|cutpurse|assassin/, 'human_bandit'],
-        [/thug|brute|bruiser|ogre|giant|groundskeeper/, /groundskeeper|brute|ogre|giant/.test(t) ? 'human_brute' : 'human_thug'], [/merchant|shopkeeper|trader|innkeeper|barkeep|smith/, 'human_merchant'],
-        [/child|kid|boy|girl|urchin/, 'human_child'],
+        [w('skeletons?|skeletal'), 'skeleton'], [w('zombies?|ghouls?|corpses?|undead|walking dead'), 'zombie'], [w('ghosts?|spirits?|specters?|spectres?|phantoms?|wraiths?|apparitions?|ghostly'), 'ghost'],
+        [w('harengon|rabbits?|bunny|bunnies|hares?|rabbit-?folk'), 'rabbitfolk'], [w('tabaxi|cat-?folk|cats?'), 'catfolk'], [w('fox|foxes|fox-?folk'), 'foxfolk'], [w('mouse|mice|mouse-?folk'), 'mousefolk'], [w('lizard-?folk|lizards?|kobolds?|dragonborn'), 'lizardfolk'],
+        [w('orcs?|half-orcs?|orcish'), 'orc'], [w('goblins?|hobgoblins?'), 'goblin'], [w('tieflings?|devils?|demons?'), 'tiefling'], [w('dwarf|dwarves|dwarven'), 'dwarf'], [w('halflings?|gnomes?'), 'halfling'], [w('elf|elves|elven|elvish|drow'), 'elf'],
+        [w('knights?|captain|commander|paladins?'), 'human_knight'], [w('jailers?|turnkeys?|gaolers?|keykeepers?'), 'human_jailer'],
+        [w('guards?|soldiers?|watch(man|men)?|sentry|sentries|wardens?|city watch'), 'human_guard'], [w('butlers?|valets?|stewards?'), 'human_butler'],
+        [w('cooks?|chefs?|bakers?|butchers?'), 'human_cook'], [w('maids?|servants?|housekeepers?|footmen|footman|barmaids?|serving girl'), 'human_servant'],
+        [w('lady|queen|princess|duchess|countess|baroness|madam|noblewoman'), 'human_lady'],
+        [w('nobles?|nobleman|lord|king|prince|duke|count|baron|aristocrats?|magistrate'), 'human_noble'], [w('cultists?|acolytes?|zealots?'), 'human_cultist'],
+        [w('priests?|priestess|clerics?|monks?|nuns?|bishops?|abbots?|abbess|brother|friars?'), 'human_priest'], [w('healers?|physicians?|surgeons?|herbalists?|midwife|apothecary'), 'human_healer'],
+        [w('mages?|wizards?|sorcerers?|sorceress|warlocks?|witch|witches|alchemists?|magician'), 'human_mage'], [w('scholars?|scribes?|librarians?|sages?|clerks?|tutors?|archivists?'), 'human_scholar'],
+        [w('archers?|hunters?|rangers?|scouts?|trappers?|poachers?'), 'human_archer'], [w('bandits?|thie(f|ves)|rogues?|cutpurses?|assassins?|smugglers?|highwaym[ae]n|pickpockets?'), 'human_bandit'],
+        [w('executioners?|headsm[ae]n|torturers?'), 'human_executioner'],
+        [w('ogres?|giants?|brutes?|bruisers?|groundskeepers?'), 'human_brute'], [w('thugs?|enforcers?|heavies|bouncers?|mercenar(y|ies)'), 'human_thug'],
+        [w('(black|silver|gold|lock|white)?smiths?|farriers?|armou?rers?'), 'human_smith'], [w('miners?|diggers?|prospectors?'), 'human_miner'],
+        [w('sailors?|deckhands?|pirates?|fisherm[ae]n|boatm[ae]n|dockworkers?'), 'human_sailor'], [w('farmers?|farmhands?|shepherds?|peasants?|milkmaids?|plowm[ae]n|stablehands?|stable boy'), 'human_farmer'],
+        [w('laborers?|labourers?|workers?|porters?|carpenters?|masons?|builders?|dockhands?'), 'human_laborer'],
+        [w('bards?|minstrels?|musicians?|singers?|performers?|jugglers?|entertainers?'), 'human_bard'],
+        [w('merchants?|shopkeepers?|traders?|innkeepers?|barkeeps?|tavern ?keepers?|peddlers?|vendors?|landlord|landlady|bartenders?'), 'human_merchant'],
+        [w('beggars?|vagrants?|drunks?|drunkards?|vagabonds?|hermits?'), 'human_beggar'], [w('elders?|old m[ae]n|old wom[ae]n|grandmother|grandfather|crone|matron|village elder'), 'human_elder'],
+        [w('child|children|kids?|boys?|girls?|urchins?|orphans?|youngsters?'), 'human_child'],
     ];
-    return rules.find(([re]) => re.test(t))?.[1] ?? 'human_peasant';
+    return rules.find(([re]) => re.test(t))?.[1] ?? null;
 }
 
 function hashText(s) {
@@ -150,9 +176,13 @@ export function libraryLook(key, variant = 0, sex = '') {
 }
 
 /** The look for an NPC by name and description, with a variant that's stable for that name. */
+const COMMONERS = ['human_townsfolk', 'human_peasant', 'human_laborer', 'human_farmer', 'human_townsfolk', 'human_merchant'];
+
 export function lookForNpc(name, description = '', key = '', gender = '') {
     const sex = gender === 'male' || gender === 'female' ? gender : sexFromText(`${name} ${description}`);
-    return libraryLook(LIBRARY[key] ? key : presetFor(`${name} ${description}`), hashText(name) % 7, sex);
+    const h = hashText(name);
+    const preset = LIBRARY[key] ? key : presetFor(`${name} ${description}`) ?? COMMONERS[Math.floor(h / 7) % COMMONERS.length];
+    return libraryLook(preset, h % 7, sex);
 }
 
 const hex = v => (/^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim().toLowerCase() : null);
