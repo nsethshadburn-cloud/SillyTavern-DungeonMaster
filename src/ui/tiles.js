@@ -41,7 +41,7 @@ const WALL_MATERIAL = {
 };
 const OUTDOOR = new Set(['forest', 'camp', 'swamp', 'snow', 'desert', 'town']);
 /** Terrain that is drawn on top of a floor: its ground comes from the squares around it. */
-const OVERLAY = new Set(['T', '+', '/', 'D', '<', '>', 'o', '^']);
+const OVERLAY = new Set(['T', '+', '/', 'D', '<', '>', 'o', '^', 'I', 'J', 'j']);
 const PLAIN = { '.': true, ',': true, ':': true, '_': true, '=': true };
 
 // ---------- floors ----------
@@ -422,6 +422,51 @@ function windowTile(ctx, r, x, y, s, st, horizontal, gx, gy, open, kind = 'glass
     }
     ctx.restore();
 }
+/**
+ * Iron bars along a wall line (a cell front), or a barred cell door. Drawn like the walls (standing
+ * up off the floor): a row of tall bars between a top and a bottom rail, the floor showing through.
+ * A cell door has a heavier frame and a lock box (gold when locked).
+ */
+function ironBars(ctx, x, y, s, horizontal, kind) {
+    const iron = '#26282e', mid = '#3d4049', shine = 'rgba(220,225,240,0.6)';
+    const door = kind !== 'bars';
+    ctx.save();
+    if (horizontal) {
+        // A fence seen from the front: rails top and bottom, bars between.
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(x, y + s * 0.82, s, s * 0.14);
+        const bars = door ? 5 : 6, bw = Math.max(2, s * 0.075);
+        for (let i = 0; i < bars; i++) {
+            const bx = x + s * (0.5 + i) / bars - bw / 2;
+            ctx.fillStyle = iron; ctx.fillRect(bx, y + s * 0.06, bw, s * 0.82);
+            ctx.fillStyle = shine; ctx.fillRect(bx, y + s * 0.06, Math.max(1, bw * 0.3), s * 0.82);
+        }
+        ctx.fillStyle = mid; ctx.fillRect(x, y + s * 0.02, s, s * 0.09); ctx.fillRect(x, y + s * 0.8, s, s * 0.09);
+        ctx.fillStyle = shine; ctx.fillRect(x, y + s * 0.02, s, 1);
+        if (door) {
+            ctx.fillStyle = '#17181c'; ctx.fillRect(x, y, s * 0.1, s * 0.92); ctx.fillRect(x + s * 0.9, y, s * 0.1, s * 0.92);
+            ctx.fillStyle = kind === 'locked' ? '#c9a227' : '#8a8d95';
+            ctx.fillRect(x + s * 0.38, y + s * 0.38, s * 0.24, s * 0.2);
+            ctx.fillStyle = '#17181c'; ctx.fillRect(x + s * 0.48, y + s * 0.43, s * 0.04, s * 0.1);
+        }
+    } else {
+        // Running up and down the map: a thick rail with the bars' tops seen from above.
+        const cx = x + s / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(cx - s * 0.04, y, s * 0.2, s);
+        ctx.fillStyle = mid; ctx.fillRect(cx - s * 0.1, y, s * 0.2, s);
+        const bars = door ? 4 : 5;
+        for (let i = 0; i < bars; i++) {
+            const by = y + s * (0.5 + i) / bars;
+            ctx.fillStyle = iron; ctx.beginPath(); ctx.arc(cx, by, s * 0.085, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = shine; ctx.beginPath(); ctx.arc(cx - s * 0.025, by - s * 0.025, s * 0.025, 0, Math.PI * 2); ctx.fill();
+        }
+        if (door) {
+            ctx.fillStyle = '#17181c'; ctx.fillRect(cx - s * 0.13, y, s * 0.26, s * 0.1); ctx.fillRect(cx - s * 0.13, y + s * 0.9, s * 0.26, s * 0.1);
+            ctx.fillStyle = kind === 'locked' ? '#c9a227' : '#8a8d95';
+            ctx.fillRect(cx + s * 0.08, y + s * 0.4, s * 0.2, s * 0.2);
+        }
+    }
+    ctx.restore();
+}
 function voidTile(ctx, r, x, y, s) {
     ctx.fillStyle = hsl(220, 14, 7); ctx.fillRect(x, y, s, s);
     speckle(ctx, r, x, y, s, 14, 0.2, 0.03);
@@ -554,6 +599,10 @@ export function paintMapBase(map, tile) {
             else if (ch === 'T') (outdoor ? tree : pillarTile)(ctx, r, px, py, tile);
             else if (ch === '+' || ch === '/' || ch === 'D') door(ctx, r, px, py, tile, ch === '/' ? 'open' : ch === 'D' ? 'locked' : 'closed', isWall(at(x - 1, y)) || isWall(at(x + 1, y)));
             else if (ch === '<' || ch === '>') stairs(ctx, r, px, py, tile, ch === '<');
+            else if (ch === 'I' || ch === 'J' || ch === 'j') {
+                const barLike = c => c === 'I' || c === 'J' || c === 'j' || isWall(c);
+                ironBars(ctx, px, py, tile, barLike(at(x - 1, y)) || barLike(at(x + 1, y)), ch === 'I' ? 'bars' : ch === 'J' ? 'locked' : 'shut');
+            }
         }
     }
     // Grass spills over the edges of roads and paths, and roads get a worn edge.
@@ -595,7 +644,7 @@ export function paintMapBase(map, tile) {
         const w = p.w || 1, h = p.h || 1;
         const cx = (p.x + w / 2) * tile, cy = (map.h - p.y - h / 2) * tile;
         // Seeded by the thing itself (its id), so it keeps its look when it's shoved somewhere else.
-        const idNum = Number(/^p(d+)$/.exec(p.id || '')?.[1]);
+        const idNum = Number(/^p(\d+)$/.exec(p.id || '')?.[1]);
         const rr = Number.isFinite(idNum) ? rngFor(map.seed, idNum, 7919) : rngFor(map.seed, p.x, p.y, 7);
         if (ORIENTED.has(p.type) && p.side && p.side !== 'n') {
             // Drawn with its back to the top, then turned so the back is against its own wall.

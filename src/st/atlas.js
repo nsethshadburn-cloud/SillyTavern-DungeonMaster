@@ -15,6 +15,8 @@ import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, fi
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
+import { PROPS } from '../core/grid.js';
+import { personByName, openSquareNear } from '../core/explore.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
 import { trimToTokens, extractJson } from '../core/text.js';
@@ -115,6 +117,117 @@ function stuck(c) {
     const why = lockedReason(c, c.meta.persona.name);
     if (why) toastr.info(why, 'Map', { timeOut: 4000 });
     return Boolean(why);
+}
+
+/** Where someone stands in the current place (a party member or one of the place's people), or null. */
+function whereIs(place, name) {
+    const p = place.state.positions[name] ?? personByName(place, name);
+    return p && Number.isFinite(p.x) ? p : null;
+}
+
+/** The things in a room (furniture, sacks, hay...), each once, as [{id, name}]. */
+function thingsIn(place, rm) {
+    const map = floorById(place, rm.floor).map;
+    const seen = new Set(), out = [];
+    for (const p of map.props || []) {
+        if (p.hidden) continue;
+        if (p.x >= rm.rect.x + rm.rect.w || p.x + (p.w || 1) <= rm.rect.x || p.y >= rm.rect.y + rm.rect.h || p.y + (p.h || 1) <= rm.rect.y) continue;
+        const name = p.label || PROPS[p.type]?.name || p.type;
+        if (seen.has(name)) continue;
+        seen.add(name);
+        out.push({ id: p.id, name });
+    }
+    return out;
+}
+
+/** The ways out of a room: doors (and where they go), stairs, windows. */
+function exitsOf(place, rm) {
+    const out = [];
+    for (const d of Object.values(place.doors)) {
+        if (!d.rooms.includes(rm.id) || d.state === 'hidden' || d.state === 'walled') continue;
+        const other = d.rooms.find(id => id && id !== rm.id);
+        const what = d.kind === 'cell' ? 'cell door' : 'door';
+        out.push(`${d.state === 'locked' ? `locked ${what}` : d.state === 'open' ? `open ${what}` : what} to ${d.exit ? 'the outside' : place.rooms[other]?.name ?? 'a passage'}`);
+    }
+    for (const s of place.stairs) for (const [e, o] of [[s.a, s.b], [s.b, s.a]]) if (e.room === rm.id) out.push(`stairs to ${place.rooms[o.room]?.name ?? 'another floor'}`);
+    const wins = Object.values(place.windows || {}).filter(w => w.room === rm.id);
+    if (wins.length) out.push(`${wins.length} window${wins.length > 1 ? 's' : ''}${wins.every(w => w.state === 'barred') ? ' (barred)' : ''}`);
+    return out;
+}
+
+/** The room someone is in, for their reply note: {room, things, exits} (empty outside a built place). */
+export function roomBrief(c, name) {
+    const cur = currentPlace(c);
+    const pos = cur && whereIs(cur.place, name);
+    if (!pos) return { room: '', things: '', exits: '' };
+    const rm = roomAt(cur.place, pos.floor, pos.x, pos.y);
+    if (!rm) return { room: 'A passage between rooms.', things: '', exits: '' };
+    return {
+        room: `${rm.name}${rm.description ? `: ${rm.description}` : ''}`,
+        things: thingsIn(cur.place, rm).map(t => t.name).join(', '),
+        exits: exitsOf(cur.place, rm).join('; '),
+    };
+}
+
+/** Where a companion could go on their own right now: things in their room, and rooms next door. [{id, name}] */
+export function goTargets(c, name) {
+    const cur = currentPlace(c);
+    const pos = cur && whereIs(cur.place, name);
+    if (!pos) return [];
+    const rm = roomAt(cur.place, pos.floor, pos.x, pos.y);
+    const out = rm ? thingsIn(cur.place, rm).map(t => ({ id: t.id, name: `the ${t.name} (in this room)` })) : [];
+    for (const d of Object.values(cur.place.doors)) {
+        if (!rm || !d.rooms.includes(rm.id) || d.state === 'locked' || d.state === 'hidden' || d.state === 'walled') continue;
+        const other = cur.place.rooms[d.rooms.find(id => id && id !== rm.id)];
+        if (other && !out.some(o => o.id === other.id)) out.push({ id: other.id, name: `${other.name} (next door)` });
+    }
+    return out.slice(0, 24);
+}
+
+/**
+ * A companion goes somewhere on the map on their own (they said they would): to a thing in their
+ * room or to a room next door. They walk there and stay (they no longer follow the player).
+ * Returns what they went to, or '' if they can't (tied up, no way there).
+ */
+export async function companionGoTo(c, name, targetId) {
+    const cur = currentPlace(c);
+    if (!cur || c.docs.world.combat || lockedReason(c, name)) return '';
+    const { key, place } = cur;
+    const pos = place.state.positions[name];
+    if (!pos) return '';
+    const map = floorById(place, pos.floor).map;
+    const others = new Set([...Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === pos.floor).map(g => `${g.x},${g.y}`)]);
+    const prop = (map.props || []).find(p => p.id === targetId);
+    const room = place.rooms[targetId];
+    let goals = [];
+    if (prop) {
+        // Right beside it (or on it, if you can stand there: a pile of hay).
+        const w = prop.w || 1, h = prop.h || 1;
+        for (let x = prop.x - 1; x <= prop.x + w; x++) for (let y = prop.y - 1; y <= prop.y + h; y++) goals.push({ x, y });
+        goals = goals.filter(g => walkable(place, pos.floor, g.x, g.y) && !others.has(`${g.x},${g.y}`));
+    } else if (room && room.floor === pos.floor) {
+        const spot = openSquareNear(place, pos.floor, room.rect.x + Math.floor(room.rect.w / 2), room.rect.y + Math.floor(room.rect.h / 2), others, 4);
+        if (spot) goals.push(spot);
+    }
+    let path = null;
+    for (const g of goals) {
+        const p = g.x === pos.x && g.y === pos.y ? [] : findPath(place, pos.floor, pos, g, { blocked: others, knownOnly: false });
+        if (p && (!path || p.length < path.length)) path = p;
+    }
+    if (!path) return '';
+    const { refreshMap } = await import('../ui/map.js');
+    for (const [x, y] of path) {
+        const d = doorAt(place, pos.floor, x, y);
+        if (d && d.state === 'closed') setDoorState(place, d, 'open');
+        Object.assign(pos, { x, y });
+        refreshMap();
+        await sleep(110);
+    }
+    place.state.waiting ??= {};
+    place.state.waiting[name] = true;
+    savePlace(key, c);
+    refreshMap();
+    return prop ? (prop.label || PROPS[prop.type]?.name || prop.type) : room.name;
 }
 
 /** Companions who walk along with the player right now (not the ones who chose to stay, or who can't move). */
@@ -292,10 +405,20 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
     const lead = at ?? (st.positions[names[0]] ?? place.start);
     st.positions[names[0]] = { floor: lead.floor, x: lead.x, y: lead.y };
     const taken = new Set([`${lead.x},${lead.y}`]);
+    const leadRoom = roomAt(place, lead.floor, lead.x, lead.y);
+    const inLeadRoom = () => {
+        if (!leadRoom) return null;
+        const tiles = [];
+        for (let x = leadRoom.rect.x; x < leadRoom.rect.x + leadRoom.rect.w; x++) for (let y = leadRoom.rect.y; y < leadRoom.rect.y + leadRoom.rect.h; y++) {
+            if (walkable(place, lead.floor, x, y) && !taken.has(`${x},${y}`) && !stairsAt(place, lead.floor, x, y)) tiles.push({ x, y, d: Math.max(Math.abs(x - lead.x), Math.abs(y - lead.y)) });
+        }
+        return tiles.sort((a, b) => a.d - b.d)[0] ?? null;
+    };
     for (const n of names.slice(1)) {
         const p = st.positions[n];
         if (at || !p || p.floor !== lead.floor) {
-            const spot = freeNear(place, lead.floor, lead.x, lead.y, taken);
+            const near = inLeadRoom();
+            const spot = near ? { x: near.x, y: near.y } : freeNear(place, lead.floor, lead.x, lead.y, taken);
             st.positions[n] = { floor: lead.floor, ...spot };
         }
         taken.add(`${st.positions[n].x},${st.positions[n].y}`);
@@ -471,7 +594,18 @@ export async function walkTo(target, redraw = () => { }) {
         ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
     ]);
     const path = findPath(place, floorId, lead, target, { blocked: others });
-    if (!path?.length) { toastr.info(walkable(place, floorId, target.x, target.y) ? 'You can\'t get there from here (yet).' : 'You can\'t stand there.', 'Map', { timeOut: 2500 }); return; }
+    if (!path?.length) {
+        // Shut in (a locked cell, a locked room): say so, rather than a vague "can't get there".
+        const here = roomAt(place, floorId, lead.x, lead.y);
+        const doorsHere = here ? Object.values(place.doors).filter(d => d.rooms.includes(here.id)) : [];
+        const locked = doorsHere.filter(d => d.state === 'locked');
+        const shutIn = locked.length && !doorsHere.some(d => !['locked', 'hidden', 'walled'].includes(d.state));
+        const why = !walkable(place, floorId, target.x, target.y) ? 'You can\'t stand there.'
+            : shutIn ? `The ${locked[0].kind === 'cell' ? 'cell door' : 'door'} is locked (${locked[0].id}). Tell the DM how you deal with it.`
+                : 'You can\'t get there from here (yet).';
+        toastr.info(why, 'Map', { timeOut: 3500 });
+        return;
+    }
     walking = true;
     const trail = [{ x: lead.x, y: lead.y }];
     // Leaving the room: each companion in it decides (local model) whether to come along. They
@@ -536,6 +670,11 @@ export async function walkTo(target, redraw = () => { }) {
                 trap.state = 'sprung';
                 const room = place.rooms[trap.room];
                 event = `${names[0]} stepped on a hidden ${trap.kind} (${trap.id}) in ${room?.name ?? 'a passage'}: DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}. Ask for the save (player_roll) and narrate it.`;
+                break;
+            }
+            if (trap && trap.state === 'found') {
+                const room = place.rooms[trap.room];
+                event = `${names[0]} deliberately stepped onto the ${trap.kind} (${trap.id}) in ${room?.name ?? 'a passage'} that they already knew about: DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}. It goes off unless they cross it carefully: ask for the roll (player_roll) and narrate it; mark it "sprung" or "disarmed" in place_changes if that's what happens.`;
                 break;
             }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);

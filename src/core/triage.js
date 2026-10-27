@@ -117,21 +117,23 @@ export function parseHelperTriage(text, speakers = []) {
 }
 
 /** Ask the helper whether a companion's own reply attempts something that needs a roll. */
-export function companionActionPrompt({ name, message, scene }) {
+export function companionActionPrompt({ name, message, scene, places = [], askAttempt = true }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
     const user = [
         `Scene: ${scene || 'unknown'}`,
         `${name} (a companion in the party) just wrote:`,
         message,
         '',
-        `Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.`,
-        'JSON: {"attempt": true or false, "what": "a few words: what they try, or empty"}',
-    ].join('\n');
+        askAttempt ? `1. Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
+        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now, not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}` : '',
+        `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty"' : ''}}`,
+    ].filter(Boolean).join('\n');
     return { system, user };
 }
 
-export function parseCompanionAction(text) {
+export function parseCompanionAction(text, places = []) {
     const data = extractJson(text) || {};
     const attempt = data.attempt === true || data.attempt === 'true';
-    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '' };
+    const go = String(data.go ?? '').trim();
+    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: places.some(p => p.id === go) ? go : '' };
 }

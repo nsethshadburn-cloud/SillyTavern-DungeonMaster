@@ -186,6 +186,7 @@ function panelHtml() {
       ${templateEditor('happened', 'Just happened (what the last DM turn changed)', 'Fill-in: {{happened}}. Stops companions from redoing actions the DM already resolved.')}
       ${templateEditor('knowledge', 'What each companion knows (written by the DM at the start, updated now and then)', 'Fill-in: {{knowledge}}. Added to that companion\'s note on every reply.')}
       ${templateEditor('avoid', 'Repeated phrases (when a character keeps reusing the same words)', 'Fill-in: {{avoid}}. Found automatically in that character\'s last 8 replies.')}
+      ${templateEditor('room', 'The room on the map (when inside a built place)', 'Fill-ins: {{room}} (its name and description), {{things}} (what is in it), {{exits}} (doors, stairs, windows). So companions talk about what is really there.')}
       ${templateEditor('combat', 'Combat note (added during fights)', '')}
       ${templateEditor('npc', 'NPC note (side characters the bot voices)', 'Fill-ins: {{npc}} {{description}} {{pronouns}} {{attitude}} {{player}} {{party}}.')}
       <div class="dm-template">

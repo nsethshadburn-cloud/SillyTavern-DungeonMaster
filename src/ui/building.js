@@ -69,8 +69,21 @@ export async function startBuildAnimation(name, { big = false } = {}) {
     let order = makeLayout(Date.now()), start = performance.now(), seed = Date.now();
     const STAGGER = big ? 9 : 14, FALL = 420;
 
+    let lostSince = 0;
     const draw = now => {
-        if (!alive || !document.body.contains(canvas)) return;
+        if (!alive) return;
+        // SillyTavern re-renders chat messages now and then (that used to stop the drawing after a
+        // couple of seconds): put the box back into the message. Stop only if the message is gone for good.
+        if (!document.body.contains(canvas)) {
+            const home = document.querySelector(`#chat .mes[mesid="${id}"] .mes_text`);
+            if (home) { home.appendChild(box); lostSince = 0; }
+            else {
+                lostSince ||= now;
+                if (now - lostSince > 8000) return;
+                requestAnimationFrame(draw);
+                return;
+            }
+        }
         const t = now - start;
         ctx.fillStyle = palette.bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
         // Faint blueprint grid underneath.
@@ -95,7 +108,9 @@ export async function startBuildAnimation(name, { big = false } = {}) {
                 ctx.fillStyle = palette.top; ctx.fillRect(px, py, s, 4);
                 ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(px, py + s - 4, s, 4);
             } else if (b.t === 'door') {
-                const flash = Math.max(0, 1 - (bt - FALL) / 500);
+                // The flash plays once the door has landed (before that the ring had a negative size,
+                // which threw and stopped the whole animation a couple of seconds in).
+                const flash = bt < FALL ? 0 : Math.max(0, Math.min(1, 1 - (bt - FALL) / 500));
                 ctx.fillStyle = palette.door; ctx.fillRect(px + s * 0.2, py + s * 0.35, s * 0.6, s * 0.3);
                 if (flash > 0) { ctx.fillStyle = `rgba(255,230,140,${flash * 0.6})`; ctx.beginPath(); ctx.arc(px + s / 2, py + s / 2, s * (0.6 + (1 - flash)), 0, Math.PI * 2); ctx.fill(); }
             } else if (b.t === 'torch') {

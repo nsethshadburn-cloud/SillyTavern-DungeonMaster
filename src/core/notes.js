@@ -4,7 +4,7 @@
 //
 // Placeholders the plugin fills in: {{player}} {{party}} {{location}} {{present}} {{situation}}
 // {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}} {{knowledge}}
-// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}}.
+// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}} {{room}} {{things}} {{exits}}.
 // SillyTavern's own macros ({{char}}, {{user}}, ...) also work. A line containing a plugin
 // placeholder that's empty is dropped, so empty fields never leave half-sentences behind.
 
@@ -37,6 +37,12 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{knowledge}}]',
     ].join('\n'),
     avoid: '[{{char}} has been repeating these lately. Use different words and gestures this time: {{avoid}}]',
+    room: [
+        '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
+        '{{room}}',
+        'In it: {{things}}',
+        'Ways out: {{exits}}]',
+    ].join('\n'),
     combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight.]',
     npc: [
         '[You play only {{npc}}, a side character in this story.',
@@ -59,7 +65,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: '4-6 sentences at most',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid', 'room', 'things', 'exits'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**

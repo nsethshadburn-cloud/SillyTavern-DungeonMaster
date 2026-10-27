@@ -16,7 +16,7 @@ import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear } from '../core/explore.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
@@ -366,11 +366,16 @@ async function ruleOnCompanionAttempts(c, names, status, signal) {
         const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
         if (!msg?.mes) continue;
         let attempt;
+        const places = c.docs.world.combat ? [] : goTargets(c, name);
         try {
-            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}` });
-            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }));
+            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}`, places });
+            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }), places);
         } catch {
             continue;
+        }
+        if (attempt.go && !signal.aborted) {
+            const went = await companionGoTo(c, name, attempt.go);
+            if (went) status.note(`${name} goes to the ${went} and stays there`);
         }
         if (!attempt.attempt || signal.aborted) continue;
         const reasons = ['companion_action'];
@@ -385,6 +390,25 @@ async function ruleOnCompanionAttempts(c, names, status, signal) {
             step.fail(error);
         }
         return; // one ruling per turn
+    }
+}
+
+/** After a companion's reply the DM directed: if they said they go somewhere, they walk there on the map. */
+async function companionMovesOnMap(c, name, status, signal) {
+    const s = settings();
+    if (!s.useHelper || c.docs.world.combat || !c.meta.party.some(p => p.name === name)) return;
+    const places = goTargets(c, name);
+    if (!places.length) return;
+    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
+    if (!msg?.mes) return;
+    try {
+        const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false });
+        const { go } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId }), places);
+        if (!go || signal.aborted) return;
+        const went = await companionGoTo(c, name, go);
+        if (went) status.note(`${name} goes to the ${went} and stays there`);
+    } catch (error) {
+        console.warn('[Dungeon Master] companion move check failed', error);
     }
 }
 
@@ -862,6 +886,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         try {
             await makeSpeak(speaker, [d.direction, extra].filter(Boolean).join(' '), { signal, length });
             step.done();
+            await companionMovesOnMap(c, speaker, status, signal);
         } catch (error) {
             step.fail(error);
         }

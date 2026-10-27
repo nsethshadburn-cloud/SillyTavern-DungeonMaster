@@ -155,7 +155,34 @@ export const PROP_ART = {
     web(ctx, r, cx, cy, s) { ctx.strokeStyle = 'rgba(235,235,235,0.55)'; ctx.lineWidth = 1; for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * s * 0.45, cy + Math.sin(a) * s * 0.45); ctx.stroke(); } for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.arc(cx, cy, k * s * 0.12, 0, Math.PI * 2); ctx.stroke(); } },
     pot(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.03, cy + s * 0.05, s * 0.16, s * 0.12); ellipse(ctx, cx, cy, s * 0.16, s * 0.16, hsl(18, 50, 40), hsl(18, 40, 22), 2); ellipse(ctx, cx, cy, s * 0.07, s * 0.07, hsl(18, 40, 18)); },
     sack(ctx, r, cx, cy, s) { for (let i = 0; i < 2; i++) { const x = cx + (i ? 0.12 : -0.1) * s, y = cy + (i ? 0.06 : -0.04) * s; shadow(ctx, x + s * 0.03, y + s * 0.06, s * 0.15, s * 0.1); ellipse(ctx, x, y, s * 0.15, s * 0.17, hsl(38, 30, 55), hsl(38, 30, 35), 1.5); } },
-    trap(ctx, r, cx, cy, s) { rrect(ctx, cx - s * 0.3, cy - s * 0.3, s * 0.6, s * 0.6, 2, 'rgba(60,60,60,0.6)', 'rgba(220,60,60,0.8)', 2); ctx.fillStyle = 'rgba(220,60,60,0.85)'; ctx.font = `${s * 0.34}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('!', cx, cy); },
+    trap(ctx, r, cx, cy, s, w, h, p) {
+        const kind = String(p?.label || '').toLowerCase();
+        const warn = 'rgba(220,60,60,0.85)';
+        if (/pit|hole|drop|chute/.test(kind)) {
+            ellipse(ctx, cx, cy, s * 0.34, s * 0.3, 'rgba(8,6,6,0.92)');
+            ellipse(ctx, cx, cy - s * 0.04, s * 0.28, s * 0.2, 'rgba(0,0,0,0.95)');
+        } else if (/rot|weak|crack|loose|crumbl|collaps|unstable|board|floor/.test(kind)) {
+            // Broken floor: cracks spreading from the middle and a sagging dark patch.
+            ellipse(ctx, cx, cy, s * 0.3, s * 0.24, 'rgba(0,0,0,0.35)');
+            ctx.strokeStyle = 'rgba(15,10,8,0.85)'; ctx.lineWidth = s / 24; ctx.lineJoin = 'round';
+            for (let i = 0; i < 6; i++) {
+                let a = (i / 6) * Math.PI * 2 + between(r, -0.3, 0.3), x = cx, y = cy;
+                ctx.beginPath(); ctx.moveTo(x, y);
+                for (let k = 0; k < 3; k++) { a += between(r, -0.5, 0.5); const len = s * between(r, 0.08, 0.14); x += Math.cos(a) * len; y += Math.sin(a) * len; ctx.lineTo(x, y); }
+                ctx.stroke();
+            }
+        } else if (/spike|blade|scythe/.test(kind)) {
+            ctx.fillStyle = 'rgba(30,30,34,0.6)'; ctx.fillRect(cx - s * 0.32, cy - s * 0.32, s * 0.64, s * 0.64);
+            for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) poly(ctx, [[cx - s * 0.22 + i * s * 0.22 - s * 0.06, cy - s * 0.18 + j * s * 0.2 + s * 0.06], [cx - s * 0.22 + i * s * 0.22, cy - s * 0.18 + j * s * 0.2 - s * 0.08], [cx - s * 0.22 + i * s * 0.22 + s * 0.06, cy - s * 0.18 + j * s * 0.2 + s * 0.06]], '#a9aeb8');
+        } else if (/net|snare|rope|wire/.test(kind)) {
+            for (let i = -2; i <= 2; i++) { line(ctx, cx + i * s * 0.12, cy - s * 0.3, cx + i * s * 0.12, cy + s * 0.3, 'rgba(190,160,110,0.9)', s / 30); line(ctx, cx - s * 0.3, cy + i * s * 0.12, cx + s * 0.3, cy + i * s * 0.12, 'rgba(190,160,110,0.9)', s / 30); }
+        } else {
+            // A pressure plate (darts, gas, a falling block...): a slightly sunken square.
+            rrect(ctx, cx - s * 0.26, cy - s * 0.26, s * 0.52, s * 0.52, 2, 'rgba(70,66,62,0.85)', 'rgba(20,18,16,0.9)', s / 22);
+        }
+        // A small red warning corner: you know it's there.
+        poly(ctx, [[cx + s * 0.22, cy - s * 0.42], [cx + s * 0.42, cy - s * 0.42], [cx + s * 0.42, cy - s * 0.22]], warn);
+    },
     boulder(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.08, cy + s * 0.1, s * 0.38, s * 0.26); ellipse(ctx, cx, cy, s * 0.38, s * 0.33, hsl(30, 6, 40)); ellipse(ctx, cx - s * 0.1, cy - s * 0.1, s * 0.16, s * 0.1, 'rgba(255,255,255,0.12)'); crack(ctx, r, cx - s * 0.3, cy - s * 0.3, s * 0.6); },
     bush(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.06, cy + s * 0.08, s * 0.32, s * 0.24); for (let i = 0; i < 6; i++) { const a = r() * Math.PI * 2; ellipse(ctx, cx + Math.cos(a) * s * 0.12, cy + Math.sin(a) * s * 0.12, s * 0.2, s * 0.2, hsl(between(r, 95, 125), 40, between(r, 22, 32))); } if (r() < 0.4) for (let i = 0; i < 5; i++) ellipse(ctx, cx + between(r, -0.25, 0.25) * s, cy + between(r, -0.25, 0.25) * s, s * 0.03, s * 0.03, pick(r, ['#e05a8a', '#f5f1e0', '#f5cd3a'])); },
     log(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.04, cy + s * 0.1, s * 0.45, s * 0.12); rrect(ctx, cx - s * 0.46, cy - s * 0.12, s * 0.92, s * 0.24, s * 0.12, hsl(25, 35, 26)); ellipse(ctx, cx + s * 0.4, cy, s * 0.07, s * 0.12, hsl(35, 40, 50)); },

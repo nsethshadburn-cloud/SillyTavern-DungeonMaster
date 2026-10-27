@@ -23,12 +23,49 @@ const K = (x, y) => `${x},${y}`;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const propType = t => str(t).toLowerCase().replace(/[\s-]+/g, '_');
 
-const VIA = ['door', 'arch', 'locked', 'secret', 'stairs'];
+const VIA = ['door', 'arch', 'locked', 'secret', 'stairs', 'cell'];
 const KIND_THEME = { mansion: 'mansion', manor: 'mansion', estate: 'mansion', house: 'house', castle: 'castle', keep: 'castle', fortress: 'castle', tower: 'castle', palace: 'castle', dungeon: 'dungeon', prison: 'prison', jail: 'prison', asylum: 'prison', cave: 'cave', caves: 'cave', cavern: 'cave', mine: 'mine', crypt: 'crypt', tomb: 'crypt', catacombs: 'crypt', temple: 'temple', church: 'temple', cathedral: 'temple', monastery: 'temple', sewer: 'sewer', sewers: 'sewer', ship: 'ship', cabin: 'cabin', lodge: 'cabin', tavern: 'tavern', inn: 'tavern', library: 'library', academy: 'library' };
 /** Themes where mansion-style walls and floors (wallpaper, carpet) would look wrong. */
 const ROUGH = new Set(['dungeon', 'cave', 'crypt', 'prison', 'sewer', 'mine']);
 
 // ---------- the plan ----------
+
+/**
+ * A jail is organized: on each floor with two or more cells, every cell opens onto one cell-block
+ * hallway (the hallway already linked to the most cells, or a new one) through a barred cell door,
+ * and the cells sit in rows along it. Whatever a cell was linked to links to the hallway instead.
+ */
+function organizeCells(rooms, floors, links) {
+    for (const f of floors) {
+        const cells = rooms.filter(r => r.floor === f.id && r.type === 'cell');
+        if (cells.length < 2) continue;
+        const ids = new Set(cells.map(r => r.id));
+        const linkedCells = r => links.filter(l => (l.a === r.id && ids.has(l.b)) || (l.b === r.id && ids.has(l.a))).length;
+        let hall = rooms.filter(r => r.floor === f.id && !ids.has(r.id) && r.type === 'hallway').sort((a, b) => linkedCells(b) - linkedCells(a))[0];
+        if (!hall) {
+            let id = `CB${f.id}`;
+            while (rooms.some(r => r.id === id)) id += 'b';
+            hall = { id, name: 'Cell block', type: 'hallway', floor: f.id, size: 'long', lit: null, description: 'A row of barred cells on either side of a narrow walk.', props: [], marks: [], traps: [], items: [], exit: false, windows: 'none' };
+            rooms.push(hall);
+        }
+        hall.cellBlock = true;
+        const others = new Set();
+        for (let i = links.length - 1; i >= 0; i--) {
+            const l = links[i];
+            const cell = ids.has(l.a) ? l.a : ids.has(l.b) ? l.b : null;
+            if (!cell) continue;
+            const other = cell === l.a ? l.b : l.a;
+            if (!ids.has(other) && other !== hall.id) others.add(other);
+            links.splice(i, 1);
+        }
+        for (const c of cells) links.push({ a: hall.id, b: c.id, via: 'cell', key: '', dc: 15 });
+        // The guard room (or whatever the cells opened onto) now connects through the hallway.
+        for (const o of others) if (!links.some(l => (l.a === o && l.b === hall.id) || (l.b === o && l.a === hall.id))) {
+            const or = rooms.find(r => r.id === o);
+            links.push({ a: hall.id, b: o, via: or && or.floor !== hall.floor ? 'stairs' : 'door', key: '', dc: 15 });
+        }
+    }
+}
 
 /**
  * Every room must be reachable. A group of rooms with no link to the rest (a tower or a cellar the
@@ -116,6 +153,7 @@ export function normalizePlan(raw) {
     })).filter(g => g.name && (g.room || g.patrol.length));
     for (const g of guards) if (!g.room) g.room = g.patrol[0];
     const start = roomRef(d.start) || rooms[0].id;
+    organizeCells(rooms, floors, links);
     connectRooms(rooms, floors, links, start);
     // Every big place has a way out: the start's floor gets one if Claude named none.
     if (!rooms.some(r => r.exit) && kind !== 'interior') {
@@ -273,7 +311,20 @@ function buildFloor(r, plan, floor, rects, shrink, doors) {
     if (anchor) visit(anchor.id);
     for (const x of here) if (!seen.has(x.id)) visit(x.id);
     const corridorNeeded = [];
+    const hall = here.find(x => x.cellBlock);
+    if (hall) {
+        const cells = sameFloor.filter(l => l.via === 'cell' && (l.a === hall.id || l.b === hall.id)).map(l => (l.a === hall.id ? l.b : l.a)).slice(0, 28);
+        const perSide = Math.ceil(cells.length / 2), cw = 3, ch = 3;
+        rects[hall.id] = { x: 0, y: 0, w: Math.max(5, perSide * (cw + 1) - 1), h: 2 };
+        grid.place(rects[hall.id], hall.id);
+        cells.forEach((id, i) => {
+            const rect = { x: Math.floor(i / 2) * (cw + 1), y: i % 2 === 0 ? 2 + 1 : -1 - ch, w: cw, h: ch };
+            rects[id] = rect;
+            grid.place(rect, id);
+        });
+    }
     for (const id of order) {
+        if (rects[id] && here.some(x => x.id === id) && hall) continue;
         const { w, h } = dims[id];
         if (!Object.keys(rects).some(k => here.some(x => x.id === k))) {
             rects[id] = { x: 0, y: 0, w, h };
@@ -339,7 +390,11 @@ function furnish(r, room, rect, ctx, theme) {
     const stillConnected = () => {
         if (targets.length < 2) return true;
         const seen = new Set([K(...targets[0])]), queue = [targets[0]];
-        while (queue.length) { const [x, y] = queue.shift(); for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy, k = K(nx, ny); if (!seen.has(k) && inside(nx, ny) && !ctx.blocked.has(k)) { seen.add(k); queue.push([nx, ny]); } } }
+        while (queue.length) {
+            const [x, y] = queue.shift();
+            if ((x !== targets[0][0] || y !== targets[0][1]) && (charAt(x, y) === '<' || charAt(x, y) === '>')) continue;
+            for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy, k = K(nx, ny); if (!seen.has(k) && inside(nx, ny) && !ctx.blocked.has(k)) { seen.add(k); queue.push([nx, ny]); } }
+        }
         return targets.every(t => seen.has(K(...t)));
     };
     const put = (type, x, y, w = 1, h = 1, extra = {}) => {
@@ -582,7 +637,7 @@ function tryBuild(plan, seed, shrink) {
     const doorAt = new Map();
     const addDoor = (floor, x, y, kind, rooms, extra = {}) => {
         const id = `D${++doorN}`;
-        const state = kind === 'locked' ? 'locked' : kind === 'secret' ? 'hidden' : kind === 'arch' ? 'open' : 'closed';
+        const state = kind === 'locked' || kind === 'cell' ? 'locked' : kind === 'secret' ? 'hidden' : kind === 'arch' ? 'open' : 'closed';
         const door = { id, floor, x, y, kind, state, rooms, ...extra };
         place.doors[id] = door;
         doorAt.set(`${floor}:${x},${y}`, door);
@@ -596,6 +651,13 @@ function tryBuild(plan, seed, shrink) {
         // A locked or secret corridor is locked (or hidden) at its far end only.
         const kind = d.corridor && ['locked', 'secret'].includes(d.link.via) && d.rooms[0] === d.link.a ? 'door' : d.link.via;
         addDoor(d.floor, x, y, kind, d.rooms, d.link.key ? { key: d.link.key, dc: d.link.dc } : { dc: d.link.dc });
+    }
+    // The fronts of the cells: iron bars either side of the cell door.
+    for (const d of Object.values(place.doors)) {
+        if (d.kind !== 'cell') continue;
+        const [ra, rb] = d.rooms.map(id => place.rooms[id]);
+        if (!ra || !rb) continue;
+        for (const [x, y] of sharedWall(ra.rect, rb.rect)) if (chars[d.floor][y]?.[x] === '#') chars[d.floor][y][x] = 'I';
     }
     // Stairs between floors.
     const reserved = new Set();
@@ -768,6 +830,8 @@ export function ensureIds(place) {
 export function doorChar(door) {
     if (door.state === 'hidden' || door.state === 'walled') return '#';
     if (door.kind === 'arch' || door.state === 'broken') return '.';
+    // A barred cell door: locked, shut (but unlocked), or swung open.
+    if (door.kind === 'cell') return door.state === 'locked' ? 'J' : door.state === 'open' ? '/' : 'j';
     if (door.state === 'locked') return 'D';
     return door.state === 'open' ? '/' : '+';
 }

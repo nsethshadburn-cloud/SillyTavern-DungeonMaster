@@ -14,6 +14,7 @@ import { addNpcs, isAway } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
+import { roomBrief } from './atlas.js';
 
 const KEY_NOTE = 'DM_NOTE';
 const LEGACY_KEYS = ['DM_DIRECTION', 'DM_STANDING'];
@@ -90,6 +91,10 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
     if (c.meta.happened) parts.push(renderTemplate(s.templates.happened, { ...vars, happened: c.meta.happened }));
     const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
     if (knowledge) parts.push(renderTemplate(s.templates.knowledge, { ...vars, knowledge }));
+    if (speaker) {
+        const here = roomBrief(c, speaker);
+        if (here.room && s.templates.room) parts.push(renderTemplate(s.templates.room, { ...vars, ...here }));
+    }
     if (c.meta.pacing?.inCombat) parts.push(renderTemplate(s.templates.combat, vars));
     if (state.avoid) parts.push(renderTemplate(s.templates.avoid, { ...vars, avoid: state.avoid }));
     if (brief) parts.push(renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }));

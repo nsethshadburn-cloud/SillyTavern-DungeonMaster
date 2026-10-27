@@ -31,6 +31,9 @@ export const TERRAIN = Object.freeze({
     '|': { name: 'window', walk: false, cover: true, seeThrough: true },
     'H': { name: 'barred window', walk: false, cover: true, seeThrough: true },
     'U': { name: 'broken window', walk: false, cover: true, seeThrough: true },
+    'I': { name: 'iron bars', walk: false, cover: false, seeThrough: true },
+    'J': { name: 'locked cell door', walk: false, cover: false, seeThrough: true },
+    'j': { name: 'cell door', walk: true, cover: false, seeThrough: true },
     '%': { name: 'nothing (outside the building)', walk: false, cover: true },
 });
 

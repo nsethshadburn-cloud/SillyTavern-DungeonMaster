@@ -291,8 +291,9 @@ export async function askPlacePlan(req, { signal = null } = {}) {
         '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
         '', '# TABLE RULES', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none)',
         '', '# RECENT CHAT (oldest first)', transcript(30) || '(empty)',
+        '', '# WHERE THE PARTY IS RIGHT NOW (the scene card)', renderSceneCard(c.docs.world.sceneCard) || '(not set)',
         '', '# BUILD THIS PLACE',
-        `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nWhy it's needed: ${req.why || 'the story is going there'}${req.town ? '' : `\nAbout ${rooms} rooms${big ? '' : ' at most'}.`}`,
+        `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nWhy it's needed: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}${req.town ? '' : `\nAbout ${rooms} rooms${big ? '' : ' at most'}.`}`,
         '', req.town ? TOWN_PLAN_INSTRUCTIONS : big ? PLACE_PLAN_INSTRUCTIONS : SMALL_PLACE_INSTRUCTIONS,
     ].join('\n');
     const reply = await callClaude({ system: await stableSystem(), user, task: 'build_place', label: `planning ${req.name}`, maxTokens: big ? 20000 : 6000, signal });

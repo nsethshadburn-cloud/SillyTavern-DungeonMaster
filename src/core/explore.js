@@ -86,6 +86,23 @@ function lineOfSight(map, x0, y0, x1, y1) {
 }
 
 const zoneCache = new WeakMap();
+const barCache = new WeakMap();
+const BARS = new Set(['I', 'J', 'j', 'H']);
+
+/** Which rooms see into each other through bars (a cell and its hallway): zone -> Set of zones. */
+function barLinks(map, z) {
+    const hit = barCache.get(map);
+    if (hit && hit.version === (map.version || 0)) return hit.links;
+    const links = new Map();
+    const add = (a, b) => { if (!a || !b || a === b) return; if (!links.has(a)) links.set(a, new Set()); links.get(a).add(b); };
+    for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
+        if (!BARS.has(terrainAt(map, x, y))) continue;
+        const zone = (xx, yy) => (xx < 0 || yy < 0 || xx >= map.w || yy >= map.h ? 0 : z.grid[yy * map.w + xx]);
+        for (const [a, b] of [[zone(x - 1, y), zone(x + 1, y)], [zone(x, y - 1), zone(x, y + 1)]]) { add(a, b); add(b, a); }
+    }
+    barCache.set(map, { version: map.version || 0, links });
+    return links;
+}
 
 /** Which room's floor each square is (index + 1), 0 for corridors, doorways and walls. */
 function zones(place, floorId) {
@@ -116,6 +133,7 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
     const vis = new Uint8Array(map.w * map.h);
     const z = zones(place, floorId);
     const open = OUTDOOR.has(map.theme) || !z.rooms.length;
+    const through = barLinks(map, z);
     for (const v of viewers) {
         const own = z.grid[v.y * map.w + v.x];
         const room = own ? z.rooms[own - 1] : null;
@@ -132,8 +150,8 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
                 if (!open && d > 1) {
                     const zone = z.grid[i];
                     // Another room's floor: not until you're in it. From inside a room: only its own walls and doors.
-                    if (zone && zone !== own) continue;
-                    if (!zone && room && !inRing(x, y)) continue;
+                    if (zone && zone !== own && !through.get(own)?.has(zone)) continue;
+                    if (!zone && room && !inRing(x, y) && ![...(through.get(own) ?? [])].some(zn => { const rr = z.rooms[zn - 1]?.rect; return rr && x >= rr.x - 1 && x <= rr.x + rr.w && y >= rr.y - 1 && y <= rr.y + rr.h; })) continue;
                 }
                 if (!lit[i] && d > near) continue;
                 if (lineOfSight(map, v.x, v.y, x, y)) vis[i] = 1;
@@ -208,6 +226,8 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
         for (const [dx, dy] of DIRS8) {
             const nx = x + dx, ny = y + dy, k = key(nx, ny);
             if (prev.has(k) || !walkable(place, floorId, nx, ny) || !known(nx, ny) || blocked.has(`${nx},${ny}`)) continue;
+            // Stepping on stairs takes you to another floor: only walk onto them when they're where you're going.
+            if ((nx !== to.x || ny !== to.y) && (terrainAt(map, nx, ny) === '<' || terrainAt(map, nx, ny) === '>')) continue;
             // Diagonal steps can't squeeze between two walls or through a doorway.
             if (dx && dy && (!walkable(place, floorId, x + dx, y) || !walkable(place, floorId, x, y + dy) || terrainAt(map, nx, ny) === '+' || terrainAt(map, x, y) === '+' || terrainAt(map, nx, ny) === '/' || terrainAt(map, x, y) === '/')) continue;
             prev.set(k, key(x, y));
@@ -639,7 +659,7 @@ export function placeView(place, partyNames) {
     const taken = Object.values(place.items).filter(i => i.state === 'taken' || i.found).map(i => `${i.id} ${i.name} ${i.state === 'taken' ? 'taken' : 'found'}`);
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
     const guards = Object.values(place.guards).filter(g => g.state !== 'gone').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}`);
-    if (guards.length) lines.push(`People now: ${guards.join('; ')}.`);
+    lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
     if (waiting.length) lines.push(`Companions who chose not to follow: ${waiting.join('; ')}.`);
     const people = { ...st.positions };

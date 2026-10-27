@@ -232,8 +232,8 @@ test("the DM's view: the whole place with secrets (cached), and where the party 
 });
 
 test('DM protocol: building, entering and changing places', () => {
-    const t = parseDmTurn(JSON.stringify({ build_place: { name: 'Blackmoor Manor', size: 'big', kind: 'Mansion', why: 'they are taken there' }, enter_place: 'Hollowbrook', leave_place: true, place_changes: { doors: { D4: 'open' } } }));
-    assert.deepEqual(t.build_place, { name: 'Blackmoor Manor', size: 'big', kind: 'mansion', why: 'they are taken there' });
+    const t = parseDmTurn(JSON.stringify({ build_place: { name: 'Blackmoor Manor', size: 'big', kind: 'Mansion', why: 'they are taken there', start: 'locked in a cell together' }, enter_place: 'Hollowbrook', leave_place: true, place_changes: { doors: { D4: 'open' } } }));
+    assert.deepEqual(t.build_place, { name: 'Blackmoor Manor', size: 'big', kind: 'mansion', why: 'they are taken there', start: 'locked in a cell together' });
     assert.equal(t.enter_place, 'Hollowbrook');
     assert.equal(t.leave_place, true);
     assert.deepEqual(t.place_changes, { doors: { D4: 'open' } });
@@ -458,4 +458,47 @@ test('crowded, half-linked plans still build: big floors split, cut-off rooms ge
         links: [{ a: 'Gatehouse', b: 'Courtyard' }, { a: 'the courtyard', b: 'G3' }, { a: 'T1', b: 'T2' }] }, 5);
     assert.equal(reachable(messy).roomsReached.length, 5, 'every room can be reached');
     assert.ok(messy.stairs.length >= 1, 'the tower got stairs');
+});
+
+test('furniture never cuts a room in two: every door and staircase in a room reaches the others without crossing stairs', () => {
+    const check = (place, label) => {
+        for (const rm of Object.values(place.rooms)) {
+            const map = floorById(place, rm.floor).map;
+            const inRoom = (x, y) => x >= rm.rect.x && x < rm.rect.x + rm.rect.w && y >= rm.rect.y && y < rm.rect.y + rm.rect.h;
+            const open = (x, y) => inRoom(x, y) && isWalkable(map, x, y);
+            // Squares just inside each doorway, and each staircase in the room.
+            const goals = [];
+            for (const d of Object.values(place.doors)) if (d.floor === rm.floor) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (inRoom(d.x + dx, d.y + dy)) goals.push([d.x + dx, d.y + dy]);
+            for (const s of place.stairs) for (const e of [s.a, s.b]) if (e.floor === rm.floor && inRoom(e.x, e.y)) goals.push([e.x, e.y]);
+            const live = goals.filter(([x, y]) => open(x, y));
+            if (live.length < 2) continue;
+            const stairs = (x, y) => ['<', '>'].includes(terrainAt(map, x, y));
+            const seen = new Set([`${live[0][0]},${live[0][1]}`]), queue = [live[0]];
+            while (queue.length) {
+                const [x, y] = queue.shift();
+                if ((x !== live[0][0] || y !== live[0][1]) && stairs(x, y)) continue;
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const k = `${x + dx},${y + dy}`; if (!seen.has(k) && open(x + dx, y + dy)) { seen.add(k); queue.push([x + dx, y + dy]); } }
+            }
+            for (const [x, y] of live) assert.ok(seen.has(`${x},${y}`), `${label}: ${rm.name} is cut in two at ${colName(x)}${y + 1}`);
+        }
+    };
+    for (let seed = 1; seed <= 25; seed++) check(generatePlace(MANOR_PLAN, seed), `manor ${seed}`);
+});
+
+test('a jail is organized: cells in rows on a cell-block hallway, behind bars and locked cell doors, and you start in your cell', () => {
+    const rooms = [{ id: 'G1', name: 'Guard room', type: 'guard_room', exit: true }, { id: 'O', name: 'Warden office', type: 'office' }, ...Array.from({ length: 8 }, (_, i) => ({ id: 'C' + (i + 1), name: 'Cell ' + (i + 1), type: 'cell' }))];
+    const links = [{ a: 'G1', b: 'O' }, { a: 'G1', b: 'C1' }, { a: 'C1', b: 'C2' }, { a: 'C2', b: 'C3' }, { a: 'O', b: 'C5' }, { a: 'C5', b: 'C6' }];
+    for (let seed = 1; seed <= 10; seed++) {
+        const p = generatePlace({ name: 'Stockade', kind: 'prison', start: 'Cell 3', rooms, links }, seed);
+        const cells = Object.values(p.rooms).filter(r => r.type === 'cell');
+        const hall = Object.values(p.rooms).find(r => r.type === 'hallway');
+        assert.ok(hall, 'a cell-block hallway');
+        assert.equal(Object.values(p.doors).filter(d => d.kind === 'cell' && d.state === 'locked').length, 8, 'every cell has a locked cell door');
+        // Cells line up in two rows: all cells share one of two bottom edges.
+        assert.ok(new Set(cells.map(c => c.rect.y)).size <= 2, 'two rows of cells');
+        const m = p.floors[0].map;
+        assert.ok(m.rows.join('').includes('I'), 'iron bars on the cell fronts');
+        assert.equal(roomAt(p, p.start.floor, p.start.x, p.start.y)?.name, 'Cell 3', 'the party starts in their cell');
+        assert.equal(reachable(p).roomsReached.length, Object.keys(p.rooms).length, 'still solvable');
+    }
 });

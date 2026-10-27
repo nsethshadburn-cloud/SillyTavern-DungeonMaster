@@ -419,8 +419,12 @@ test('v0.7: no secret rolls, companions roll covert actions, version stamp match
     assert.match(DM_RULES, /never narrate what a companion chooses to do/);
     const { companionActionPrompt, parseCompanionAction } = await import('../src/core/triage.js');
     assert.match(companionActionPrompt({ name: 'Judy Hopps', message: 'x', scene: 'y' }).user, /ATTEMPT/);
-    assert.deepEqual(parseCompanionAction('{"attempt": true, "what": "slip the cuff key from his pouch"}'), { attempt: true, what: 'slip the cuff key from his pouch' });
-    assert.deepEqual(parseCompanionAction('{"attempt": false, "what": "talks"}'), { attempt: false, what: '' });
+    assert.deepEqual(parseCompanionAction('{"attempt": true, "what": "slip the cuff key from his pouch"}'), { attempt: true, what: 'slip the cuff key from his pouch', go: '' });
+    assert.deepEqual(parseCompanionAction('{"attempt": false, "what": "talks"}'), { attempt: false, what: '', go: '' });
+    const places = [{ id: 'p12', name: 'the hay (in this room)' }, { id: 'R5', name: 'Guard room (next door)' }];
+    assert.equal(parseCompanionAction('{"attempt": false, "go": "p12"}', places).go, 'p12', 'she goes to hide in the hay');
+    assert.equal(parseCompanionAction('{"go": "the moon"}', places).go, '', 'only real places');
+    assert.match(companionActionPrompt({ name: 'Judy', message: "I'll hide in the hay.", places }).user, /p12 = the hay/);
     const { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } = await import('../src/core/notes.js');
     assert.match(DEFAULT_TEMPLATES.npc, /one or two short lines of dialogue/);
     assert.equal(DEFAULT_LENGTHS.long, '4-6 sentences at most');
