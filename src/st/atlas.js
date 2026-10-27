@@ -10,8 +10,8 @@ import { readJson, writeLater, flushWrites } from './storage.js';
 import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
-import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable } from '../core/explore.js';
+import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence } from '../core/world.js';
 import { callLocal } from './llm.js';
@@ -46,7 +46,13 @@ export async function loadPlace(key, c = campaign()) {
     const id = `${c.meta.id}:${key}`;
     if (places.has(id)) return places.get(id);
     const place = await readJson(fileFor(c, key), null);
-    if (place) places.set(id, place);
+    if (place) {
+        // Places built by older versions: furniture out of doorways, ids for things and windows.
+        const moved = clearDoorways(place);
+        ensureIds(place);
+        places.set(id, place);
+        if (moved) savePlace(key, c);
+    }
     return place;
 }
 
@@ -155,6 +161,80 @@ async function decideFollow(c, name, fromRoom, toRoom) {
         console.warn('[Dungeon Master] follow check failed', error);
     }
     return { follows: true };
+}
+
+// ---------- things on the map ----------
+
+/** What the player just picked on the map (smash this, shove that), for the DM's next turn. */
+let mapAction = '';
+export function setMapAction(text) { mapAction = String(text || ''); }
+export function takeMapAction() { const t = mapAction; mapAction = ''; return t; }
+
+/** Walk up next to a thing (a rect of squares) on the map. Resolves true when standing beside it. */
+export async function approachSpot(spot, redraw = () => { }) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!cur) return false;
+    const { place } = cur;
+    const lead = place.state.positions[c.meta.persona.name];
+    const w = spot.w || 1, h = spot.h || 1;
+    const near = (x, y) => x >= spot.x - 1 && x <= spot.x + w && y >= spot.y - 1 && y <= spot.y + h;
+    if (near(lead.x, lead.y)) return true;
+    let best = null;
+    for (let x = spot.x - 1; x <= spot.x + w; x++) for (let y = spot.y - 1; y <= spot.y + h; y++) {
+        if (x >= spot.x && x < spot.x + w && y >= spot.y && y < spot.y + h) continue;
+        const p = findPath(place, lead.floor, lead, { x, y });
+        if (p && (!best || p.length < best.length)) best = { length: p.length, x, y };
+    }
+    if (!best) { toastr.info('You can\'t get next to that from here.', 'Map', { timeOut: 2500 }); return false; }
+    await walkTo({ x: best.x, y: best.y }, redraw);
+    const now = place.state.positions[c.meta.persona.name];
+    return near(now.x, now.y);
+}
+
+/** Shove something light one square (free). Heavy things go to the DM for a roll instead. */
+export function pushProp(id, dir) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!cur) return { ok: false, why: 'no map' };
+    const { key, place } = cur;
+    const people = [...Object.values(place.state.positions), ...Object.values(place.guards).filter(g => g.state !== 'gone')];
+    const r = moveProp(place, id, dir, { people });
+    if (r.ok) { savePlace(key, c); look(c, key, place); }
+    return r;
+}
+
+/** Climb out through a broken window: out of a town building onto the street beside it, or out of a place. */
+export async function climbOut(winId) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!cur) return;
+    const { key, place } = cur;
+    const win = place.windows?.[winId];
+    if (!win || win.state !== 'broken') return;
+    if (place.parent) {
+        const town = await loadPlace(place.parent.key, c);
+        const door = town?.doors[place.parent.door];
+        const b = door?.enter ? town.buildings[door.enter] : null;
+        let at = null;
+        if (b?.rect) {
+            // The window's side of the building (from where it is on the inside map).
+            const map = floorById(place, win.floor).map;
+            const dx = win.x / Math.max(1, map.w - 1) - 0.5, dy = win.y / Math.max(1, map.h - 1) - 0.5;
+            const r = b.rect;
+            const want = Math.abs(dx) > Math.abs(dy)
+                ? { x: dx > 0 ? r.x + r.w : r.x - 1, y: r.y + Math.floor(r.h / 2) }
+                : { x: r.x + Math.floor(r.w / 2), y: dy > 0 ? r.y + r.h : r.y - 1 };
+            at = { floor: door.floor, ...freeNear(town, door.floor, want.x, want.y) };
+        }
+        await postNote(`🪟 ${c.meta.persona.name} climbs out through the broken window.`);
+        await enterPlace(place.parent.key, { at, quiet: true });
+        return;
+    }
+    await postNote(`🪟 ${c.meta.persona.name} climbs out through the broken window.`);
+    leavePlace(c);
+    const { runTurn } = await import('./orchestrator.js');
+    await runTurn({ force: 'explore', placeEvent: `The party climbed out of ${place.name} through a broken window (${win.id}) and is outside it now.` });
 }
 
 /** Walk up next to someone on the map (for Talk, Attack...). Resolves when the walk is done. */

@@ -304,3 +304,103 @@ test('people on the map: guards are hostile, residents and shopkeepers are not; 
     assert.ok(bram && bram.hostile === false, 'the smith is inside');
     assert.equal(normalizeTownPlan({ buildings: [{ name: 'x', keeper: 'Bram' }] }).buildings[0].keeper, 'Bram');
 });
+
+test('nothing generated ever blocks a doorway, the way out, stairs or a window (many seeds, houses too)', async () => {
+    const { clearDoorways } = await import('../src/core/layout.js');
+    const blocked = (place, floor, x, y) => floorById(place, floor).map.props.some(p => !p.obstacle && PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
+    const check = (place, label) => {
+        const spots = [...Object.values(place.doors).map(d => [d.floor, d.x, d.y]), ...place.stairs.flatMap(s => [[s.a.floor, s.a.x, s.a.y], [s.b.floor, s.b.x, s.b.y]]), ...Object.values(place.windows || {}).map(w => [w.floor, w.x, w.y])];
+        for (const [f, x, y] of spots) for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            assert.ok(!blocked(place, f, x + dx, y + dy), `${label}: something blocks ${colName(x + dx)}${y + dy + 1}`);
+        }
+    };
+    for (let seed = 1; seed <= 25; seed++) check(generatePlace(MANOR_PLAN, seed), `manor ${seed}`);
+    for (const kind of ['house', 'tavern', 'smithy', 'manor', 'guard post', 'library', 'shop', 'temple']) for (let seed = 1; seed <= 15; seed++) check(generateInterior({ id: 'B', name: 'x', kind }, seed), `${kind} ${seed}`);
+    // A map from before the fix: a bookshelf in front of the way out is moved when it loads.
+    const old = generateInterior({ id: 'B', name: 'Old house', kind: 'house' }, 4);
+    const exit = old.doors[old.exits[0].door];
+    const map = floorById(old, exit.floor).map;
+    const inside = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [exit.x + dx, exit.y + dy]).find(([x, y]) => roomAt(old, exit.floor, x, y));
+    map.props.push({ x: inside[0], y: inside[1], type: 'bookshelf' });
+    assert.ok(blocked(old, exit.floor, ...inside));
+    assert.ok(clearDoorways(old) >= 1);
+    assert.ok(!blocked(old, exit.floor, ...inside), 'the way out is clear again');
+    // Something put there on purpose stays.
+    map.props.push({ x: inside[0], y: inside[1], type: 'crate', obstacle: true });
+    clearDoorways(old);
+    assert.ok(map.props.some(p => p.obstacle && p.x === inside[0] && p.y === inside[1]));
+});
+
+test('furniture faces the right way: backs to the wall, chairs facing their table', () => {
+    for (let seed = 1; seed <= 10; seed++) {
+        const place = generatePlace(MANOR_PLAN, seed);
+        for (const rm of Object.values(place.rooms)) {
+            const r = rm.rect;
+            for (const p of floorById(place, rm.floor).map.props) {
+                if (!inRect(r, p.x, p.y) || !['bed', 'wardrobe', 'sofa'].includes(p.type) || !p.side) continue;
+                const gaps = { n: r.y + r.h - (p.y + (p.h || 1)), s: p.y - r.y, w: p.x - r.x, e: r.x + r.w - (p.x + (p.w || 1)) };
+                assert.equal(gaps[p.side], Math.min(...Object.values(gaps)), `${p.type} in ${rm.name} has its back to its nearest wall (seed ${seed})`);
+            }
+        }
+    }
+    const dining = generateInterior({ id: 'B', name: 'Manor', kind: 'manor' }, 6);
+    const map = floorById(dining, Object.values(dining.rooms).find(r => r.type === 'dining_room').floor).map;
+    const table = map.props.find(p => p.type === 'table' && (p.w || 1) > 2);
+    if (table) for (const ch of map.props.filter(p => p.type === 'chair' && p.y === table.y - 1 && p.x >= table.x && p.x < table.x + table.w)) assert.equal(ch.side, 's', 'chairs south of the table have their backs to the south');
+});
+
+test('things on the map: smash into pieces, shove light things, heavy things need the DM, barricade a door', async () => {
+    const { smashProp, moveProp, propById, walkable } = await import('../src/core/explore.js');
+    const place = tinyPlace();
+    const map = floorById(place, 'G').map;
+    const A = place.rooms.A.rect;
+    const door = Object.values(place.doors).find(d => d.rooms.includes('A') && d.rooms.includes('B'));
+    // A crate two squares in from the door, inside room A, with nothing around it.
+    const by = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [door.x + dx * 2, door.y + dy * 2, -dx, -dy]).find(([x, y]) => inRect(A, x, y));
+    map.props = map.props.filter(p => !(Math.abs(p.x - by[0]) <= 1 && Math.abs(p.y - by[1]) <= 1) && !(p.x === door.x + by[2] * -1 && p.y === door.y + by[3] * -1));
+    map.props.push({ id: 'p900', x: by[0], y: by[1], type: 'crate' }, { id: 'p901', x: A.x, y: A.y, type: 'bookshelf' });
+    const dir = by[2] === 1 ? 'e' : by[2] === -1 ? 'w' : by[3] === 1 ? 'n' : 's';
+    assert.equal(walkable(place, 'G', door.x, door.y), true);
+    let r = moveProp(place, 'p900', dir);
+    assert.ok(r.ok, r.why);
+    r = moveProp(place, 'p900', dir);
+    assert.ok(r.ok, r.why);
+    assert.equal(r.door, door.id, 'shoved into the doorway');
+    assert.equal(walkable(place, 'G', door.x, door.y), false, 'the door is barricaded');
+    assert.equal(propById(place, 'p900').prop.obstacle, true);
+    assert.equal(moveProp(place, 'p901', 'n').ok, false, 'a bookshelf is too heavy to shove without a roll');
+    assert.match(moveProp(place, 'p901', 'n').why, /too heavy/);
+    // Smashed: broken pieces anyone can walk over.
+    assert.ok(smashProp(place, 'p900'));
+    assert.equal(propById(place, 'p900').prop.type, 'debris');
+    assert.equal(walkable(place, 'G', door.x, door.y), true, 'smashing the barricade opens the door again');
+    // The DM can do the same through place_changes.
+    const log = applyPlaceChanges(place, { props: { p901: 'broken' } });
+    assert.match(log[0], /smashed/);
+    assert.equal(propById(place, 'p901').prop.type, 'debris');
+});
+
+test('windows: break and climb out, barred windows, the DM bars every window', () => {
+    const plain = generateInterior({ id: 'B', name: 'Cottage', kind: 'house' }, 3);
+    const wins = Object.values(plain.windows);
+    assert.ok(wins.length > 0, 'houses have windows');
+    assert.ok(wins.every(w => w.state === 'intact'));
+    const w = wins[0];
+    applyPlaceChanges(plain, { windows: { [w.id]: 'broken' } });
+    assert.equal(terrainAt(floorById(plain, w.floor).map, w.x, w.y), 'U');
+    applyPlaceChanges(plain, { windows: { all: 'barred' } });
+    assert.ok(Object.values(plain.windows).every(x => x.state === 'barred'));
+    assert.equal(terrainAt(floorById(plain, w.floor).map, w.x, w.y), 'H');
+    // A house the story keeps them in: barred from the start.
+    const jail = generatePlace({ ...MANOR_PLAN, barred_windows: true }, 2);
+    const jw = Object.values(jail.windows);
+    assert.ok(jw.length && jw.every(x => x.state === 'barred'));
+    // Walling up a door, and a barricade put there on purpose.
+    const d = Object.values(jail.doors).find(x => x.kind === 'door' && !x.exit);
+    applyPlaceChanges(jail, { doors: { [d.id]: 'walled' } });
+    assert.equal(terrainAt(floorById(jail, d.floor).map, d.x, d.y), '#');
+    const e = jail.doors[jail.exits[0].door];
+    applyPlaceChanges(jail, { add_props: [{ type: 'barrel', at: `${colName(e.x)}${e.y + 1}`, floor: e.floor, label: 'barricade' }] });
+    const barrel = floorById(jail, e.floor).map.props.find(p => p.label === 'barricade');
+    assert.ok(barrel?.obstacle && barrel.id, 'added on purpose, with an id');
+});

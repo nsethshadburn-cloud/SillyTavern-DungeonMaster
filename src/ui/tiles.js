@@ -4,7 +4,7 @@
 // give each room its own floor and walls (carpet, parquet, wallpaper, logs...); "roofs" cover town
 // buildings. Light sources (torches, braziers, fireplaces, chandeliers, lava) glow through the darkness.
 
-import { terrainAt, propsAt, propAt, PROPS } from '../core/grid.js';
+import { terrainAt, propsAt, propAt, PROPS, ORIENTED } from '../core/grid.js';
 import { rngFor, between, pick, hsl, tone, speckle, blob, crack, ellipse, rrect, line, shadow } from './paint-kit.js';
 import { PROP_ART } from './prop-art.js';
 
@@ -398,15 +398,28 @@ function bridge(ctx, r, x, y, s, horizontal, overWater = true) {
     ctx.fillStyle = hsl(28, 30, 20); ctx.fillRect(-s / 2, -s * 0.33, s, s * 0.04); ctx.fillRect(-s / 2, s * 0.29, s, s * 0.04);
     ctx.restore();
 }
-function windowTile(ctx, r, x, y, s, st, horizontal, gx, gy, open) {
+/** A window: glass, barred (iron bars over the glass), or broken (an empty frame with shards). */
+function windowTile(ctx, r, x, y, s, st, horizontal, gx, gy, open, kind = 'glass') {
     wall(ctx, r, x, y, s, st, open, gx, gy);
     ctx.save();
     // On a raised wall the glass sits in the front face, below the wall's top.
     const faceY = !st.flatWalls && open.below ? s * (CAP + (1 - CAP) / 2) - s / 2 : 0;
     ctx.translate(x + s / 2, y + s / 2 + (horizontal ? faceY : 0)); if (!horizontal) ctx.rotate(Math.PI / 2);
-    rrect(ctx, -s * 0.36, -s * 0.12, s * 0.72, s * 0.24, 1, 'rgba(160,200,230,0.75)', hsl(25, 30, 16), s / 20);
-    line(ctx, 0, -s * 0.12, 0, s * 0.12, hsl(25, 30, 16), s / 28);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(-s * 0.3, -s * 0.09, s * 0.12, s * 0.05);
+    const frame = hsl(25, 30, 16);
+    if (kind === 'broken') {
+        rrect(ctx, -s * 0.36, -s * 0.12, s * 0.72, s * 0.24, 1, 'rgba(10,12,18,0.85)', frame, s / 20);
+        ctx.fillStyle = 'rgba(190,220,240,0.7)';
+        for (const [sx, dir] of [[-0.34, 1], [0.34, -1]]) { ctx.beginPath(); ctx.moveTo(sx * s, -s * 0.1); ctx.lineTo((sx + dir * 0.12) * s, -s * 0.1); ctx.lineTo(sx * s, s * 0.06); ctx.fill(); }
+        for (let i = 0; i < 5; i++) ellipse(ctx, between(r, -0.4, 0.4) * s, s * between(r, 0.18, 0.4), s * 0.025, s * 0.015, 'rgba(200,230,250,0.75)');
+    } else {
+        rrect(ctx, -s * 0.36, -s * 0.12, s * 0.72, s * 0.24, 1, 'rgba(160,200,230,0.75)', frame, s / 20);
+        line(ctx, 0, -s * 0.12, 0, s * 0.12, frame, s / 28);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(-s * 0.3, -s * 0.09, s * 0.12, s * 0.05);
+        if (kind === 'barred') {
+            for (let i = -3; i <= 3; i++) { line(ctx, i * s * 0.1, -s * 0.16, i * s * 0.1, s * 0.16, '#2a2c30', s / 16); line(ctx, i * s * 0.1 - 1, -s * 0.16, i * s * 0.1 - 1, s * 0.16, 'rgba(255,255,255,0.2)', 1); }
+            line(ctx, -s * 0.38, 0, s * 0.38, 0, '#2a2c30', s / 18);
+        }
+    }
     ctx.restore();
 }
 function voidTile(ctx, r, x, y, s) {
@@ -494,7 +507,7 @@ export function paintMapBase(map, tile) {
     canvas.width = map.w * tile; canvas.height = map.h * tile;
     const ctx = canvas.getContext('2d');
     const at = (x, y) => (x < 0 || y < 0 || x >= map.w || y >= map.h ? '%' : terrainAt(map, x, y));
-    const isWall = ch => ch === '#' || ch === '|';
+    const isWall = ch => ch === '#' || ch === '|' || ch === 'H' || ch === 'U';
     const isWater = ch => ch === '~' || ch === 'w' || ch === 'b';
     const areaAt = areaFinder(map);
     const floorKind = (ch, st) => ({ '_': 'planks', '=': 'cobble', ',': 'grass', ':': st.floor === 'mud' ? 'mud' : 'dirt' })[ch] ?? st.floor;
@@ -515,7 +528,7 @@ export function paintMapBase(map, tile) {
             const open = { below: !isWall(at(x, y - 1)), above: !isWall(at(x, y + 1)), left: !isWall(at(x - 1, y)), right: !isWall(at(x + 1, y)) };
             if (ch === '%') { voidTile(ctx, r, px, py, tile); continue; }
             if (ch === '#') { wall(ctx, r, px, py, tile, st, open, x, y); continue; }
-            if (ch === '|') { windowTile(ctx, r, px, py, tile, st, isWall(at(x - 1, y)) || isWall(at(x + 1, y)), x, y, open); continue; }
+            if (ch === '|' || ch === 'H' || ch === 'U') { windowTile(ctx, r, px, py, tile, st, isWall(at(x - 1, y)) || isWall(at(x + 1, y)), x, y, open, ch === 'H' ? 'barred' : ch === 'U' ? 'broken' : 'glass'); continue; }
             if (ch === '~' || ch === 'w') { water(ctx, r, px, py, tile, ch === 'w'); continue; }
             if (ch === 'L') { lava(ctx, r, px, py, tile); continue; }
             if (ch === 'b') {
@@ -580,7 +593,19 @@ export function paintMapBase(map, tile) {
         const art = PROP_ART[p.type];
         if (!art) continue;
         const w = p.w || 1, h = p.h || 1;
-        art(ctx, rngFor(map.seed, p.x, p.y, 7), (p.x + w / 2) * tile, (map.h - p.y - h / 2) * tile, tile, w, h, p);
+        const cx = (p.x + w / 2) * tile, cy = (map.h - p.y - h / 2) * tile;
+        // Seeded by the thing itself (its id), so it keeps its look when it's shoved somewhere else.
+        const idNum = Number(/^p(d+)$/.exec(p.id || '')?.[1]);
+        const rr = Number.isFinite(idNum) ? rngFor(map.seed, idNum, 7919) : rngFor(map.seed, p.x, p.y, 7);
+        if (ORIENTED.has(p.type) && p.side && p.side !== 'n') {
+            // Drawn with its back to the top, then turned so the back is against its own wall.
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate({ s: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 }[p.side] ?? 0);
+            const sideways = p.side === 'e' || p.side === 'w';
+            art(ctx, rr, 0, 0, tile, sideways ? h : w, sideways ? w : h, p);
+            ctx.restore();
+        } else art(ctx, rr, cx, cy, tile, w, h, p);
     }
     // Lighting: the theme's darkness, with warm pools around light sources (and lit rooms).
     const lights = (map.props || []).filter(p => !p.hidden && PROPS[p.type]?.light).map(p => ({ x: p.x + ((p.w || 1) - 1) / 2, y: p.y + ((p.h || 1) - 1) / 2, rad: PROPS[p.type].light }));

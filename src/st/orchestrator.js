@@ -16,7 +16,7 @@ import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, walkable } from '../core/explore.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction } from './atlas.js';
 import { openMap, refreshMap, closeMap } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
@@ -207,6 +207,9 @@ async function turnBody(c, opts, status, signal) {
     }
     if (signal.aborted) throw new Error('aborted');
     let placeEvent = opts.placeEvent || '';
+    // The player picked something on the map (smash the bookshelf, pry the bars): the DM rules on it.
+    const picked = !autoRoll ? takeMapAction() : '';
+    if (picked) placeEvent = [picked, placeEvent].filter(Boolean).join(' ');
     if (!opts.force && !autoRoll && !pacing.inCombat) {
         const spotted = tickPlace(c);
         if (spotted.length) placeEvent = `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party and what they do.`;

@@ -3,7 +3,7 @@
 // get wrong (doors that don't line up, stairs that go nowhere). Same plan + same seed = same place.
 // Pure module.
 
-import { PROPS, THEMES, MAX_PLACE_SIZE, signIcon } from './grid.js';
+import { PROPS, THEMES, MAX_PLACE_SIZE, signIcon, ORIENTED } from './grid.js';
 import { ROOM_SIZES, recipeFor, roomType, WALLPAPER_HUES, CARPET_HUES } from './rooms.js';
 import { nameKey } from './text.js';
 
@@ -60,6 +60,7 @@ export function normalizePlan(raw) {
             traps: arr(r?.traps).slice(0, 3).map(t => obj(t)).map(t => ({ kind: str(t.kind || t.name).slice(0, 60) || 'trap', dc: clamp(Math.round(Number(t.dc)) || 13, 8, 25), save: str(t.save).slice(0, 24), effect: str(t.effect).slice(0, 240), hidden: t.hidden !== false })),
             items: arr(r?.items).slice(0, 6).map(it => (typeof it === 'string' ? { name: it } : obj(it))).map(it => ({ name: str(it.name).slice(0, 60), hidden: it.hidden === true, note: str(it.note ?? it.where).slice(0, 160) })).filter(it => it.name),
             exit: r?.exit === true,
+            windows: ['barred', 'none', 'normal'].includes(str(r?.windows).toLowerCase()) ? str(r.windows).toLowerCase() : '',
         });
     }
     if (!rooms.length) rooms.push({ id: 'R1', name: 'Room', type: 'room', floor: floors[0].id, size: '', lit: null, description: '', props: [], marks: [], traps: [], items: [], exit: true });
@@ -99,6 +100,7 @@ export function normalizePlan(raw) {
         kind,
         theme,
         fog: typeof d.fog === 'boolean' ? d.fog : true,
+        barred: d.barred_windows === true,
         summary: str(d.summary).slice(0, 1200),
         floors, rooms, links, guards, start,
     };
@@ -320,6 +322,11 @@ function furnish(r, room, rect, ctx, theme) {
         }
         if (blocks) { for (const k of tiles) ctx.blocked.add(k); if (!stillConnected()) { for (const k of tiles) ctx.blocked.delete(k); return null; } }
         const prop = { x, y, type, ...extra };
+        if (ORIENTED.has(type) && !prop.side) {
+            // Back to the nearest wall.
+            const d = { s: y - rect.y, n: rect.y + rect.h - (y + h), w: x - rect.x, e: rect.x + rect.w - (x + w) };
+            prop.side = Object.entries(d).sort((a, b) => a[1] - b[1])[0][0];
+        }
         if (w > 1) prop.w = w;
         if (h > 1) prop.h = h;
         ctx.props.push(prop);
@@ -359,8 +366,8 @@ function furnish(r, room, rect, ctx, theme) {
             const p = put(type, x, y, w, h, opt.extra) ?? (w > 1 || h > 1 ? put(type, x, y, Math.max(1, w - 1), Math.max(1, h - 1), opt.extra) : null);
             if (p && opt.long) for (let i = 0; i < (p.w || 1); i++) for (let j = 0; j < (p.h || 1); j++) {
                 // Chairs along the long sides of a dining table.
-                if (longX) { if (j === 0 && r() < 0.85) put('chair', p.x + i, p.y - 1); if (j === (p.h || 1) - 1 && r() < 0.85) put('chair', p.x + i, p.y + (p.h || 1)); }
-                else { if (i === 0 && r() < 0.85) put('chair', p.x - 1, p.y + j); if (i === (p.w || 1) - 1 && r() < 0.85) put('chair', p.x + (p.w || 1), p.y + j); }
+                if (longX) { if (j === 0 && r() < 0.85) put('chair', p.x + i, p.y - 1, 1, 1, { side: 's' }); if (j === (p.h || 1) - 1 && r() < 0.85) put('chair', p.x + i, p.y + (p.h || 1), 1, 1, { side: 'n' }); }
+                else { if (i === 0 && r() < 0.85) put('chair', p.x - 1, p.y + j, 1, 1, { side: 'w' }); if (i === (p.w || 1) - 1 && r() < 0.85) put('chair', p.x + (p.w || 1), p.y + j, 1, 1, { side: 'e' }); }
             }
             return p;
         }
@@ -372,7 +379,7 @@ function furnish(r, room, rect, ctx, theme) {
                 for (const [lx, ly] of shuffle(r, line)) {
                     const x = side === 'e' ? rect.x + rect.w - w : horiz ? lx : rect.x;
                     const y = side === 'n' ? rect.y + rect.h - h : side === 's' ? rect.y : ly;
-                    const p = put(type, x, y, w, h, opt.extra);
+                    const p = put(type, x, y, w, h, { ...(opt.extra ?? {}), side });
                     if (p) return p;
                 }
             }
@@ -554,12 +561,17 @@ function tryBuild(plan, seed, shrink) {
             const d = addDoor(room.floor, x, y, 'door', [room.id, null], { exit: true });
             place.exits.push({ floor: room.floor, x, y, door: d.id });
         }
-        if (!ROUGH.has(plan.theme) && levelOf(room.floor) >= 0 && room.type !== 'vault') {
-            outside.forEach(([x, y], i) => { if (i % 3 === 1 && c[y][x] === '#' && !doorAt.has(`${room.floor}:${x},${y}`)) c[y][x] = '|'; });
+        const pr = plan.rooms.find(x => x.id === room.id);
+        if (pr?.windows !== 'none' && (pr?.windows === 'barred' || pr?.windows === 'normal' || (!ROUGH.has(plan.theme) && levelOf(room.floor) >= 0 && room.type !== 'vault'))) {
+            const bars = pr?.windows === 'barred' || (plan.barred && pr?.windows !== 'normal');
+            outside.forEach(([x, y], i) => { if (i % 3 === 1 && c[y][x] === '#' && !doorAt.has(`${room.floor}:${x},${y}`)) c[y][x] = bars ? 'H' : '|'; });
         }
     }
     // Every room marked as a way out must really have a door to the outside; otherwise try another layout.
     if (plan.rooms.some(rm => rm.exit && place.rooms[rm.id] && !place.exits.some(e => place.doors[e.door]?.rooms.includes(rm.id)))) return null;
+    // Keep the squares in front of every door (the way out included), every staircase and every window clear.
+    for (const d of Object.values(place.doors)) for (const [dx, dy] of DIRS) reserve(d.floor, d.x + dx, d.y + dy);
+    for (const f of Object.keys(chars)) chars[f].forEach((row, y) => row.forEach((ch, x) => { if (ch === '|' || ch === 'H') for (const [dx, dy] of DIRS) reserve(f, x + dx, y + dy); }));
     // Furniture.
     for (const room of plan.rooms) {
         const pr = place.rooms[room.id];
@@ -623,12 +635,53 @@ function tryBuild(plan, seed, shrink) {
     place.start = { floor: startRoom.floor, x: at?.[0] ?? startRoom.rect.x, y: at?.[1] ?? startRoom.rect.y, room: startRoom.id };
     place.state.floor = startRoom.floor;
     for (const f of place.floors) place.state.explored[f.id] = '0'.repeat(f.map.w * f.map.h);
+    clearDoorways(place);
+    ensureIds(place);
     // A layout where some room can never be reached is thrown away (the next attempt uses another seed).
     return solvePlace(place, r) ? place : null;
 }
 
+/**
+ * Nothing the generator placed may stand in a doorway, in front of a door, on or by a staircase, or
+ * in front of a window. Only something put there on purpose (an obstacle: a barricade, a cave-in)
+ * may block one. Also run on places loaded from older versions. Returns how many were moved out.
+ */
+export function clearDoorways(place) {
+    let removed = 0;
+    const spots = [];
+    for (const d of Object.values(place.doors)) spots.push([d.floor, d.x, d.y, true]);
+    for (const s of place.stairs) { spots.push([s.a.floor, s.a.x, s.a.y, true]); spots.push([s.b.floor, s.b.x, s.b.y, true]); }
+    for (const f of place.floors) f.map.rows.forEach((row, i) => [...row].forEach((ch, x) => { if (ch === '|' || ch === 'H' || ch === 'U') spots.push([f.id, x, f.map.h - 1 - i, false]); }));
+    for (const [floor, x, y, self] of spots) {
+        const map = place.floors.find(f => f.id === floor)?.map;
+        if (!map) continue;
+        const squares = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]];
+        if (self) squares.push([x, y]);
+        const before = map.props.length;
+        map.props = map.props.filter(p => p.obstacle || !PROPS[p.type]?.blocks || !squares.some(([sx, sy]) => sx >= p.x && sx < p.x + (p.w || 1) && sy >= p.y && sy < p.y + (p.h || 1)));
+        if (map.props.length !== before) { removed += before - map.props.length; map.version = (map.version || 0) + 1; }
+    }
+    return removed;
+}
+
+/** Ids for props (p1, p2...) and a list of windows (W1...), so the DM can name what changes. */
+export function ensureIds(place) {
+    let n = 0, w = 0;
+    for (const f of place.floors) for (const p of f.map.props) { const m = /^p(\d+)$/.exec(p.id || ''); if (m) n = Math.max(n, Number(m[1])); }
+    for (const f of place.floors) for (const p of f.map.props) if (!p.id) p.id = `p${++n}`;
+    place.windows ??= {};
+    for (const win of Object.values(place.windows)) { const m = /^W(\d+)$/.exec(win.id); if (m) w = Math.max(w, Number(m[1])); }
+    for (const f of place.floors) f.map.rows.forEach((row, i) => [...row].forEach((ch, x) => {
+        if (ch !== '|' && ch !== 'H' && ch !== 'U') return;
+        const y = f.map.h - 1 - i;
+        if (Object.values(place.windows).some(v => v.floor === f.id && v.x === x && v.y === y)) return;
+        const id = `W${++w}`;
+        place.windows[id] = { id, floor: f.id, x, y, state: ch === 'H' ? 'barred' : ch === 'U' ? 'broken' : 'intact' };
+    }));
+}
+
 export function doorChar(door) {
-    if (door.state === 'hidden') return '#';
+    if (door.state === 'hidden' || door.state === 'walled') return '#';
     if (door.kind === 'arch' || door.state === 'broken') return '.';
     if (door.state === 'locked') return 'D';
     return door.state === 'open' ? '/' : '+';
@@ -636,7 +689,7 @@ export function doorChar(door) {
 
 // ---------- solvable? ----------
 
-const WALK = new Set(['.', ',', ':', '_', '=', '<', '>', '~', 'b', '^', '+', '/', 'D']);
+const WALK = new Set(['.', ',', ':', '_', '=', '<', '>', '~', 'b', '^', '+', '/', 'D']); // windows (| H U) are not a way through
 
 /**
  * Who can reach what from the start, treating locked doors as open once their key is reachable
@@ -862,6 +915,7 @@ export function generateTown(planIn, seed = 1) {
     for (const y of [roadY, roadY + 1]) { place.exits.push({ floor: 'F0', x: 0, y }, { floor: 'F0', x: W - 1, y }); }
     if (cross) for (const x of [crossX, crossX + 1]) { place.exits.push({ floor: 'F0', x, y: 0 }, { floor: 'F0', x, y: H - 1 }); }
     map.rows = c.slice().reverse().map(row => row.join(''));
+    ensureIds(place);
     place.start = { floor: 'F0', x: 1, y: roadY, room: null };
     place.state.explored.F0 = '1'.repeat(W * H);
     return place;

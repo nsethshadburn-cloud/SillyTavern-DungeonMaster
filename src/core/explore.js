@@ -2,8 +2,8 @@
 // has seen), walking paths, guards on patrol, the DM's view of the place, and the DM's changes
 // (doors, traps, items, guards). Pure module.
 
-import { PROPS, TERRAIN, terrainAt, propsAt, colName } from './grid.js';
-import { doorChar } from './layout.js';
+import { PROPS, TERRAIN, HEAVY, terrainAt, propsAt, colName, parseCoord } from './grid.js';
+import { doorChar, ensureIds } from './layout.js';
 import { nameKey } from './text.js';
 
 const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert']);
@@ -179,10 +179,11 @@ export function walkable(place, floorId, x, y) {
     const map = floorById(place, floorId).map;
     if (x < 0 || y < 0 || x >= map.w || y >= map.h) return false;
     const ch = terrainAt(map, x, y);
+    // Something solid in the way (furniture, or a barricade shoved into a doorway) blocks it.
+    if (propsAt(map, x, y).some(p => PROPS[p.type]?.blocks)) return false;
     if (ch === '+') return true;
     if (TERRAIN[ch]?.walk === false) return false;
-    if (ch === '%') return false;
-    return !propsAt(map, x, y).some(p => PROPS[p.type]?.blocks);
+    return ch !== '%';
 }
 
 /**
@@ -261,7 +262,7 @@ export function applyPlaceChanges(place, changes) {
         const door = place.doors[id] ?? Object.values(place.doors).find(d => d.id.toLowerCase() === String(id).toLowerCase());
         if (!door) continue;
         const want = String(raw).toLowerCase();
-        const state = { open: 'open', opened: 'open', unlocked: 'closed', closed: 'closed', close: 'closed', locked: 'locked', lock: 'locked', broken: 'broken', break: 'broken', found: 'closed', revealed: 'closed', hidden: 'hidden' }[want];
+        const state = { open: 'open', opened: 'open', unlocked: 'closed', closed: 'closed', close: 'closed', locked: 'locked', lock: 'locked', broken: 'broken', break: 'broken', found: 'closed', revealed: 'closed', hidden: 'hidden', walled: 'walled', bricked: 'walled' }[want];
         if (!state) continue;
         if (want === 'found' && door.state !== 'hidden') continue;
         setDoorState(place, door, state);
@@ -322,7 +323,123 @@ export function applyPlaceChanges(place, changes) {
         }
     }
     if (Array.isArray(c.reveal) && c.reveal.length) { revealRooms(place, c.reveal.map(String)); log.push(`revealed ${c.reveal.join(', ')}`); }
+    ensureIds(place);
+    // Things on the map: smashed, removed, moved.
+    for (const [id, raw] of Object.entries(c.props || {})) {
+        const found = propById(place, id);
+        if (!found) continue;
+        const v = raw && typeof raw === 'object' ? raw : { state: String(raw) };
+        const st = String(v.state || '').toLowerCase();
+        if (/^(broken|smashed|destroyed|debris)$/.test(st)) { const name = found.prop.label || PROPS[found.prop.type]?.name || id; smashProp(place, id); log.push(`${name} smashed`); continue; }
+        if (/^(removed|gone|taken)$/.test(st)) { const map = floorById(place, found.floor).map; map.props = map.props.filter(p => p !== found.prop); bump(place, found.floor); log.push(`${id} removed`); continue; }
+        const to = v.move ?? v.to ?? (/^[nsew]$/.test(st) ? st : null);
+        if (to) { const r = moveProp(place, id, to, { force: true }); log.push(r.ok ? `${id} moved` : `${id} couldn't move: ${r.why}`); }
+        if (typeof v.obstacle === 'boolean') found.prop.obstacle = v.obstacle;
+    }
+    // New things the DM puts on the map (a barricade, bars, a cave-in...). On purpose, so they may block a door.
+    for (const a of Array.isArray(c.add_props) ? c.add_props : []) {
+        const type = String(a?.type || '').toLowerCase().replace(/[\s-]+/g, '_');
+        const floorId = a?.floor && place.floors.some(f => f.id === a.floor) ? a.floor : place.state.floor;
+        const map = floorById(place, floorId).map;
+        const at = parseCoord(a?.at, map);
+        if (!PROPS[type] || !at) continue;
+        const prop = { x: at.x, y: at.y, type, obstacle: a.obstacle !== false && PROPS[type].blocks, ...(a.label ? { label: String(a.label).slice(0, 40) } : {}) };
+        if (Number(a.w) > 1) prop.w = Math.min(8, Math.round(Number(a.w)));
+        if (Number(a.h) > 1) prop.h = Math.min(8, Math.round(Number(a.h)));
+        map.props.push(prop);
+        ensureIds(place);
+        bump(place, floorId);
+        log.push(`${type} added at ${a.at}`);
+    }
+    // Windows: by id, by room, or all of them ("all": "barred").
+    for (const [key, raw] of Object.entries(c.windows || {})) {
+        const state = { barred: 'barred', bars: 'barred', broken: 'broken', smashed: 'broken', intact: 'intact', fixed: 'intact', repaired: 'intact', unbarred: 'intact' }[String(raw).toLowerCase()];
+        if (!state) continue;
+        const all = Object.values(place.windows || {});
+        const rm = place.rooms[key];
+        const hits = key === 'all' ? all : rm ? all.filter(w => w.floor === rm.floor && w.x >= rm.rect.x - 1 && w.x <= rm.rect.x + rm.rect.w && w.y >= rm.rect.y - 1 && w.y <= rm.rect.y + rm.rect.h) : all.filter(w => w.id.toLowerCase() === key.toLowerCase());
+        for (const w of hits) setWindowState(place, w, state);
+        if (hits.length) log.push(`${key === 'all' ? 'every window' : key} ${state}`);
+    }
     return log;
+}
+
+// ---------- things on the map: smash, push, windows ----------
+
+export function propById(place, id) {
+    for (const f of place.floors) {
+        const prop = f.map.props.find(p => p.id === id);
+        if (prop) return { prop, floor: f.id };
+    }
+    return null;
+}
+
+/** Smashed: the thing becomes broken pieces on the floor that anyone can walk over. */
+export function smashProp(place, id) {
+    const found = propById(place, id);
+    if (!found) return false;
+    const p = found.prop;
+    p.was = p.was || p.type;
+    p.label = `broken ${p.label || PROPS[p.type]?.name || p.type}`;
+    p.type = 'debris';
+    delete p.obstacle;
+    delete p.side;
+    bump(place, found.floor);
+    return true;
+}
+
+const DIR = { n: [0, 1], s: [0, -1], e: [1, 0], w: [-1, 0] };
+
+/** Is this light enough to shove without a roll? */
+export function isLight(prop) {
+    return PROPS[prop.type]?.blocks && !HEAVY.has(prop.type) && (prop.w || 1) * (prop.h || 1) <= 2;
+}
+
+/**
+ * Push something one square (n/s/e/w) or move it to a square ("ab14"). It can go onto open floor or
+ * into a doorway (that's a barricade: the door is blocked until it's moved away), not into walls,
+ * other furniture or people. force = the DM moves it (any size).
+ * @returns {{ok:boolean, why?:string}}
+ */
+export function moveProp(place, id, to, { force = false, people = [] } = {}) {
+    const found = propById(place, id);
+    if (!found) return { ok: false, why: 'not found' };
+    const { prop, floor } = found;
+    const map = floorById(place, floor).map;
+    let nx, ny;
+    if (DIR[to]) { nx = prop.x + DIR[to][0]; ny = prop.y + DIR[to][1]; }
+    else { const pt = parseCoord(to, map); if (!pt) return { ok: false, why: 'no such square' }; nx = pt.x; ny = pt.y; }
+    if (!force && !isLight(prop)) return { ok: false, why: 'too heavy to shove without a roll' };
+    const w = prop.w || 1, h = prop.h || 1;
+    let door = null;
+    for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) {
+        const x = nx + i, y = ny + j;
+        if (x < 0 || y < 0 || x >= map.w || y >= map.h) return { ok: false, why: 'off the map' };
+        const ch = terrainAt(map, x, y);
+        if (ch === '+' || ch === '/') door = doorAt(place, floor, x, y);
+        else if (TERRAIN[ch]?.walk === false || ch === '<' || ch === '>') return { ok: false, why: 'something is in the way' };
+        if (map.props.some(p => p !== prop && PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1))) return { ok: false, why: 'something is in the way' };
+        if (people.some(pp => pp.floor === floor && pp.x === x && pp.y === y)) return { ok: false, why: 'someone is standing there' };
+    }
+    prop.x = nx; prop.y = ny;
+    // Shoved into a doorway: a barricade, there on purpose.
+    prop.obstacle = Boolean(door) || undefined;
+    if (door) prop.barricades = door.id; else delete prop.barricades;
+    bump(place, floor);
+    return { ok: true, door: door?.id };
+}
+
+export function windowAt(place, floorId, x, y) {
+    return Object.values(place.windows || {}).find(w => w.floor === floorId && w.x === x && w.y === y) ?? null;
+}
+
+export function setWindowState(place, win, state) {
+    win.state = state;
+    const map = floorById(place, win.floor).map;
+    const rows = map.rows.map(r => r.split(''));
+    rows[map.h - 1 - win.y][win.x] = state === 'barred' ? 'H' : state === 'broken' ? 'U' : '|';
+    map.rows = rows.map(r => r.join(''));
+    bump(place, win.floor);
 }
 
 // ---------- guards ----------
@@ -416,9 +533,10 @@ export function cropText(place, floorId, rect, people = {}) {
         for (let x = x0; x <= x1; x++) row += (at[`${x},${y}`] ? '@' : terrainAt(map, x, y)).padEnd(3);
         lines.push(`${String(y + 1).padStart(3)}  ${row.trimEnd()}`);
     }
-    const props = (map.props || []).filter(p => !p.hidden && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && !PROPS[p.type]?.decal).map(p => `${p.label || PROPS[p.type]?.name || p.type} ${coord(p.x, p.y)}`);
+    const props = (map.props || []).filter(p => !p.hidden && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && (!PROPS[p.type]?.decal || p.type === 'debris')).map(p => `${p.label || PROPS[p.type]?.name || p.type} ${p.id ?? ''} ${coord(p.x, p.y)}${p.obstacle ? ' (blocking on purpose)' : ''}`.replace(/ {2}/g, ' '));
+    const wins = Object.values(place.windows || {}).filter(w => w.floor === floorId && w.x >= x0 && w.x <= x1 && w.y >= y0 && w.y <= y1).map(w => `${w.id} ${coord(w.x, w.y)} ${w.state}`);
     const who = Object.entries(people).filter(([, p]) => p && p.floor === floorId && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1).map(([n, p]) => `${n} ${coord(p.x, p.y)}`);
-    return `${lines.join('\n')}\n(@ = someone) People: ${who.join('; ') || 'none'}\nThings: ${props.join(', ') || 'none'}`;
+    return `${lines.join('\n')}\n(@ = someone; | window, H barred window, U broken window) People: ${who.join('; ') || 'none'}\nThings (ids for place_changes.props): ${props.join(', ') || 'none'}${wins.length ? `\nWindows: ${wins.join(', ')}` : ''}`;
 }
 
 /** What's going on in the place right now, for every DM call while the party is inside. */

@@ -81,7 +81,8 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - To build one, set "build_place": {"name": "Blackmoor Manor", "size": "big|small", "kind": "mansion|castle|dungeon|cave|prison|temple|crypt|tower|town|village|camp|tavern|...", "why": "one line"}. You'll be asked for the full plan in a separate call. Big sites are expensive: only for a place the plot stays in for a long time (an act or more). Never for travel or a one-scene stop.
 - Never build a place that's already in the ATLAS. To send the party back to one, set "enter_place": "its name". When they leave a place for good, set "leave_place": true.
 - Inside a place, the code moves the party when the player clicks the map, reveals rooms as they're seen (fog of war), opens doors they walk through, spots or springs traps by passive Perception, and calls you when something happens (a sprung trap, a guard coming into view, walking out). You get the whole place (with its secrets) and the party's current room each turn. Entering a room for the first time shows its description automatically: don't repeat it.
-- Change a place with "place_changes": {"doors": {"D4": "open|closed|locked|unlocked|broken|found"}, "traps": {"T2": "found|disarmed|sprung"}, "items": {"I3": "taken|found"}, "guards": {"Graves the Butler": "G4" (send them to a room) | "alert" | "calm" | "gone", "Old Martha": {"room": "G5", "description": "the cook", "hostile": false} (put someone new on the map)}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"] (the party learns a room's layout, e.g. from a floor plan)}. Secret doors need "found" before the party can use them; locked doors need "unlocked" (a key, a picked lock) or "broken".
+- The player can act on things from the map: smash something (ask for a roll, Athletics or Strength, harder for sturdy things; on a success set "props": {"p12": "broken"} and it becomes broken pieces anyone can walk over), shove heavy furniture (a roll; on a success "props": {"p12": {"move": "w"}} one square, or to a square like "ab14"; light things they shove themselves), barricade a door (furniture moved into a doorway blocks it until moved), break a window ("windows": {"W3": "broken"}; noisy) and climb out of a broken one, pry at bars (a hard roll; success = "broken"). The PLACE EVENT names exactly what they picked.
+- Change a place with "place_changes": {"doors": {"D4": "open|closed|locked|unlocked|broken|found|walled"}, "traps": {"T2": "found|disarmed|sprung"}, "items": {"I3": "taken|found"}, "props": {"p12": "broken|removed" or {"move": "n|s|e|w|ab14"}}, "add_props": [{"type": "crate", "at": "ab14", "label": "barricade", "w": 1, "h": 1}] (put something on the map on purpose: a barricade, a cave-in; it may block a door), "windows": {"W3": "broken|barred|intact", "G4": "barred" (every window of a room), "all": "barred" (the whole place)}, "guards": {"Graves the Butler": "G4" (send them to a room) | "alert" | "calm" | "gone", "Old Martha": {"room": "G5", "description": "the cook", "hostile": false} (put someone new on the map)}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"] (the party learns a room's layout, e.g. from a floor plan)}. Secret doors need "found" before the party can use them; locked doors need "unlocked" (a key, a picked lock) or "broken".
 - Use "positions" with the floor's own squares (like "ab14") to move people on the current floor. One-off tactical spots outside any place (an ambush on the road) can still use "scene_map".
 
 ## Pacing (this matters most)
@@ -400,11 +401,13 @@ const PLACE_JSON = `{
     "marks": ["blood", "scratches", "papers", "stain"],
     "traps": [{"kind": "pressure-plate dart trap", "dc": 14, "save": "DEX", "effect": "2d4 piercing and poisoned", "hidden": true}],
     "items": [{"name": "Kennel Key", "hidden": true, "note": "in a feed sack"}],
-    "exit": false
+    "exit": false,
+    "windows": "normal|barred|none (leave out for the usual)"
   }],
   "links": [{"a": "B1", "b": "B2", "via": "door|arch|locked|secret|stairs", "key": "Kennel Key (locked doors only)", "dc": 15}],
   "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"]}],
   "people": [{"name": "Old Martha", "description": "the cook, frightened of her master", "room": "G5"}],
+  "barred_windows": false,
   "start": "B1"
 }`;
 
@@ -424,6 +427,7 @@ What makes a great place (follow all of it):
 - Gating: 2-4 locked doors whose keys are found elsewhere in the place (the code makes sure every key can be reached before its door), 1-3 secret doors (a DC to find) that lead somewhere worth it, maybe one locked door with no key that can only be picked or forced.
 - The start ("start") is where the story puts the party (a cell, the front steps, a kennel). The way out ("exit": true on that room) is where the story needs it, usually far from the start, behind the place's main challenge.
 - Danger that's fair: traps only where they make sense (the master's private wing, a vault, a study), 3-8 for a big place, with a hint in the room's description. Guards or creatures only if the story has them; give each a name, a one-line description and a patrol of 2-5 rooms on one floor, and keep them away from the start so the party can plan. "people" are everyone else who belongs there and isn't hostile (servants, other prisoners, a ghost who wants help): they're on the map too, and the party can talk to them.
+- Windows: rooms on outer walls get windows the party can break and climb out of. If the story keeps them in (a prison, a captor's house), set "barred_windows": true, or "windows": "barred" on the rooms that matter. Leave a way out somewhere, even if it's hard.
 - Atmosphere: lit rooms are lived-in public rooms; dark ones are cellars, unused wings, secrets. Use "marks" (blood, scratches, papers, stain) and story props to show what happened in a room.
 - Room types (the code furnishes each room from its type, so a library already gets shelves, a desk and a rug): ${ROOM_TYPES_TEXT}.
 - Add props only for story-specific things (a named painting, a cage with something in it, an altar): ${PROPS_LEGEND}.

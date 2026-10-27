@@ -7,11 +7,11 @@
 // Claude never sees an image: it reads and writes maps as plain text.
 
 import { campaign } from '../st/campaign.js';
-import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, reachable, speedSquares } from '../core/grid.js';
+import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting } from '../st/atlas.js';
-import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal } from '../core/explore.js';
+import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction } from '../st/atlas.js';
+import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
 
 let panel = null;
@@ -214,6 +214,12 @@ function renderMap(center = false) {
         const who = exploring ? whoAt(b.positions, map, sq) : null;
         if (who && who !== c.meta.persona.name) {
             openMenu(ev, c, b, who, view, canvas);
+            return;
+        }
+        // Furniture and windows: smash, shove, search, break, climb out.
+        const thing = exploring && isExplored(b.place, b.floor.id, sq.x, sq.y) ? thingAt(b, sq) : null;
+        if (thing) {
+            openThingMenu(ev, c, b, thing, view, canvas);
             return;
         }
         if (exploring && (!viewFloor || viewFloor === b.place.state.positions[c.meta.persona.name]?.floor)) {
@@ -463,6 +469,87 @@ function openMenu(ev, c, b, who, view, canvas) {
     menu.addEventListener('click', async e => {
         const i = Number(e.target.closest('[data-i]')?.dataset.i);
         if (!Number.isInteger(i)) return;
+        closeMenu();
+        try { await actions[i][2](); } catch (error) { toastr.error(String(error?.message || error), 'Map'); }
+    });
+}
+
+// ---------- the tap menu for things: furniture and windows ----------
+
+/** Something you can act on at a square: a window, or furniture that's in the way. */
+function thingAt(b, sq) {
+    const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
+    if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
+    const prop = propAt(b.map, sq.x, sq.y);
+    if (!prop || !PROPS[prop.type]?.blocks) return null;
+    return { kind: 'prop', prop, name: prop.label || PROPS[prop.type]?.name || prop.type, spot: { x: prop.x, y: prop.y, w: prop.w, h: prop.h } };
+}
+
+const DIR_WORDS = { n: 'north', s: 'south', e: 'east', w: 'west' };
+
+function openThingMenu(ev, c, b, thing, view, canvas) {
+    const player = c.meta.persona.name;
+    const redraw = () => { const nb = board(c); if (nb?.kind === 'place') { drawBoard(canvas, c, nb); if (follow) centerOnParty(view, canvas, nb); } };
+    const done = () => renderMap();
+    const where = toCoord(thing.spot.x, thing.spot.y);
+    const near = () => approachSpot(thing.spot, redraw);
+    let actions;
+    if (thing.kind === 'window') {
+        const w = thing.win;
+        actions = w.state === 'broken'
+            ? [['Climb out', 'fa-person-falling', async () => { if (await near()) await climbOut(w.id); done(); }]]
+            : w.state === 'barred'
+                ? [['Pry the bars', 'fa-grip-lines-vertical', async () => { if (!(await near())) return; setMapAction(`${player} tries to pry the bars off window ${w.id} at ${where}. A hard Strength (Athletics) roll; on a success set place_changes.windows {"${w.id}": "broken"} (the bars and glass are out, they can climb through).`); sendAsPlayer(`*${player} grips the bars of the window and pulls with everything they've got.*`); done(); }]]
+                : [['Break it', 'fa-hammer', async () => { if (!(await near())) return; setMapAction(`${player} smashes window ${w.id} at ${where}. It's loud: anyone nearby may hear. Unless something stops them, set place_changes.windows {"${w.id}": "broken"}.`); sendAsPlayer(`*${player} smashes the window.*`); done(); }]];
+    } else {
+        const p = thing.prop;
+        const light = isLight(p);
+        actions = [
+            ['Search', 'fa-magnifying-glass', async () => { if (!(await near())) return; setMapAction(`${player} searches the ${thing.name} (${p.id} at ${where}). Say what they find, if anything (items in this room are in the place notes).`); sendAsPlayer(`*${player} searches the ${thing.name}.*`); done(); }],
+            ['Smash', 'fa-hammer', async () => { if (!(await near())) return; setMapAction(`${player} tries to smash the ${thing.name} (${p.id} at ${where}). Ask for a Strength (Athletics) roll, harder for sturdy things; on a success set place_changes.props {"${p.id}": "broken"}. It's noisy.`); sendAsPlayer(`*${player} tries to smash the ${thing.name}.*`); done(); }],
+            ['Push', 'fa-hand-back-fist', async () => { if (!(await near())) return; openPushMenu(ev, c, thing, light, redraw, done); }],
+        ];
+    }
+    showMenu(ev, `${thing.name}`, thing.kind === 'prop' ? (isLight(thing.prop) ? 'light enough to shove' : 'heavy: shoving it takes a roll') : thing.win.state === 'barred' ? 'iron bars over the glass' : '', actions);
+}
+
+function openPushMenu(ev, c, thing, light, redraw, done) {
+    const player = c.meta.persona.name, p = thing.prop;
+    const push = dir => async () => {
+        if (light) {
+            const r = pushProp(p.id, dir);
+            if (!r.ok) toastr.info(`It won't go that way: ${r.why}.`, 'Map', { timeOut: 2500 });
+            else if (r.door) toastr.info(`The ${thing.name} now blocks the door.`, 'Map', { timeOut: 2500 });
+            done();
+            return;
+        }
+        setMapAction(`${player} tries to shove the heavy ${thing.name} (${p.id} at ${toCoord(p.x, p.y)}) one square ${DIR_WORDS[dir]}. Ask for a Strength (Athletics) roll; on a success set place_changes.props {"${p.id}": {"move": "${dir}"}}. If that puts it in a doorway, the door is barricaded.`);
+        sendAsPlayer(`*${player} puts a shoulder into the ${thing.name} and shoves it ${DIR_WORDS[dir]}.*`);
+        done();
+    };
+    showMenu(ev, `Push the ${thing.name}`, light ? 'which way?' : 'which way? (a roll)', [
+        ['North', 'fa-arrow-up', push('n')], ['South', 'fa-arrow-down', push('s')],
+        ['West', 'fa-arrow-left', push('w')], ['East', 'fa-arrow-right', push('e')],
+    ]);
+}
+
+/** A small menu of buttons next to the tap (a bar along the bottom on phones). */
+function showMenu(ev, title, sub, actions) {
+    closeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'dm-map-menu';
+    menu.innerHTML = `<div class="dm-map-menu-title">${escapeHtml(title)}${sub ? `<small>${escapeHtml(sub)}</small>` : ''}</div>${actions.map(([label, icon], i) => `<div class="menu_button" data-i="${i}"><i class="fa-solid ${icon}"></i> ${escapeHtml(label)}</div>`).join('')}`;
+    const body = panel.querySelector('.dm-map-body');
+    body.appendChild(menu);
+    const box = body.getBoundingClientRect();
+    const tapX = ev.clientX - box.left, tapY = ev.clientY - box.top;
+    const below = tapY + 8 + menu.offsetHeight <= body.clientHeight;
+    menu.style.left = `${Math.max(8, Math.min(tapX + 8, box.width - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${body.scrollTop + Math.max(8, below ? tapY + 8 : tapY - menu.offsetHeight - 8)}px`;
+    menu.addEventListener('click', async e => {
+        const i = Number(e.target.closest('[data-i]')?.dataset.i);
+        if (!Number.isInteger(i)) return;
+        e.stopPropagation();
         closeMenu();
         try { await actions[i][2](); } catch (error) { toastr.error(String(error?.message || error), 'Map'); }
     });

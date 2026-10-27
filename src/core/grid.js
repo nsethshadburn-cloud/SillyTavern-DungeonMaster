@@ -28,7 +28,9 @@ export const TERRAIN = Object.freeze({
     '<': { name: 'stairs up', walk: true, cover: false },
     '>': { name: 'stairs down', walk: true, cover: false },
     'b': { name: 'bridge or walkway', walk: true, cover: false },
-    '|': { name: 'window in a wall', walk: false, cover: true, seeThrough: true },
+    '|': { name: 'window', walk: false, cover: true, seeThrough: true },
+    'H': { name: 'barred window', walk: false, cover: true, seeThrough: true },
+    'U': { name: 'broken window', walk: false, cover: true, seeThrough: true },
     '%': { name: 'nothing (outside the building)', walk: false, cover: true },
 });
 
@@ -67,9 +69,16 @@ export const PROPS = Object.freeze({
     flowers: { name: 'flower bed' }, hay: { name: 'hay bales', blocks: true, cover: true }, trough: { name: 'trough', blocks: true },
     tombstone: { name: 'gravestone', blocks: true, cover: true }, stall: { name: 'market stall', blocks: true, cover: true, size: [2, 2] },
     // Marks on the floor
+    debris: { name: 'broken pieces', decal: true },
     blood: { name: 'blood', decal: true }, scratches: { name: 'scratch marks', decal: true }, papers: { name: 'scattered papers', decal: true },
     stain: { name: 'stain', decal: true },
 });
+
+/** Furniture too heavy to shove without a roll (the DM rules on it). Everything else that blocks can be pushed freely. */
+export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence']);
+
+/** Furniture with a back and a front: drawn turned so its back is against the wall it stands by. */
+export const ORIENTED = new Set(['bed', 'sofa', 'armchair', 'chair', 'piano', 'wardrobe', 'dresser', 'desk', 'cabinet', 'throne', 'clock', 'weaponrack', 'pew', 'kennel', 'altar', 'workbench', 'iron_maiden', 'bookshelf', 'counter', 'nightstand']);
 
 /** Sign icons, by trade. Claude names the building's trade; the code picks the icon. */
 export const SIGN_ICONS = Object.freeze(['anvil', 'mug', 'bed', 'bread', 'potion', 'swords', 'shield', 'scroll', 'horseshoe', 'sun', 'coins', 'needle', 'fish', 'book', 'gem', 'skull', 'key', 'hammer', 'wheat', 'meat', 'boot', 'crown', 'music', 'candle', 'flower']);
