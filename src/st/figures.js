@@ -47,8 +47,19 @@ async function pictureOf(kind, avatar) {
     try {
         const res = await fetch(`/thumbnail?type=${kind === 'persona' ? 'persona' : 'avatar'}&file=${encodeURIComponent(avatar)}`, { cache: 'force-cache' });
         if (!res.ok) return null;
-        const blob = await res.blob();
-        return await new Promise(resolve => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+        // Re-encode: SillyTavern's thumbnails are JPEG under the original name (Amber.png), so the
+        // server's content type can lie, and Claude rejects an image that doesn't match its type.
+        const bitmap = await createImageBitmap(await res.blob());
+        const scale = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close?.();
+        return canvas.toDataURL('image/jpeg', 0.9);
     } catch {
         return null;
     }
