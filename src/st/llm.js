@@ -118,8 +118,11 @@ export async function callClaude({ system, layers = [], user, images = [], task 
         messages.push({ role: 'user', content: layer }, { role: 'assistant', content: LAYER_ACK });
     }
     messages.push({ role: 'user', content: images.length ? [{ type: 'text', text: user }, ...images.map(url => ({ type: 'image_url', image_url: { url } }))] : user });
+    // Long jobs (planning a place, designing a campaign) stream: a proxy in front of SillyTavern
+    // (Cloudflare and the like) cuts a silent connection after about 100 seconds.
+    const stream = (maxTokens || Number(s.dmMaxTokens) || 6000) >= 4000;
     const request = {
-        stream: false,
+        stream,
         messages,
         model,
         chat_completion_source: 'claude',
@@ -128,13 +131,18 @@ export async function callClaude({ system, layers = [], user, images = [], task 
         include_reasoning: false,
         secret_id: profile?.['secret-id'] || undefined,
     };
-    let json;
+    let text = '';
     try {
-        json = await ctx.ChatCompletionService.processRequest(request, {}, false, signal);
+        if (stream) {
+            const chunks = await ctx.ChatCompletionService.processRequest(request, {}, true, signal);
+            for await (const part of chunks()) text = part.text;
+            text = String(text || '').trim();
+        } else {
+            text = extractClaudeText(await ctx.ChatCompletionService.processRequest(request, {}, false, signal));
+        }
     } catch (error) {
         throw new Error(`Claude call failed (${label}): ${error?.message || error}. Check the SillyTavern server console for details.`);
     }
-    const text = extractClaudeText(json);
     const ms = Date.now() - started;
 
     const cost = estimateCallCost({
