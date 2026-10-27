@@ -440,3 +440,13 @@ test('a fight on a big floor: newcomers arrive near the party, not across the bu
     }
     assert.notEqual(pos['Wolf 1'], pos['Wolf 2']);
 });
+
+test('a floor with too many rooms is split onto another level instead of failing', () => {
+    const rooms = Array.from({ length: 60 }, (_, i) => ({ id: `R${i + 1}`, name: `Hall ${i + 1}`, type: i % 3 ? 'hall' : 'bedroom', size: 'large', floor: 'F0', exit: i === 0 }));
+    const links = rooms.slice(1).map((r, i) => ({ a: rooms[Math.floor(i / 2)].id, b: r.id, via: 'door' }));
+    const place = generatePlace({ name: 'Crowded Keep', kind: 'castle', floors: [{ id: 'F0', name: 'Ground floor', level: 0 }], rooms, links }, 3);
+    assert.ok(place.floors.length >= 2, 'split over more floors');
+    assert.equal(Object.keys(place.rooms).length, 60, 'every room is still there');
+    assert.ok(place.stairs.length >= 1, 'stairs join the levels');
+    for (const f of place.floors) assert.ok(f.map.w <= MAX_PLACE_SIZE && f.map.h <= MAX_PLACE_SIZE);
+});

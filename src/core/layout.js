@@ -458,12 +458,50 @@ function areaStyle(r, room, theme, level = 0) {
  * @returns {object} the place (see DESIGN.md "Places")
  */
 export function generatePlace(planIn, seed = 1) {
-    const plan = planIn?.normalized ? planIn : normalizePlan(planIn);
-    for (let attempt = 0; attempt < 8; attempt++) {
-        const place = tryBuild(plan, (seed + attempt * 7919) >>> 0, Math.floor(attempt / 2));
-        if (place) return place;
+    let plan = planIn?.normalized ? planIn : normalizePlan(planIn);
+    // A floor with more rooms than fit gets split: its far half becomes a level of its own, up the stairs.
+    for (let split = 0; split <= 4 && plan; split++) {
+        for (let attempt = 0; attempt < 8; attempt++) {
+            const place = tryBuild(plan, (seed + attempt * 7919) >>> 0, Math.floor(attempt / 2));
+            if (place) return place;
+        }
+        plan = splitBusiestFloor(plan);
     }
-    throw new Error(`Couldn't lay out "${plan.name}": too many rooms for one floor. Split it over more floors.`);
+    throw new Error(`Couldn't lay out "${planIn?.name ?? 'the place'}": too many rooms for one floor. Split it over more floors.`);
+}
+
+/**
+ * The floor with the most rooms, split in two: the rooms farthest from its way in (walking the
+ * links) move to a new level above it (below it, for cellars), and the links that now cross
+ * between the two become stairs. Null if no floor is big enough to split.
+ */
+export function splitBusiestFloor(plan) {
+    const byFloor = plan.floors.map(f => [f, plan.rooms.filter(r => r.floor === f.id)]).sort((a, b) => b[1].length - a[1].length);
+    const [floor, rooms] = byFloor[0] ?? [];
+    if (!floor || rooms.length < 6) return null;
+    const ids = new Set(rooms.map(r => r.id));
+    const links = plan.links.filter(l => ids.has(l.a) && ids.has(l.b));
+    const anchor = rooms.find(r => r.id === plan.start) ?? rooms.find(r => r.exit) ?? rooms[0];
+    const order = [anchor.id], seen = new Set(order);
+    for (let i = 0; i < order.length; i++) {
+        for (const l of links) {
+            const n = l.a === order[i] ? l.b : l.b === order[i] ? l.a : null;
+            if (n && !seen.has(n)) { seen.add(n); order.push(n); }
+        }
+    }
+    for (const r of rooms) if (!seen.has(r.id)) order.push(r.id);
+    const half = Math.ceil(order.length / 2);
+    const moving = new Set(order.slice(half));
+    let id = `${floor.id}u`;
+    while (plan.floors.some(f => f.id === id)) id += 'u';
+    const down = floor.level < 0;
+    const wing = { id, name: `${floor.name}, ${down ? 'lower' : 'upper'} level`, level: floor.level + (down ? -1 : 1) };
+    const rooms2 = plan.rooms.map(r => (moving.has(r.id) ? { ...r, floor: id } : r));
+    const floorOf = Object.fromEntries(rooms2.map(r => [r.id, r.floor]));
+    const links2 = plan.links.map(l => (floorOf[l.a] !== floorOf[l.b] ? { ...l, via: 'stairs' } : l));
+    // The new level must be reachable: stairs between the last room kept and the first one moved.
+    if (!links2.some(l => moving.has(l.a) !== moving.has(l.b) && ids.has(l.a) && ids.has(l.b))) links2.push({ a: order[half - 1], b: order[half], via: 'stairs' });
+    return { ...plan, floors: [...plan.floors, wing], rooms: rooms2, links: links2 };
 }
 
 function tryBuild(plan, seed, shrink) {
