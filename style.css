@@ -225,3 +225,15 @@
 /* Textured map canvas */
 .dm-map-canvas { display: block; width: 100%; height: auto; border-radius: 8px; cursor: pointer; touch-action: manipulation; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5); }
 .dm-map-hover { font-size: 0.8em; min-height: 1.3em; margin-top: 4px; }
+
+/* Maps of whole places: a wider panel, a scrollable view, zoom and a floor picker. */
+.dm-map.dm-map-wide { width: min(920px, calc(100vw - 24px)); }
+.dm-map-view { overflow: auto; max-height: min(64dvh, 760px); border-radius: 8px; overscroll-behavior: contain; }
+.dm-map-canvas.dm-map-canvas-free { max-width: none; height: auto; }
+.dm-map-floor { width: auto; max-width: 160px; margin: 0; padding: 2px 6px; font-size: 0.85em; }
+
+/* "Building your map" animation in the chat */
+.dm-build { margin: 6px 0 2px; max-width: 520px; }
+.dm-build-title { font-weight: 600; margin-bottom: 4px; }
+.dm-build canvas { display: block; width: 100%; height: auto; border-radius: 8px; box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5); }
+.dm-build-caption { font-size: 0.85em; opacity: 0.8; margin-top: 4px; font-style: italic; min-height: 1.3em; }

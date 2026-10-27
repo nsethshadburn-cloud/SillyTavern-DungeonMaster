@@ -3,7 +3,10 @@
 // never images, so the map costs very few tokens. Pure module.
 
 export const MIN_SIZE = 4;
+/** Largest map Claude draws itself (rows of characters). */
 export const MAX_SIZE = 16;
+/** Largest generated floor (a mansion floor, a town). */
+export const MAX_PLACE_SIZE = 64;
 
 /** Terrain characters Claude may use in map rows. "." is the theme's own floor (stone, planks, grass...). */
 export const TERRAIN = Object.freeze({
@@ -25,12 +28,18 @@ export const TERRAIN = Object.freeze({
     '<': { name: 'stairs up', walk: true, cover: false },
     '>': { name: 'stairs down', walk: true, cover: false },
     'b': { name: 'bridge or walkway', walk: true, cover: false },
+    '|': { name: 'window in a wall', walk: false, cover: true, seeThrough: true },
+    '%': { name: 'nothing (outside the building)', walk: false, cover: true },
 });
 
 /** Map themes: they set the palette and what "." and "#" look like. */
-export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'ship']);
+export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'mansion', 'cabin', 'town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'ship']);
 
-/** Things placed on top of the terrain: "blocks" = can't stand there; "light" = radius in squares. */
+/**
+ * Things placed on top of the terrain: "blocks" = can't stand there; "light" = radius in squares;
+ * "wall" = hangs on a wall square; "decal" = painted on the floor under everything; "size" = [w, h]
+ * it usually takes (any prop can be given its own w and h).
+ */
 export const PROPS = Object.freeze({
     chest: { name: 'chest', blocks: true }, barrel: { name: 'barrel', blocks: true, cover: true }, crate: { name: 'crate', blocks: true, cover: true },
     table: { name: 'table', blocks: true, cover: true }, chair: { name: 'chair' }, bed: { name: 'bed', blocks: true }, bookshelf: { name: 'bookshelf', blocks: true, cover: true },
@@ -41,16 +50,45 @@ export const PROPS = Object.freeze({
     bones: { name: 'bones' }, skull: { name: 'skull' }, web: { name: 'spider web' }, pot: { name: 'pot or urn' }, sack: { name: 'sacks' }, trap: { name: 'trap (known)' },
     boulder: { name: 'boulder', blocks: true, cover: true }, bush: { name: 'bush', cover: true }, log: { name: 'fallen log', cover: true }, stalagmite: { name: 'stalagmite', blocks: true, cover: true },
     crystal: { name: 'crystals', blocks: true }, mushroom: { name: 'mushrooms' }, tent: { name: 'tent', blocks: true }, cart: { name: 'cart', blocks: true, cover: true },
+    // Furniture
+    wardrobe: { name: 'wardrobe', blocks: true, cover: true }, dresser: { name: 'dresser', blocks: true }, nightstand: { name: 'nightstand', blocks: true },
+    desk: { name: 'desk', blocks: true, cover: true }, sofa: { name: 'sofa', blocks: true, cover: true, size: [2, 1] }, armchair: { name: 'armchair', blocks: true },
+    fireplace: { name: 'fireplace', wall: true, light: 3 }, chandelier: { name: 'chandelier', light: 4, ceiling: true }, piano: { name: 'piano', blocks: true, cover: true, size: [2, 1] },
+    clock: { name: 'grandfather clock', blocks: true }, painting: { name: 'painting', wall: true }, mirror: { name: 'mirror', wall: true },
+    armor: { name: 'suit of armor', blocks: true, cover: true }, weaponrack: { name: 'weapon rack', blocks: true }, cabinet: { name: 'cabinet', blocks: true, cover: true },
+    bathtub: { name: 'bathtub', blocks: true, size: [2, 1] }, pew: { name: 'pew', blocks: true, cover: true, size: [3, 1] }, counter: { name: 'counter', blocks: true, cover: true, size: [3, 1] },
+    workbench: { name: 'workbench', blocks: true, cover: true }, forge: { name: 'forge', blocks: true, light: 3 }, plant: { name: 'potted plant', blocks: true },
+    // Horror and dungeon
+    rack: { name: 'torture rack', blocks: true, size: [1, 2] }, chains: { name: 'wall shackles', wall: true }, iron_maiden: { name: 'iron maiden', blocks: true, cover: true },
+    stocks: { name: 'stocks', blocks: true }, slab: { name: 'stone slab', blocks: true, cover: true }, hooks: { name: 'meat hooks', ceiling: true },
+    kennel: { name: 'kennel', blocks: true, cover: true }, petbed: { name: 'pet bed' }, bowl: { name: 'food bowl' },
+    // Town and outdoors
+    sign: { name: 'sign', wall: true }, lamppost: { name: 'lamppost', blocks: true, light: 3 }, fence: { name: 'fence', blocks: true },
+    flowers: { name: 'flower bed' }, hay: { name: 'hay bales', blocks: true, cover: true }, trough: { name: 'trough', blocks: true },
+    tombstone: { name: 'gravestone', blocks: true, cover: true }, stall: { name: 'market stall', blocks: true, cover: true, size: [2, 2] },
+    // Marks on the floor
+    blood: { name: 'blood', decal: true }, scratches: { name: 'scratch marks', decal: true }, papers: { name: 'scattered papers', decal: true },
+    stain: { name: 'stain', decal: true },
 });
+
+/** Sign icons, by trade. Claude names the building's trade; the code picks the icon. */
+export const SIGN_ICONS = Object.freeze(['anvil', 'mug', 'bed', 'bread', 'potion', 'swords', 'shield', 'scroll', 'horseshoe', 'sun', 'coins', 'needle', 'fish', 'book', 'gem', 'skull', 'key', 'hammer', 'wheat', 'meat', 'boot', 'crown', 'music', 'candle', 'flower']);
 
 export const PROPS_LEGEND = Object.keys(PROPS).join(', ');
 
 export const TERRAIN_LEGEND = Object.entries(TERRAIN).map(([ch, t]) => `${ch} ${t.name}`).join(', ');
 
-const COLS = 'abcdefghijklmnop';
+const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 
+/** Column name: a..z, then aa, ab... like a spreadsheet (big floors are wider than 26). */
 export function colName(x) {
-    return COLS[x] ?? '?';
+    if (!Number.isInteger(x) || x < 0) return '?';
+    return x < 26 ? LETTERS[x] : `${LETTERS[Math.floor(x / 26) - 1] ?? '?'}${LETTERS[x % 26]}`;
+}
+
+function colIndex(name) {
+    if (name.length === 1) return LETTERS.indexOf(name);
+    return (LETTERS.indexOf(name[0]) + 1) * 26 + LETTERS.indexOf(name[1]);
 }
 
 /** x: 0 = column a; y: 0 = row 1 (bottom row, like a chess board). */
@@ -60,18 +98,18 @@ export function toCoord(x, y) {
 
 /** "d4" → {x:3, y:3}; null if invalid or off the map. */
 export function parseCoord(text, map) {
-    const m = String(text ?? '').trim().toLowerCase().match(/^([a-p])\s*(\d{1,2})$/);
+    const m = String(text ?? '').trim().toLowerCase().match(/^([a-z]{1,2})\s*(\d{1,3})$/);
     if (!m) return null;
-    const x = COLS.indexOf(m[1]);
+    const x = colIndex(m[1]);
     const y = Number(m[2]) - 1;
     if (map && (x < 0 || y < 0 || x >= map.w || y >= map.h)) return null;
     return { x, y };
 }
 
-function clampSize(n, fallback) {
+function clampSize(n, fallback, max = MAX_SIZE) {
     const v = Math.round(Number(n));
     if (!Number.isFinite(v)) return fallback;
-    return Math.min(MAX_SIZE, Math.max(MIN_SIZE, v));
+    return Math.min(max, Math.max(MIN_SIZE, v));
 }
 
 /**
@@ -85,32 +123,67 @@ export function activeMap(world) {
     return null;
 }
 
-/** The prop standing on a square, if any. */
-export function propAt(map, x, y) {
-    return (map.props || []).find(p => p.x === x && p.y === y) ?? null;
+/** Does a prop (which may cover several squares, from its bottom-left corner) cover this square? */
+export function propCovers(p, x, y) {
+    return x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1);
 }
 
-function normalizeProps(raw, w, h) {
+/** Every visible prop on a square, bottom first (rugs and marks, then furniture). */
+export function propsAt(map, x, y) {
+    return (map.props || []).filter(p => !p.hidden && propCovers(p, x, y));
+}
+
+/** The prop that matters on a square: something solid first, then furniture, then rugs and marks. */
+export function propAt(map, x, y) {
+    const here = propsAt(map, x, y);
+    return here.find(p => PROPS[p.type]?.blocks) ?? here.find(p => !PROPS[p.type]?.decal && p.type !== 'rug') ?? here[0] ?? null;
+}
+
+function normalizeProps(raw, w, h, max = 60) {
     const list = Array.isArray(raw) ? raw
         : raw && typeof raw === 'object' ? Object.entries(raw).map(([at, type]) => ({ at, type }))
             : [];
     const out = [];
     for (const item of list) {
         const at = typeof item === 'string' ? item.split('@')[1] : item?.at;
-        const type = String(typeof item === 'string' ? item.split('@')[0] : item?.type ?? '').trim().toLowerCase();
+        const type = String(typeof item === 'string' ? item.split('@')[0] : item?.type ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
         const p = parseCoord(at, { w, h });
-        if (!p || !PROPS[type] || out.some(o => o.x === p.x && o.y === p.y)) continue;
-        out.push({ x: p.x, y: p.y, type, label: typeof item === 'object' && item.label ? String(item.label).slice(0, 40) : '' });
-        if (out.length >= 40) break;
+        if (!p || !PROPS[type] || out.some(o => o.x === p.x && o.y === p.y && o.type === type)) continue;
+        const [dw, dh] = PROPS[type].size || [1, 1];
+        const pw = Math.max(1, Math.min(8, Math.round(Number(item?.w) || dw), w - p.x));
+        const ph = Math.max(1, Math.min(8, Math.round(Number(item?.h) || dh), h - p.y));
+        const prop = { x: p.x, y: p.y, type, label: typeof item === 'object' && item.label ? String(item.label).slice(0, 40) : '' };
+        if (pw > 1) prop.w = pw;
+        if (ph > 1) prop.h = ph;
+        if (type === 'sign') prop.icon = signIcon(item?.icon || item?.label || '');
+        out.push(prop);
+        if (out.length >= max) break;
     }
     return out;
 }
 
-export function normalizeMap(raw) {
+/** The sign icon for a trade or name ("The Rusty Anvil", "blacksmith" -> anvil). */
+export function signIcon(text) {
+    const t = String(text || '').toLowerCase();
+    if (SIGN_ICONS.includes(t)) return t;
+    const rules = [
+        [/smith|forge|anvil|metal/, 'anvil'], [/tavern|pub|ale|beer|bar\b|mug|drink/, 'mug'], [/inn|lodg|rest|bed|hostel/, 'bed'],
+        [/bak|bread|pastr/, 'bread'], [/alchem|potion|apothec|herb|heal|elixir/, 'potion'], [/weapon|sword|blade/, 'swords'],
+        [/armou?r|shield/, 'shield'], [/general|store|goods|supply|trad|scroll|scribe|post|letter/, 'scroll'], [/stable|horse|farrier/, 'horseshoe'],
+        [/temple|church|shrine|chapel|priest/, 'sun'], [/bank|money|coin|exchange|gold|lender/, 'coins'], [/tailor|cloth|seam|weav/, 'needle'],
+        [/fish|harbo|dock|net/, 'fish'], [/book|librar|sage|wizard|magic/, 'book'], [/jewel|gem|gold ?smith/, 'gem'], [/undert|grave|coffin|necro|bone/, 'skull'],
+        [/lock|key|vault/, 'key'], [/carpent|build|mason|hammer|tool/, 'hammer'], [/farm|mill|grain|wheat|granary/, 'wheat'], [/butcher|meat/, 'meat'],
+        [/cobbl|shoe|boot|leather/, 'boot'], [/guard|watch|keep|castle|hall|court|town hall|noble|lord/, 'crown'], [/bard|music|theat|song/, 'music'],
+        [/candle|chandler|wax|lamp/, 'candle'], [/flower|garden|florist/, 'flower'],
+    ];
+    return rules.find(([re]) => re.test(t))?.[1] ?? 'scroll';
+}
+
+export function normalizeMap(raw, { max = MAX_SIZE } = {}) {
     const r = raw && typeof raw === 'object' ? raw : {};
     const rowsIn = Array.isArray(r.rows) ? r.rows.map(String) : [];
-    const w = clampSize(r.width ?? rowsIn[0]?.length, 8);
-    const h = clampSize(r.height ?? rowsIn.length, 8);
+    const w = clampSize(r.width ?? rowsIn[0]?.length, 8, max);
+    const h = clampSize(r.height ?? rowsIn.length, 8, max);
     const rows = [];
     for (let i = 0; i < h; i++) {
         const src = (rowsIn[i] ?? '').replace(/\s+/g, '');
@@ -122,7 +195,7 @@ export function normalizeMap(raw) {
         rows.push(row);
     }
     const theme = THEMES.includes(String(r.theme ?? '').toLowerCase()) ? String(r.theme).toLowerCase() : 'dungeon';
-    return { w, h, rows, theme, props: normalizeProps(r.props, w, h), seed: Number(r.seed) || Math.floor(Math.random() * 1e9) };
+    return { w, h, rows, theme, props: normalizeProps(r.props, w, h, max > MAX_SIZE ? 600 : 60), seed: Number(r.seed) || Math.floor(Math.random() * 1e9) };
 }
 
 /** Terrain character at a square (rows are stored top to bottom). */
@@ -133,7 +206,7 @@ export function terrainAt(map, x, y) {
 
 export function isWalkable(map, x, y) {
     if (x < 0 || y < 0 || x >= map.w || y >= map.h) return false;
-    if (PROPS[propAt(map, x, y)?.type]?.blocks) return false;
+    if (propsAt(map, x, y).some(p => PROPS[p.type]?.blocks)) return false;
     return TERRAIN[terrainAt(map, x, y)]?.walk !== false;
 }
 

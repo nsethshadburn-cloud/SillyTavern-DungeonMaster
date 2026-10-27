@@ -14,7 +14,9 @@ import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } f
 import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
-import { normalizeMap, applyPositions, placeMissing } from '../core/grid.js';
+import { normalizeMap, applyPositions, placeMissing, parseCoord, toCoord } from '../core/grid.js';
+import { applyPlaceChanges, floorById, walkable } from '../core/explore.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look } from './atlas.js';
 import { openMap, refreshMap, closeMap } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
@@ -80,7 +82,8 @@ function recentForHelper(n = 6) {
 
 /**
  * Run one turn.
- * @param {{force?: string|null, oocText?: string}} opts force = a reason to call the DM regardless
+ * @param {{force?: string|null, oocText?: string, placeEvent?: string}} opts force = a reason to call the DM regardless;
+ *  placeEvent = what just happened while exploring a map (a sprung trap, a guard coming into view)
  * A roll read from SillyTavern's dice waits in meta.pendingRoll.autoResult (see dicewatch.js).
  */
 export async function runTurn(opts = {}) {
@@ -203,6 +206,11 @@ async function turnBody(c, opts, status, signal) {
         }
     }
     if (signal.aborted) throw new Error('aborted');
+    let placeEvent = opts.placeEvent || '';
+    if (!opts.force && !autoRoll && !pacing.inCombat) {
+        const spotted = tickPlace(c);
+        if (spotted.length) placeEvent = `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party and what they do.`;
+    }
 
     // ---------- 2. Player roll resolution ----------
     let rollResolution = '';
@@ -231,6 +239,7 @@ async function turnBody(c, opts, status, signal) {
         lastDriftStageCalled: meta.lastDriftStageCalled,
     });
     if (opts.force) reasons = [...new Set([opts.force, ...reasons])];
+    if (placeEvent && !reasons.includes('explore')) reasons.push('explore');
     // Nobody would answer this locally (alone, or nobody nearby would reply): the world responds.
     if (!reasons.length && !opts.force && !triage.rollResult && !localSpeakers(c, triage, playerText).length) reasons = ['solo'];
     if (b.level === 'blocked' && reasons.length) {
@@ -249,6 +258,7 @@ async function turnBody(c, opts, status, signal) {
                 rollResolution,
                 events,
                 oocText: opts.oocText || triage.oocText || '',
+                placeEvent,
             }, { signal, model }));
             step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
             turnUsd += result.usd;
@@ -533,8 +543,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const combat = startCombat(world, t.start_combat, companions);
         // A fight in a mapped room uses that room unless the DM sent its own battle map.
         const roomMap = !t.start_combat.map && world.sceneMap?.map ? world.sceneMap : null;
-        combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
-        combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
+        const here = !t.start_combat.map && !roomMap ? currentPlace(c) : null;
+        if (here) {
+            const floorId = here.place.state.positions[meta.persona.name]?.floor ?? here.place.state.floor;
+            combat.map = JSON.parse(JSON.stringify(floorById(here.place, floorId).map));
+            combat.inPlace = { key: here.key, floor: floorId };
+            combat.positions = Object.fromEntries(Object.entries(here.place.state.positions).filter(([, p]) => p.floor === floorId).map(([n, p]) => [n, toCoord(p.x, p.y)]));
+        } else {
+            combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
+            combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
+        }
         mapChanged = true;
         initiativeCard = `⚔️ **Initiative**\n${combat.order.map(o => `- ${o.name}: **${o.init}**`).join('\n')}\n*(${meta.persona.name}: roll your own initiative when asked)*`;
     }
@@ -554,6 +572,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (world.combat && !t.start_combat && reasons.includes('combat_round') && !reasons.includes('roll_result')) {
         world.combat.round = (world.combat.round || 1) + 1;
     }
+    if (t.end_combat && world.combat?.inPlace) {
+        // Back to exploring: the party stays where the fight left them.
+        const here = currentPlace(c);
+        if (here) {
+            const floorId = world.combat.inPlace.floor, map = floorById(here.place, floorId).map;
+            for (const name of partyOnMap(c)) {
+                const pt = parseCoord(world.combat.positions?.[name], map);
+                if (pt) here.place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
+            }
+            savePlace(here.key, c);
+        }
+    }
     if (t.end_combat && world.combat) {
         const finalPositions = world.combat.positions;
         const sameRoom = world.sceneMap?.map && world.combat.map === world.sceneMap.map;
@@ -572,6 +602,28 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (!world.combat) closeMap();
     } else if (t.scene_map && typeof t.scene_map === 'object') {
         world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap(t.scene_map), positions: {} };
+        mapChanged = true;
+    }
+    const inside = currentPlace(c);
+    if (inside && (t.place_changes || (!world.combat && Object.keys(t.positions || {}).length))) {
+        const { key, place } = inside;
+        if (t.place_changes) {
+            const log = applyPlaceChanges(place, t.place_changes);
+            if (log.length) status.note(`Map: ${log.join(', ')}`);
+        }
+        if (!world.combat) {
+            const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
+            const map = floorById(place, floorId).map;
+            for (const [name, coord] of Object.entries(t.positions || {})) {
+                const pt = parseCoord(coord, map);
+                const guard = place.guards[name];
+                if (!pt || !walkable(place, floorId, pt.x, pt.y)) continue;
+                if (guard) Object.assign(guard, { floor: floorId, x: pt.x, y: pt.y });
+                else place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
+            }
+        }
+        look(c, key, place);
+        savePlace(key, c);
         mapChanged = true;
     }
     if (!world.combat && world.sceneMap?.map) {
@@ -696,9 +748,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         saveDoc('rolls_log');
         saveDoc('world');
     }
-    if (mapChanged && (world.combat || world.sceneMap)) {
+    if (mapChanged && (world.combat || world.sceneMap || currentPlace(c))) {
         if (t.start_combat || (t.scene_map && typeof t.scene_map === 'object')) openMap();
         else refreshMap();
+    }
+    // Leaving a place, going back to one that's already built.
+    if (t.leave_place) leavePlace(c);
+    if (t.enter_place && !t.build_place) {
+        const entry = atlasEntry(t.enter_place, c);
+        if (entry) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
     }
 
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
@@ -740,6 +798,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         pr.chatIndex = ST.chat.length;
     }
     saveMeta();
+    // A new map: asks first for big ones, plays the building animation, then opens it.
+    if (t.build_place) {
+        try {
+            await requestBuild(t.build_place, { status, signal });
+        } catch (error) {
+            status.note(`Map not built: ${error.message}`);
+            toastr.error(String(error?.message || error), 'Dungeon Master');
+        }
+    }
 }
 
 /** Opening scene after the wizard built the campaign. */

@@ -72,6 +72,13 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **Maps outside fights.** In places where exact squares matter (a dungeon room, a trapped corridor, sneaking past guards) the DM can open a tile map, used sparingly; it closes when you leave. If a fight breaks out there, the room becomes the battle map.
 
+**Whole places you explore.** When the story moves somewhere it will stay for a long time (the mansion you're held captive in, a dungeon, a castle), Claude plans every room on every floor once, and the map is built and kept for the rest of the campaign. It asks you first ("Build Blackmoor Manor?", about $0.15–0.30), and a little map assembles itself in the chat while it works. Towns and villages are smaller maps: streets, roofed houses, hanging shop signs (an anvil for the smithy, a mug for the tavern), and each building's inside is built the first time you walk in. Nothing is ever built twice: going back to a place reopens its stored map with every door, trap and footprint as you left it.
+
+- **Exploring:** tap a square and the party walks there; your companions follow. Doors open as you go; locked ones need a key or a plan (tell the DM). Stairs take you to the next floor, and the floor picker shows the floors you've seen.
+- **Fog of war:** rooms reveal themselves as you see into them. Lit rooms show whole; dark ones only around you and near torches. Places you've been stay on the map, dimmed.
+- **Traps and guards:** a hidden trap on your path is either spotted (passive Perception) or sprung, and the DM steps in. Guards patrol on their own, and the DM is called when one comes into view.
+- **Commands:** `/dmbuild big Blackmoor Manor` or `/dmbuild small Hollowbrook village` builds one yourself.
+
 **NPCs stay around.** NPCs stay in the group chat until they die or go 100 turns without being spoken to or speaking; they can always be added back.
 
 **Every roll is shown.** Dice cards always say who rolled, for what, and the number. If a companion sneaks or steals near you, they roll against your passive Perception; you're never asked to roll in your sleep.
@@ -116,6 +123,10 @@ Just roleplay. Behind the scenes, each message goes through:
 **The status bar** above the chat box shows each step live (helper → DM → who's responding) with time and estimated cost. Click the arrow to expand it, and the ✕ to hide it.
 
 **Dice cards** (🎲) show every roll and, in plain words, what happened, e.g. `🎲 Bandit 1 · Crossbow at Judy: 1d20 (18) + 4 = 22 ✔ vs AC 15 · 5 damage → The bolt grazes Judy's arm.` They're hidden from the local model; the character it affects gets the result in their brief.
+
+## Deleting a campaign
+
+Delete the campaign's chat and you'll be asked whether to delete the campaign too: its story, notes and plot files, every map it built, and the NPC character cards made for it.
 
 ## Deleting, editing and swiping messages
 

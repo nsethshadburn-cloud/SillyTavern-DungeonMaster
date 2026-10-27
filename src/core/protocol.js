@@ -4,6 +4,7 @@
 import { extractJson } from './text.js';
 import { SCENE_TYPES } from './pacing.js';
 import { normalizeSceneCard } from './state.js';
+import { PROPS_LEGEND } from './grid.js';
 
 export const DM_RULES = `You are the Dungeon Master of a long-running tabletop roleplaying campaign played in SillyTavern. You are the director, not an actor.
 
@@ -71,6 +72,17 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - Give everyone a starting square in "positions" ({"Judy Hopps": "c2", "Bandit 1": "f7"}). Each combat round, return "positions" for anyone who moved. One square = 5 feet; typical movement is 6 squares. Use "gone" for anyone who leaves or dies.
 - The player's own moves are THEIR choice (e.g. "move to d4"). Put them exactly where they asked when it's possible. If their square and their action don't fit together (a sword swing from 4 squares away), don't silently relocate them: either move them only as far as their movement allows toward the target and say so plainly in "ooc", or ask them in "ooc" which they meant.
 
+## Places and maps
+- Three kinds of places:
+  1. BIG SITES, where a large part of the story happens (the mansion they're held captive in, a dungeon to clear, a castle to infiltrate): every room on every floor is built once, up front, and kept for the rest of the campaign.
+  2. SMALL MAPS: a town or village, a camp, a lone tavern or shrine, a short cave. Built once when the party arrives; a town's buildings get their insides built when the party walks in.
+  3. NO MAP: roads, travel, conversations, quick stops. Most scenes.
+- To build one, set "build_place": {"name": "Blackmoor Manor", "size": "big|small", "kind": "mansion|castle|dungeon|cave|prison|temple|crypt|tower|town|village|camp|tavern|...", "why": "one line"}. You'll be asked for the full plan in a separate call. Big sites are expensive: only for a place the plot stays in for a long time (an act or more). Never for travel or a one-scene stop.
+- Never build a place that's already in the ATLAS. To send the party back to one, set "enter_place": "its name". When they leave a place for good, set "leave_place": true.
+- Inside a place, the code moves the party when the player clicks the map, reveals rooms as they're seen (fog of war), opens doors they walk through, spots or springs traps by passive Perception, and calls you when something happens (a sprung trap, a guard coming into view, walking out). You get the whole place (with its secrets) and the party's current room each turn. Entering a room for the first time shows its description automatically: don't repeat it.
+- Change a place with "place_changes": {"doors": {"D4": "open|closed|locked|unlocked|broken|found"}, "traps": {"T2": "found|disarmed|sprung"}, "items": {"I3": "taken|found"}, "guards": {"Graves the Butler": "G4" (send them to a room) | "alert" | "calm" | "gone"}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"] (the party learns a room's layout, e.g. from a floor plan)}. Secret doors need "found" before the party can use them; locked doors need "unlocked" (a key, a picked lock) or "broken".
+- Use "positions" with the floor's own squares (like "ab14") to move people on the current floor. One-off tactical spots outside any place (an ambush on the road) can still use "scene_map".
+
 ## Pacing (this matters most)
 - Keep the story moving. Each time you narrate, something moves forward: time passes, someone acts, a problem gets closer, a choice appears. Don't crawl in tiny steps ("you move a little deeper… you climb a little higher…").
 - Never between a setup and its payoff: when the player has just said they're about to ask or tell something ("I have a question…", "listen…", "there's something I need to tell you"), nothing arrives and nobody interrupts. Brief the listener to let them speak, leave narration empty, and set world_next to at least 2.
@@ -132,6 +144,10 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline (only when someone splits off)"},
   "knowledge_update": {"Judy Hopps": "full new 'what you know' text for that companion (rarely; or when MISSING)"},
   "level_change": {"Judy Hopps": 5},
+  "build_place": {"name": "place name", "size": "big|small", "kind": "mansion|dungeon|town|...", "why": "one line"},
+  "enter_place": "name of a place already in the ATLAS",
+  "leave_place": false,
+  "place_changes": {"doors": {"D4": "open"}, "traps": {"T2": "found"}, "items": {"I3": "taken"}, "guards": {"Name": "G4"}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"]},
   "party_back": ["names of companions who rejoin the player"],
   "need_files": ["rolls_log", "events_log"]
 }
@@ -255,6 +271,10 @@ export function normalizeDmTurn(raw) {
         world_next: Number.isFinite(Number(d.world_next)) && d.world_next !== null && d.world_next !== '' ? clamp(Math.round(Number(d.world_next)), 1, 10) : null,
         escalate: d.escalate === true,
         scene_card: normalizeSceneCard(d.scene_card),
+        build_place: d.build_place && typeof d.build_place === 'object' && str(d.build_place.name) ? { name: str(d.build_place.name).slice(0, 80), size: str(d.build_place.size).toLowerCase() === 'big' ? 'big' : 'small', kind: str(d.build_place.kind).toLowerCase().slice(0, 40), why: str(d.build_place.why).slice(0, 200) } : null,
+        enter_place: str(d.enter_place).slice(0, 80),
+        leave_place: d.leave_place === true,
+        place_changes: d.place_changes && typeof d.place_changes === 'object' && !Array.isArray(d.place_changes) ? d.place_changes : null,
         table_rules_add: arr(d.table_rules_add).map(str).filter(Boolean).slice(0, 4),
         table_rules_remove: arr(d.table_rules_remove).map(str).filter(Boolean).slice(0, 4),
     };
@@ -361,3 +381,65 @@ function obj(v) {
 function clamp(n, lo, hi) {
     return Math.min(hi, Math.max(lo, n));
 }
+
+const PLACE_JSON = `{
+  "name": "the place's name",
+  "kind": "mansion|castle|dungeon|cave|prison|temple|crypt|tower|sewer|mine|ship|house|tavern|...",
+  "theme": "mansion|castle|dungeon|crypt|cave|mine|sewer|temple|prison|tavern|library|house|cabin|ship",
+  "summary": "3-5 sentences for yourself: what this place is, who rules it and why, what's going on inside, where the way out is and what stands in the way",
+  "fog": true,
+  "floors": [{"id": "B", "name": "Cellars", "level": -1}, {"id": "G", "name": "Ground floor", "level": 0}],
+  "rooms": [{
+    "id": "B1", "name": "a specific name (Lady Mira's Sewing Room, not Bedroom 3)", "type": "one room type below", "floor": "B",
+    "size": "tiny|small|medium|large|huge|long", "lit": false,
+    "description": "1-3 vivid sentences: what the party sees, hears and smells walking in. No secrets.",
+    "props": [{"type": "cage", "count": 2, "label": "optional name, e.g. Portrait of Lord Blackmoor"}],
+    "marks": ["blood", "scratches", "papers", "stain"],
+    "traps": [{"kind": "pressure-plate dart trap", "dc": 14, "save": "DEX", "effect": "2d4 piercing and poisoned", "hidden": true}],
+    "items": [{"name": "Kennel Key", "hidden": true, "note": "in a feed sack"}],
+    "exit": false
+  }],
+  "links": [{"a": "B1", "b": "B2", "via": "door|arch|locked|secret|stairs", "key": "Kennel Key (locked doors only)", "dc": 15}],
+  "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"]}],
+  "start": "B1"
+}`;
+
+const ROOM_TYPES_TEXT = 'foyer, hallway, gallery, library, study, office, bedroom, master_bedroom, nursery, dining_room, kitchen, pantry, storage, cellar, wine_cellar, parlor, ballroom, music_room, bathroom, chapel, trophy_room, torture_chamber, cell, kennel, laboratory, workshop, smithy, armory, guard_room, servants_quarters, conservatory, crypt, throne_room, attic, tavern, shop, vault, stable, cave, courtyard, graveyard, room';
+
+/** Planning a big site: every room, up front. The code builds the geometry from this. */
+export const PLACE_PLAN_INSTRUCTIONS = `Design this place as a complete, explorable location. The party will explore it room by room on a map with fog of war, and the code builds the floors, walls, doors, stairs and furniture from your plan. Your job is what makes it great: story, purpose, secrets and danger.
+Return ONE JSON object and nothing else:
+${PLACE_JSON}
+
+What makes a great place (follow all of it):
+- Story first. Build it from the campaign bible, plot, notes, NPCs met and the recent chat. The people, clues, threats and secrets of the plot live here, in the rooms where they make sense. Rooms reveal the story as the party explores: a journal, a portrait, a room that shouldn't exist.
+- Every room earns its place: something to find, learn, use, fear, or choose. No filler. Give rooms specific names and specific descriptions.
+- Size: the number of rooms you're asked for, spread over floors the way the real building would be (cellars, ground floor, upper floors, attic, towers, wings). 6-14 rooms per floor.
+- Shape it like a real building. Hallways ("long" type hallway or gallery) join wings; big rooms (great hall, ballroom, entrance hall) are hubs; small rooms (closets, cells, studies, baths) hang off them. Add loops (two ways into an area) so exploring isn't one straight line, and a few dead ends with rewards.
+- Floors connect only through "stairs" links: at least one between neighboring floors, two for a big floor (a grand stair and a servants' stair are classic). Links between rooms on the same floor are doors, arches, locked or secret doors.
+- Gating: 2-4 locked doors whose keys are found elsewhere in the place (the code makes sure every key can be reached before its door), 1-3 secret doors (a DC to find) that lead somewhere worth it, maybe one locked door with no key that can only be picked or forced.
+- The start ("start") is where the story puts the party (a cell, the front steps, a kennel). The way out ("exit": true on that room) is where the story needs it, usually far from the start, behind the place's main challenge.
+- Danger that's fair: traps only where they make sense (the master's private wing, a vault, a study), 3-8 for a big place, with a hint in the room's description. Guards or creatures only if the story has them; give each a name, a one-line description and a patrol of 2-5 rooms on one floor, and keep them away from the start so the party can plan.
+- Atmosphere: lit rooms are lived-in public rooms; dark ones are cellars, unused wings, secrets. Use "marks" (blood, scratches, papers, stain) and story props to show what happened in a room.
+- Room types (the code furnishes each room from its type, so a library already gets shelves, a desk and a rug): ${ROOM_TYPES_TEXT}.
+- Add props only for story-specific things (a named painting, a cage with something in it, an altar): ${PROPS_LEGEND}.
+- Sizes: tiny (closet, cell) 3-4 squares across, small 4-6, medium 6-8, large 8-11, huge 11-14, long (hallways, galleries) 2-3 wide and 8-13 long.
+- Short ids (B1, G4, U12), used exactly the same in links, guards and start. Every room must be linked to at least one other room.`;
+
+/** Planning a small place (a camp, a shrine, a short cave, a lone building). */
+export const SMALL_PLACE_INSTRUCTIONS = `Design this small place for a map. The code builds the walls, doors and furniture from your plan.
+Return ONE JSON object and nothing else, in this format (usually one floor and 1-8 rooms):
+${PLACE_JSON}
+Rules: build it from the story and the recent chat; every room has a purpose and a specific name; describe each room in 1-3 vivid sentences; mark the way out with "exit": true; traps and guards only if the story has them. Room types: ${ROOM_TYPES_TEXT}.`;
+
+/** Planning a town or village. */
+export const TOWN_PLAN_INSTRUCTIONS = `Design this town or village for a map. The code lays out the streets, roofs, signs and greenery; each building's inside is built when the party walks in.
+Return ONE JSON object and nothing else:
+{
+  "name": "the town's name",
+  "summary": "3-4 sentences for yourself: who runs it, its mood, what's going on, who the party might need here",
+  "layout": "road|crossroads",
+  "features": ["market square", "fountain", "well", "pond", "graveyard"],
+  "buildings": [{"id": "B1", "name": "The Rusty Anvil", "kind": "smithy|tavern|inn|general store|alchemist|bakery|temple|bank|stable|guard post|tailor|house|...", "sign": "the name on its sign (shops and public buildings)", "size": "small|medium|large", "description": "1-2 sentences: who works or lives there, what's notable", "enterable": true}]
+}
+Rules: 5-12 buildings that fit the story and the town's size: the services the party may need (an inn or tavern, a smithy, a general store, a temple, an alchemist...), homes, and the story's places (where a plot NPC lives or works). Every shop and public building gets a sign name. "crossroads" for a bigger town where two roads meet.`;

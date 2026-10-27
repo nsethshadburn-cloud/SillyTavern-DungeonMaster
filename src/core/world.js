@@ -16,6 +16,7 @@ export function createWorldState() {
         combat: null,     // {round, order: [{name, init}], enemies: {name: {hp, hp_max, ac}}}
         away: {},         // companion name -> where they are (split off from the player)
         sceneCard: null,  // {place, people: {name: body/position}, objects: {name: look}} (see state.js)
+        place: null,      // {key, floor} while the party is inside a mapped place (see st/atlas.js)
     };
 }
 

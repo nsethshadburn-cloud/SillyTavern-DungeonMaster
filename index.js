@@ -19,6 +19,8 @@ import { hideStatus } from './src/ui/status.js';
 import { roll } from './src/core/dice.js';
 import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
+import { forgetPlaces, loadCurrentPlace, requestBuild } from './src/st/atlas.js';
+import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
 
 let pendingUserMessage = false;
 const BREAK_HOURS = 6;
@@ -34,12 +36,15 @@ async function onChatChanged() {
         console.error('[Dungeon Master] Saving before the chat change failed', error);
     }
     forgetAll();
+    forgetPlaces();
     clearActive();
     clearPrompts();
     hideStatus();
     try {
         const c = await loadForCurrentChat();
         if (c) {
+            registerCampaignChat(c);
+            await loadCurrentPlace(c);
             syncPartyHp();
             const away = (Date.now() - (c.meta.session?.lastActivity || Date.now())) / 3600000;
             if (away >= BREAK_HOURS) {
@@ -55,7 +60,7 @@ async function onChatChanged() {
     }
     const active = campaign();
     syncTtsTakeover(Boolean(active && !active.meta.paused));
-    if (active?.docs.world.combat?.map || active?.docs.world.sceneMap?.map) refreshMap();
+    if (active?.docs.world.combat?.map || active?.docs.world.sceneMap?.map || active?.docs.world.place) refreshMap();
     renderScreen();
     updateMenuState();
 }
@@ -170,6 +175,26 @@ function registerSlashCommands() {
         },
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmbuild',
+        helpString: 'Build a map for a place, e.g. /dmbuild big Blackmoor Manor, or /dmbuild small Hollowbrook village. A place that already has a map is reopened, never rebuilt.',
+        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'big|small and the place name', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
+        callback: async (_args, text) => {
+            const m = String(text || '').trim().match(/^(big|small)s+(.+)$/i);
+            if (!campaign() || !m) {
+                toastr.warning('Use it like /dmbuild big Blackmoor Manor in a campaign chat.', 'Dungeon Master');
+                return '';
+            }
+            const name = m[2].trim();
+            const kind = /(town|village|hamlet|city)/i.exec(name)?.[1] ?? '';
+            try {
+                await requestBuild({ name, size: m[1].toLowerCase(), kind: kind.toLowerCase(), why: 'the player asked for it' });
+            } catch (error) {
+                toastr.error(String(error?.message || error), 'Dungeon Master');
+            }
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmresync',
         helpString: 'After deleting or editing messages: Claude re-reads the chat and fixes what the DM has logged.',
         callback: async () => {
@@ -205,7 +230,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.11.0-beta';
+export const LOADED_VERSION = '0.12.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows
@@ -242,6 +267,8 @@ jQuery(async () => {
     const { eventSource, eventTypes } = ST;
     eventSource.on(eventTypes.CHAT_CHANGED, onChatChanged);
     eventSource.on(eventTypes.MESSAGE_SENT, onMessageSent);
+    // A deleted campaign chat takes its campaign files, maps and NPC cards with it (after asking).
+    for (const ev of [eventTypes.CHAT_DELETED, eventTypes.GROUP_CHAT_DELETED]) if (ev) eventSource.on(ev, id => onChatDeleted(id).catch(error => console.error('[Dungeon Master] cleanup failed', error)));
     startDiceWatch(() => setTimeout(() => runTurn().finally(() => { renderScreen(); renderSpend(); }), 60));
     eventSource.on(eventTypes.GROUP_WRAPPER_FINISHED, onGroupWrapperFinished);
     eventSource.on(eventTypes.GENERATION_STOPPED, () => {

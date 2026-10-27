@@ -19,6 +19,7 @@ export const FILES = {
     events_log: ['events_log.json', 'json', []],
     rolls_log: ['rolls_log.json', 'json', []],
     costs: ['costs.json', 'json', []],
+    atlas: ['atlas.json', 'json', { places: {} }],
 };
 
 export function fileName(campaignId, key) {
@@ -97,7 +98,7 @@ export async function loadForCurrentChat() {
 export async function initCampaignFiles(meta, docs) {
     for (const [key, [, kind]] of Object.entries(FILES)) {
         const name = fileName(meta.id, key);
-        const value = docs[key] ?? (kind === 'json' ? (key === 'world' ? createWorldState() : []) : '');
+        const value = docs[key] ?? (kind === 'json' ? (key === 'world' ? createWorldState() : structuredClone(FILES[key][2] ?? [])) : '');
         if (kind === 'json') await writeJson(name, value);
         else await writeFile(name, value);
     }

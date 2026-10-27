@@ -6,7 +6,9 @@ import { callClaude, resolveDmConnection } from './llm.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
-import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
+import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
+import { placeSummary, placeView, cropText } from '../core/explore.js';
+import { atlas, currentPlace, partyOnMap } from './atlas.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
@@ -129,6 +131,7 @@ const REASON_TEXT = {
     checkin: 'The world moves on: a few turns have passed since it last acted. Advance it one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. Usually that happens through briefs to the NPCs and companions, with narration only if something new arrives, a place changes or time skips. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. But if they just set something up ("I have a question…", "there\'s something I need to tell you"), the world waits: brief the listener only. Then set world_next (at least 2 after a setup).',
     opening: 'Open the campaign.',
     manual: 'The player asked the DM to step in.',
+    explore: 'The party is exploring a mapped place and something happened as they moved (PLACE EVENT below). Rule on it: ask for a roll if one is needed (a save against a sprung trap, Stealth to stay unseen), narrate briefly, brief companions or NPCs, and record changes with place_changes.',
 };
 
 /**
@@ -142,15 +145,18 @@ const REASON_TEXT = {
  *  handUp = this model may hand the turn to the main DM model
  * @returns {Promise<{layers:string[], user:string}>}
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, placeEvent = '' }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
 
+    const here = currentPlace(c);
     const plotLayer = [
         '# TABLE RULES (settled by the player out of character; always true)', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none yet)',
         '', '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)',
         '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
+        '', '# ATLAS (maps already built and kept; never build these again, send the party back with "enter_place")', Object.values(atlas(c).places).filter(e => !e.parent).map(e => `- ${e.name} (${e.kind}${e.size ? `, ${e.size}` : ''})`).join('\n') || '(none yet)',
+        ...(here ? ['', placeSummary(here.place)] : []),
     ].join('\n');
 
     const memories = await memoryBookEntries();
@@ -171,7 +177,15 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(`Gold: ${w.gold ?? 0}. Items: ${w.items?.length ? w.items.join(', ') : 'none noted'}.`);
     if (Object.keys(w.flags || {}).length) sections.push(`Flags: ${JSON.stringify(w.flags)}`);
     sections.push(combatSummary(w));
-    if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
+    if (w.combat?.map && w.combat.inPlace && here) {
+        // A fight inside a big place: only the area around the party, in the floor's own squares.
+        const lead = Object.values(w.combat.positions || {}).map(cd => /^([a-z]{1,2})(\d+)$/.exec(cd)).filter(Boolean)[0];
+        const pos = Object.fromEntries(Object.entries(w.combat.positions || {}).map(([n, cd]) => { const m = /^([a-z]{1,2})(\d+)$/.exec(cd); if (!m) return [n, null]; const col = m[1].length === 1 ? m[1].charCodeAt(0) - 97 : (m[1].charCodeAt(0) - 96) * 26 + m[1].charCodeAt(1) - 97; return [n, { floor: w.combat.inPlace.floor, x: col, y: Number(m[2]) - 1 }]; }));
+        const pts = Object.values(pos).filter(Boolean);
+        const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+        if (lead && pts.length) sections.push('Battle area (the floor\'s own squares; columns a.., rows 1.. from the bottom):', cropText(here.place, w.combat.inPlace.floor, { x: Math.min(...xs) - 3, y: Math.min(...ys) - 3, w: Math.max(...xs) - Math.min(...xs) + 7, h: Math.max(...ys) - Math.min(...ys) + 7 }, pos));
+    } else if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
+    else if (here) sections.push(`# INSIDE ${here.place.name.toUpperCase()}`, placeView(here.place, partyOnMap(c)));
     else if (w.sceneMap?.map) sections.push(`Scene map "${w.sceneMap.title}" (columns a.., rows 1.. from the bottom; send "scene_map": "close" when they leave):`, renderMapText(w.sceneMap.map, w.sceneMap.positions || {}));
     sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
     sections.push('SCENE CARD (what companions and NPCs are told is physically true right now; send "scene_card" changes to fix or update it):', renderSceneCard(w.sceneCard) || '(empty: send a full "scene_card" this turn)');
@@ -191,6 +205,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     if (handUp) sections.push('', ESCALATE_INSTRUCTION);
     if (oocText) sections.push('', `Player's out-of-character question: ${oocText}`);
     if (rollResolution) sections.push('', `ROLL RESULT: ${rollResolution}`);
+    if (placeEvent) sections.push('', `PLACE EVENT: ${placeEvent}`);
     if (events.length) {
         sections.push('', 'RANDOM EVENT CANDIDATES (use one by id, "custom", or "none"):');
         for (const ev of events) sections.push(`- [${ev.id}] ${ev.title} (${ev.type}, danger ${ev.danger}/5): ${ev.seed}`);
@@ -257,6 +272,32 @@ function logCost(label, usd) {
     c.meta.stats.usd = Math.round(((c.meta.stats.usd || 0) + usd) * 1e6) / 1e6;
     c.meta.stats.dmCalls = (c.meta.stats.dmCalls || 0) + 1;
     saveDoc('costs');
+}
+
+/**
+ * Ask Claude for a place's full plan (every room of a big site, or a town's buildings).
+ * @param {{name:string, size:string, kind:string, why?:string, town?:boolean}} req
+ */
+export async function askPlacePlan(req, { signal = null } = {}) {
+    const c = campaign();
+    const big = req.size === 'big';
+    const rooms = big ? (/castle|palace|fortress|dungeon|prison|asylum/.test(req.kind) ? 40 : /mansion|manor|estate|temple|tower|mine|crypt|catacomb/.test(req.kind) ? 34 : 26) : 6;
+    const user = [
+        '# PLOT', c.docs.plot || '(none)',
+        '', '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none)',
+        '', '# STORY SO FAR', c.docs.story ? trimToTokens(c.docs.story, 2000, true) : '(none)',
+        '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
+        '', '# TABLE RULES', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none)',
+        '', '# RECENT CHAT (oldest first)', transcript(30) || '(empty)',
+        '', '# BUILD THIS PLACE',
+        `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nWhy it's needed: ${req.why || 'the story is going there'}${req.town ? '' : `\nAbout ${rooms} rooms${big ? '' : ' at most'}.`}`,
+        '', req.town ? TOWN_PLAN_INSTRUCTIONS : big ? PLACE_PLAN_INSTRUCTIONS : SMALL_PLACE_INSTRUCTIONS,
+    ].join('\n');
+    const reply = await callClaude({ system: await stableSystem(), user, task: 'build_place', label: `planning ${req.name}`, maxTokens: big ? 20000 : 6000, signal });
+    logCost(`planning ${req.name} · ${modelLabel(reply.model)}`, reply.usd);
+    const json = extractJson(reply.text);
+    if (!json) throw new Error('Claude did not return a usable plan. Ask the DM to try again.');
+    return json;
 }
 
 /** Keep the DM's notes compact (one cheap call when they get long). */
