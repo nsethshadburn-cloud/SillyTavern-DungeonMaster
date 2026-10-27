@@ -23,6 +23,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{brief}}',
         'Length: {{length}}.]',
     ].join('\n'),
+    happened: '[Just happened, already done (react to it; never redo it): {{happened}}]',
     knowledge: [
         '[What {{char}} knows about the story so far. Background for this reply; don\'t recite it.',
         '{{knowledge}}]',
@@ -49,7 +50,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: '4-6 sentences at most',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**

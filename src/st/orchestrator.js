@@ -174,6 +174,7 @@ async function turnBody(c, opts, status, signal) {
                 triage.stalled = h.stalled;
                 triage.speakers = h.speakers;
                 triage.helperChoseSpeakers = true;
+                pacing.refusalStreak = h.refusing ? (pacing.refusalStreak ?? 0) + 1 : 0;
                 engaged = h.engaged;
                 // Who is the player talking to? A known NPC answers locally; a stranger needs the DM.
                 if (h.addressed && !/^(dm|dungeon master|narrator|everyone|nobody|none)$/i.test(h.addressed)) {
@@ -262,6 +263,7 @@ async function turnBody(c, opts, status, signal) {
             pacing.pressureCallAge = 0;
         }
         if (reasons.includes('stalled')) pacing.fillerStreak = 0;
+        if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
         await applyDmTurn(c, result.turn, status, signal, { events });
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
@@ -611,6 +613,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [] } = {}) {
             status.note('No random event: nothing fit the moment');
         }
     }
+    // What just visibly changed: companions see it until the DM's next turn, so they don't redo it.
+    meta.happened = t.happened || '';
     if (t.standing_direction) meta.standing = t.standing_direction;
     if (t.objective) meta.objective = t.objective;
     // What each companion knows (rare, full-text updates).

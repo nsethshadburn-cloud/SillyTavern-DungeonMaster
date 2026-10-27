@@ -53,6 +53,7 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
             attitude: npc.attitude || '',
         })]
         : [renderTemplate(s.templates.scene, vars)];
+    if (c.meta.happened) parts.push(renderTemplate(s.templates.happened, { ...vars, happened: c.meta.happened }));
     const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
     if (knowledge) parts.push(renderTemplate(s.templates.knowledge, { ...vars, knowledge }));
     if (c.meta.pacing?.inCombat) parts.push(renderTemplate(s.templates.combat, vars));

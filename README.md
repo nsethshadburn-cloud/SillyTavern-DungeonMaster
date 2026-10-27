@@ -64,6 +64,8 @@ Just roleplay. Behind the scenes, each message goes through:
 
 **Companions know their story.** At the start, Claude writes each companion a private "what you know" summary (how they got here, what they're accused of, who they know), and it goes with every reply they give. The DM updates it now and then when something big changes. Older campaigns get one on the next DM turn.
 
+**The DM speaks only when it should.** It posts only to describe the result of an action or roll, a new place or time skip, something new arriving, what a check reveals, or to ask for a roll. The rest (directing Judy and NPCs, state changes) happens silently. Dice cards always show. It never turns what you say into something you do, and when you keep refusing something, the other character changes approach instead of asking again.
+
 **The DM is thinking.** While Claude works, a "The Dungeon Master is thinking…" bubble shows at the bottom of the chat.
 
 **Textured maps.** Maps are painted, not flat squares: stone slabs with cracks and moss, wood grain, grass tufts, cobbles, water with ripples, glowing lava, plus furniture and items (chests, barrels, tables, braziers, altars, coffins, bones, webs, campfires and more). Every tile is drawn with its own variation, so nothing visibly repeats, and dark places like crypts and caves are lit by their torches and braziers. Each map has a theme (crypt, cave, tavern, forest, castle...). Hover or tap a square to see what's there.

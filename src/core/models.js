@@ -17,6 +17,7 @@ export const TASKS = Object.freeze([
     { key: 'character_sheet', group: 'Setup', label: 'Writing sheets for party members', main: true },
     { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: true },
     { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: true },
+    { key: 'deadlock', group: 'Story direction', label: 'Breaking a deadlock (you keep refusing)', main: true },
     { key: 'checkin', group: 'Story direction', label: 'The world moving on between your actions', main: true },
     { key: 'combat_action', group: 'Combat', label: 'Starting fights and your combat actions', main: true },
     { key: 'combat_round', group: 'Combat', label: 'Running combat rounds', main: true },

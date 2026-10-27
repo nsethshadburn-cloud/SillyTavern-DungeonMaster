@@ -324,6 +324,12 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.10 (from "Chains of Tessaly")
+- DM silence: narration is empty by default and only written for an action/roll result, a new scene or time skip, something new arriving, what a check reveals, or setting up a roll; 2-4 sentences, a paragraph only for a new place, time skip or big reveal; no recaps of unchanged details. World turns act through briefs and narrate only on arrivals, place changes or time skips.
+- Never play the player: what the player SAYS is never turned into what they DO; actions on the player are narrated as attempts or resolved with contested rolls.
+- "happened": one past-tense sentence per DM turn of what visibly changed, kept in meta.happened and added to every companion/NPC note (new "happened" template) until the next DM turn, so companions don't redo resolved actions (the bolt pulled twice). Briefs say "already done, react only" when narration or a roll showed the action.
+- Deadlocks: the helper flags "refusing" (the player resisting what a character wants, even calmly); two in a row call the DM ("deadlock", main model), which must switch tactic (bargain, firmer push, contested roll, call for help, or drop it) and update the objective. Rules forbid repeating a refused demand.
+
 ### v0.9.1
 - Character sheets from any file (st/sheetfile.js): PDFs (text and form fields; scanned PDFs have their first 4 pages rendered to images), images (downscaled to 1600px JPEG and sent to Claude as image_url parts, which SillyTavern converts to Claude image blocks), .docx/.odt (zip read with the browser's DecompressionStream, XML to text), HTML/RTF/anything text-like; binary files get a clear message. callClaude takes "images"; cost estimates add about 1600 tokens per image.
 

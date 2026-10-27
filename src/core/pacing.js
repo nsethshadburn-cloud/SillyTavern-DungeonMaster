@@ -45,6 +45,8 @@ export function driftBudget(length = 'breathe') {
 
 /** At the top pressure stages, the DM is called again this often (player turns) until a beat lands. */
 export const PRESSURE_RECALL_TURNS = 4;
+/** This many refusals in a row (the player resisting what a character wants) calls the DM. */
+export const DEADLOCK_REFUSALS = 2;
 /** This many filler messages in a row counts as a stall. */
 export const STALL_FILLER_STREAK = 3;
 
@@ -132,6 +134,7 @@ export function dmReasons({ pacing, triage, eventDue, checkinEvery, budgetBlocke
     if (pacing.inCombat && triage.category !== 'banter') reasons.push('combat_round');
     if (eventDue) reasons.push('event');
     if (triage.stalled || (pacing.fillerStreak ?? 0) >= STALL_FILLER_STREAK) reasons.push('stalled');
+    if ((pacing.refusalStreak ?? 0) >= DEADLOCK_REFUSALS) reasons.push('deadlock');
     if (triage.unknownAddressee) reasons.push('npc_addressed');
     if (pacing.driftStage > lastDriftStageCalled) reasons.push('drift');
     // At the top stages, keep the pressure on until a beat lands (but not mid-conversation).

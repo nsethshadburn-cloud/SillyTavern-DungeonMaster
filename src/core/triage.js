@@ -83,6 +83,7 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
         '"category": one of "banter" (talking/roleplay, no risk), "action" (simple action, no real risk), "risky_action" (outcome uncertain: needs a dice roll or a ruling), "scene_move" (travel, rest, leave, time skip), "combat_action", "question" (asking about the world).',
         '"engaged": 0-3, how invested/playful the player seems right now.',
         '"stalled": true if the conversation is going in circles with no progress for several messages.',
+        '"refusing": true if the player refuses, resists, dodges or bargains against what another character is asking or trying to make them do (even calmly).',
         speakers.length
             ? `"speakers": who would naturally reply next, 0, 1 or 2 names chosen ONLY from: ${speakers.map(s => JSON.stringify(s)).join(', ')}. Use [] when nobody nearby would answer (the player is acting alone, talking to themselves, or nothing calls for a reply). Nobody has to reply every time.`
             : '"speakers": [] (nobody is with the player right now).',
@@ -109,6 +110,7 @@ export function parseHelperTriage(text, speakers = []) {
         category,
         engaged,
         stalled: data.stalled === true || data.stalled === 'true',
+        refusing: data.refusing === true || data.refusing === 'true',
         speakers: picked.filter(s => speakers.some(x => x.toLowerCase() === s.toLowerCase())).slice(0, 2),
         addressed: typeof data.addressed === 'string' ? data.addressed.trim().slice(0, 60) : '',
     };

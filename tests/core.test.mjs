@@ -314,8 +314,10 @@ test('SillyTavern dice messages are read for pending rolls', () => {
 test('DM rules: forward motion, arrivals, sensible rolls, pressure ladder', () => {
     assert.doesNotMatch(DM_RULES, /Never rush/);
     assert.doesNotMatch(DM_RULES, /Usually 1-3 sentences/);
-    assert.match(DM_RULES, /as long as the moment needs/);
-    assert.match(DM_RULES, /No fluff/);
+    assert.match(DM_RULES, /"narration" is EMPTY by default/);
+    assert.match(DM_RULES, /No fluff and no recaps/);
+    assert.match(DM_RULES, /Never turn what they SAY into something they DO/);
+    assert.match(DM_RULES, /never repeats the same demand/);
     assert.match(DM_RULES, /Arrivals:/);
     assert.match(DM_RULES, /Conversation is never filler/);
     assert.match(DM_RULES, /stage 4 force/);
@@ -458,4 +460,21 @@ test('character sheets can come from Word documents and text files', async () =>
     const t = await readSheetFile(new File(['Name: Amber\nClass: Rogue'], 'sheet.txt', { type: 'text/plain' }));
     assert.match(t.text, /Class: Rogue/);
     await assert.rejects(readSheetFile(new File([new Uint8Array([0, 159, 146, 150, 0, 1, 2, 3, 0, 0])], 'thing.bin')), /Couldn't read "thing.bin"/);
+});
+
+test('v0.10: refusals become a deadlock, "just happened" reaches companions', async () => {
+    const { parseHelperTriage } = await import('../src/core/triage.js');
+    const { DEFAULT_TEMPLATES, renderTemplate } = await import('../src/core/notes.js');
+    assert.equal(parseHelperTriage('{"category":"banter","refusing":true}', []).refusing, true);
+    assert.equal(parseHelperTriage('{"category":"banter"}', []).refusing, false);
+    const p = createPacingState();
+    const r = () => dmReasons({ pacing: p, triage: { category: 'banter' }, eventDue: false, checkinEvery: 99 });
+    p.refusalStreak = 1;
+    assert.ok(!r().includes('deadlock'));
+    p.refusalStreak = 2;
+    assert.ok(r().includes('deadlock'), 'two refusals in a row call the DM');
+    assert.equal(parseDmTurn('{"happened":"The bolt is out and Amber\'s leg is bandaged."}').happened, "The bolt is out and Amber's leg is bandaged.");
+    assert.match(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: 'The bolt is out.' }), /already done.*The bolt is out\.\]/);
+    assert.equal(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: '' }).includes('{{happened}}'), false);
+    assert.ok(TASKS.some(t => t.key === 'deadlock' && t.main));
 });
