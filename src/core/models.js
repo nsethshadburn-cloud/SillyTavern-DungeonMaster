@@ -16,6 +16,7 @@ export const TASKS = Object.freeze([
     { key: 'persona_sheet', group: 'Setup', label: 'Reading your PDF character sheet', main: true },
     { key: 'character_sheet', group: 'Setup', label: 'Writing sheets for party members', main: true },
     { key: 'build_place', group: 'Setup', label: 'Planning a map (every room of a big place, a town)', main: true },
+    { key: 'sprite', group: 'Setup', label: 'Describing your party\'s little map figures', main: true },
     { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: true },
     { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: true },
     { key: 'deadlock', group: 'Story direction', label: 'Breaking a deadlock (you keep refusing)', main: true },

@@ -17,7 +17,7 @@ import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, walkable } from '../core/explore.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction } from './atlas.js';
-import { openMap, refreshMap, closeMap } from '../ui/map.js';
+import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
@@ -429,6 +429,7 @@ async function resolvePlayerRoll(c, parsed, status) {
         ? `🎲 **${meta.persona.name}** — damage: **${total}**`
         : `🎲 **${meta.persona.name}** — ${pr.skill}: d${pr.die || 20} (${natural ?? '?'}) ${formatModifier(mod)} = **${total}** ${mark}${dcText}${flair}`;
     await postDiceCard(card, { roll: { who: meta.persona.name, ...pr, natural, total, success: judged.success } });
+    if (pr.kind === 'attack') playAnim(meta.persona.name, 'attack');
     c.docs.rolls_log.push({ at: new Date().toISOString(), who: meta.persona.name, what: pr.skill, kind: pr.kind, natural, mod, total, dc: pr.dc, success: judged.success });
     saveDoc('rolls_log');
     if (pr.kind === 'initiative' && c.docs.world.combat) {
@@ -751,6 +752,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';
         const card = `🎲 **${r.who}** · ${r.what}: ${result.detail} = **${result.total}** ${mark}${vs}${nat}${damageText}${outcomeText(r, judged)}`;
         await postDiceCard(card, { roll: { ...r, total: result.total, natural: result.natural, success: judged.success } });
+        if (r.kind === 'attack') playAnim(matchName(r.who, Object.keys(world.combat?.positions || {})) ?? r.who, 'attack');
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
         const outcome = judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {

@@ -13,6 +13,9 @@ import { escapeHtml } from '../core/text.js';
 import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction } from '../st/atlas.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
+import { settings } from '../st/settings.js';
+import { drawFigure } from './sprite-render.js';
+import { figureFor } from '../st/figures.js';
 
 let panel = null;
 let selection = { move: '', target: '' };
@@ -238,7 +241,7 @@ function renderMap(center = false) {
     panel.querySelector('[data-act="in"]')?.addEventListener('click', () => { zoom = Math.min(1.5, zoom + 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="out"]')?.addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
-    panel.querySelector('[data-act="min"]').addEventListener('click', () => panel.classList.toggle('dm-map-min'));
+    panel.querySelector('[data-act="min"]').addEventListener('click', () => { panel.classList.toggle('dm-map-min'); ensureLoop(); });
     panel.querySelector('[data-act="clear"]')?.addEventListener('click', () => { selection = { move: '', target: '' }; renderMap(); });
     panel.querySelector('[data-act="add"]')?.addEventListener('click', addToMessage);
 }
@@ -285,70 +288,156 @@ function drawFog(ctx, b, tile) {
     ctx.restore();
 }
 
+// ---------- drawing: a static layer (map, fog, labels) and the figures on top ----------
+
+let live = null; // {canvas, c, b, layer, tile} for the animation loop
+const motion = new Map(); // name -> {x, y, facing, walkUntil, anim, animStart, animUntil, hp}
+let loopTimer = null;
+const TICK_MS = 110; // about 9 frames a second: lively, and light on a phone
+
+function nameOffset(name) {
+    let h = 0;
+    for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return Math.abs(h) % 2000;
+}
+
+/** Play an animation on someone's figure (attack, hurt) from the turn code. */
+export function playAnim(name, anim, ms = anim === 'attack' ? 420 : 500) {
+    const m = motion.get(name) ?? {};
+    Object.assign(m, { anim, animStart: performance.now(), animUntil: performance.now() + ms });
+    motion.set(name, m);
+    ensureLoop();
+}
+
 function drawBoard(canvas, c, b) {
     const map = b.map;
     const tile = tileFor(map);
-    const positions = b.positions;
-    const player = c.meta.persona.name;
-    const friends = new Set([player, ...c.meta.party.map(pt => pt.name)]);
     canvas.width = map.w * tile + MARGIN;
     canvas.height = map.h * tile + MARGIN;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(paintMapBase(map, tile), MARGIN, 0);
-    drawFog(ctx, b, tile);
+    // Everything that doesn't move goes in one layer; figures are drawn on top of it.
+    // Reused while the size stays the same (walking redraws every step; no new canvas each time).
+    const layer = live?.layer && live.layer.width === canvas.width && live.layer.height === canvas.height ? live.layer : document.createElement('canvas');
+    layer.width = canvas.width; layer.height = canvas.height;
+    const lctx = layer.getContext('2d');
+    lctx.fillStyle = 'rgba(0,0,0,0.55)';
+    lctx.fillRect(0, 0, layer.width, layer.height);
+    lctx.drawImage(paintMapBase(map, tile), MARGIN, 0);
+    drawFog(lctx, b, tile);
     // Labels: row numbers on the left (1 at the bottom), column letters along the bottom.
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.font = `${tile > 50 ? 13 : 11}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (let y = 0; y < map.h; y++) ctx.fillText(String(y + 1), MARGIN / 2, (map.h - 1 - y) * tile + tile / 2);
-    for (let x = 0; x < map.w; x++) ctx.fillText(colName(x), MARGIN + x * tile + tile / 2, map.h * tile + MARGIN / 2);
+    lctx.fillStyle = 'rgba(255,255,255,0.75)';
+    lctx.font = `${tile > 50 ? 13 : 11}px sans-serif`;
+    lctx.textAlign = 'center';
+    lctx.textBaseline = 'middle';
+    for (let y = 0; y < map.h; y++) lctx.fillText(String(y + 1), MARGIN / 2, (map.h - 1 - y) * tile + tile / 2);
+    for (let x = 0; x < map.w; x++) lctx.fillText(colName(x), MARGIN + x * tile + tile / 2, map.h * tile + MARGIN / 2);
     const cell = (x, y) => [MARGIN + x * tile, (map.h - 1 - y) * tile];
     // Reach: the squares the player can get to this round (their speed, around walls and people).
     const reach = b.kind !== 'place' ? reachFor(c, b) : null;
     if (reach) {
-        ctx.fillStyle = 'rgba(120,200,255,0.16)';
-        for (const k of reach.keys()) { const [x, y] = k.split(',').map(Number); const [px, py] = cell(x, y); ctx.fillRect(px + 2, py + 2, tile - 4, tile - 4); }
+        lctx.fillStyle = 'rgba(120,200,255,0.16)';
+        for (const k of reach.keys()) { const [x, y] = k.split(',').map(Number); const [px, py] = cell(x, y); lctx.fillRect(px + 2, py + 2, tile - 4, tile - 4); }
     }
     const sel = parseCoord(selection.move, map);
-    if (sel) { const [px, py] = cell(sel.x, sel.y); ctx.strokeStyle = '#ffd54a'; ctx.lineWidth = 4; ctx.strokeRect(px + 3, py + 3, tile - 6, tile - 6); }
-    // Tokens: portrait discs with a colored ring and an HP bar.
-    for (const [name, coord] of Object.entries(positions)) {
+    if (sel) { const [px, py] = cell(sel.x, sel.y); lctx.strokeStyle = '#ffd54a'; lctx.lineWidth = 4; lctx.strokeRect(px + 3, py + 3, tile - 6, tile - 6); }
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(layer, 0, 0);
+    live = { canvas, c, b, layer, tile };
+    noteMotion(c, b);
+    drawTokens(ctx, c, b, tile, performance.now(), false);
+    ensureLoop();
+}
+
+/** Who moved (walk and face that way), who lost HP (flinch). */
+function noteMotion(c, b) {
+    const now = performance.now();
+    const party = new Set([c.meta.persona.name, ...c.meta.party.map(p => p.name)]);
+    for (const [name, coord] of Object.entries(b.positions)) {
+        const pt = parseCoord(coord, b.map);
+        if (!pt) continue;
+        const m = motion.get(name);
+        const hp = hpOf(c, name)?.hp;
+        if (!m) { motion.set(name, { x: pt.x, y: pt.y, facing: party.has(name) ? 1 : -1, hp }); continue; }
+        if (m.x !== pt.x || m.y !== pt.y) {
+            if (pt.x !== m.x) m.facing = pt.x > m.x ? 1 : -1;
+            m.walkUntil = now + (Math.abs(pt.x - m.x) + Math.abs(pt.y - m.y) > 1 ? 600 : 260);
+            m.x = pt.x; m.y = pt.y;
+        }
+        if (typeof hp === 'number' && typeof m.hp === 'number' && hp < m.hp) Object.assign(m, { anim: 'hurt', animStart: now, animUntil: now + 500 });
+        m.hp = hp;
+    }
+}
+
+function drawTokens(ctx, c, b, tile, now, restore) {
+    const map = b.map;
+    const player = c.meta.persona.name;
+    const friends = new Set([player, ...c.meta.party.map(pt => pt.name)]);
+    const figures = settings().mapFigures !== false;
+    for (const [name, coord] of Object.entries(b.positions)) {
         const pt = parseCoord(coord, map);
         if (!pt) continue;
-        const [px, py] = cell(pt.x, pt.y);
-        const cx = px + tile / 2, cy = py + tile / 2, rad = tile * 0.38;
+        const px = MARGIN + pt.x * tile, py = (map.h - 1 - pt.y) * tile;
+        if (restore) ctx.drawImage(live.layer, px, py, tile, tile, px, py, tile, tile);
+        const cx = px + tile / 2, cy = py + tile / 2;
         const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : '#8fb4d9';
-        ctx.fillStyle = 'rgba(0,0,0,0.45)';
-        ctx.beginPath(); ctx.ellipse(cx + 3, cy + 5, rad, rad * 0.9, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.save();
-        ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.clip();
-        const img = portraitImage(portraitFor(c, name));
-        if (img) {
-            const scale = Math.max((rad * 2) / img.naturalWidth, (rad * 2) / img.naturalHeight);
-            const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
-            ctx.drawImage(img, cx - w / 2, cy - h / 2 + h * 0.08, w, h);
-        } else {
-            ctx.fillStyle = b.enemies.has(name) ? '#7a1f1f' : '#2f3b4a';
-            ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
-            ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.round(tile * 0.28)}px sans-serif`;
-            ctx.fillText(initials(name), cx, cy + 1);
-        }
-        ctx.restore();
-        ctx.strokeStyle = selection.target === name ? '#ffd54a' : side;
-        ctx.lineWidth = selection.target === name ? 5 : 3;
-        ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke();
         const hp = hpOf(c, name);
+        if (figures) {
+            // A colored ring on the floor, the figure standing on it.
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.beginPath(); ctx.ellipse(cx, py + tile * 0.84, tile * 0.32, tile * 0.11, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = selection.target === name ? '#ffd54a' : side;
+            ctx.lineWidth = selection.target === name ? 4 : 2.5;
+            ctx.beginPath(); ctx.ellipse(cx, py + tile * 0.84, tile * 0.34, tile * 0.12, 0, 0, Math.PI * 2); ctx.stroke();
+            const m = motion.get(name) ?? {};
+            let anim = 'idle', elapsed = now + nameOffset(name);
+            if (hp && hp.hp_max && hp.hp <= 0) anim = 'down';
+            else if (m.anim && now < m.animUntil) { anim = m.anim; elapsed = now - m.animStart; }
+            else if (m.walkUntil && now < m.walkUntil) anim = 'walk';
+            drawFigure(ctx, figureFor(name), px, py - tile * 0.06, tile, { anim, elapsed, flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, red: anim === 'hurt' && Math.floor(elapsed / 120) % 2 === 0 });
+        } else {
+            const rad = tile * 0.38;
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            ctx.beginPath(); ctx.ellipse(cx + 3, cy + 5, rad, rad * 0.9, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.save();
+            ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.clip();
+            const img = portraitImage(portraitFor(c, name));
+            if (img) {
+                const scale = Math.max((rad * 2) / img.naturalWidth, (rad * 2) / img.naturalHeight);
+                const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
+                ctx.drawImage(img, cx - w / 2, cy - h / 2 + h * 0.08, w, h);
+            } else {
+                ctx.fillStyle = b.enemies.has(name) ? '#7a1f1f' : '#2f3b4a';
+                ctx.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+                ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.round(tile * 0.28)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(initials(name), cx, cy + 1);
+            }
+            ctx.restore();
+            ctx.strokeStyle = selection.target === name ? '#ffd54a' : side;
+            ctx.lineWidth = selection.target === name ? 5 : 3;
+            ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke();
+        }
         if (hp?.hp_max) {
             const pct = Math.max(0, Math.min(1, hp.hp / hp.hp_max));
-            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(px + 8, py + tile - 9, tile - 16, 6);
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(px + 8, py + tile - 7, tile - 16, 5);
             ctx.fillStyle = b.enemies.has(name) ? '#ff5252' : pct > 0.5 ? '#4caf50' : pct > 0.25 ? '#ffb300' : '#e53935';
-            ctx.fillRect(px + 8, py + tile - 9, (tile - 16) * pct, 6);
+            ctx.fillRect(px + 8, py + tile - 7, (tile - 16) * pct, 5);
         }
     }
 }
+
+/** The animation loop: only while the map is open, shown, and has figures to animate. */
+function ensureLoop() {
+    if (loopTimer || settings().mapFigures === false) return;
+    const tick = () => {
+        loopTimer = null;
+        if (!live || !live.canvas.isConnected || !panel || panel.classList.contains('dm-hidden') || panel.classList.contains('dm-map-min') || document.hidden) return;
+        // Only the figures' own squares are redrawn each tick.
+        drawTokens(live.canvas.getContext('2d'), live.c, live.b, live.tile, performance.now(), true);
+        loopTimer = setTimeout(() => requestAnimationFrame(tick), TICK_MS);
+    };
+    loopTimer = setTimeout(() => requestAnimationFrame(tick), TICK_MS);
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureLoop(); });
 
 function squareFromEvent(ev, canvas, map) {
     const rect = canvas.getBoundingClientRect();

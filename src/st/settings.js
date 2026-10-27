@@ -62,6 +62,8 @@ export const DEFAULTS = Object.freeze({
     noteRole: 'system',         // 'system' | 'user': how the note is formatted in your instruct template
     hideNarration: true,        // the bot never sees "Dungeon Master" messages; it gets briefs instead
     autoReadDice: true,         // read SillyTavern's dice rolls for a pending roll (no need to type the number)
+    mapFigures: true,           // animated pixel figures on the map (false = round portraits)
+    figures: {},                // "p:<persona avatar>" / "c:<character avatar>" -> the look Claude described
 
     // Surprises Claude may add
     surprises: { traps: true, hazards: true, puzzles: true, secretDoors: true, treasure: true, ambushes: true },

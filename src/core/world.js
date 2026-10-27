@@ -158,6 +158,7 @@ export function addNpcs(roster, newNpcs, scene = '') {
         if (existing) {
             if (npc.description) existing.description = npc.description;
             if (npc.role) existing.role = npc.role;
+            if (npc.sprite) existing.sprite = npc.sprite;
             if (npc.attitude) existing.attitude = npc.attitude;
             if (npc.stats) existing.stats = npc.stats;
             existing.lastSeen = scene || existing.lastSeen;
@@ -167,6 +168,7 @@ export function addNpcs(roster, newNpcs, scene = '') {
             name: npc.name,
             description: npc.description || '',
             role: npc.role || '',
+            sprite: npc.sprite || '',
             gender: npc.gender || 'any',
             attitude: npc.attitude || 'neutral',
             stats: npc.stats || '',
@@ -250,7 +252,7 @@ export function startCombat(world, start, companions, rng) {
     const enemies = {};
     const order = [];
     for (const e of start.enemies || []) {
-        enemies[e.name] = { hp: e.hp, hp_max: e.hp, ac: e.ac, conditions: [] };
+        enemies[e.name] = { hp: e.hp, hp_max: e.hp, ac: e.ac, conditions: [], ...(e.sprite ? { sprite: e.sprite } : {}) };
         const r = roll(`1d20${e.dex >= 0 ? '+' : ''}${e.dex}`, { rng });
         order.push({ name: e.name, init: r?.total ?? 10, detail: r?.detail ?? '' });
     }

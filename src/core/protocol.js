@@ -5,6 +5,8 @@ import { extractJson } from './text.js';
 import { SCENE_TYPES } from './pacing.js';
 import { normalizeSceneCard } from './state.js';
 import { PROPS_LEGEND } from './grid.js';
+import { LIBRARY } from './sprites.js';
+const FIGURES = Object.keys(LIBRARY).join(', ');
 
 export const DM_RULES = `You are the Dungeon Master of a long-running tabletop roleplaying campaign played in SillyTavern. You are the director, not an actor.
 
@@ -112,6 +114,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 
 ## NPCs and content
 - NPCs have wants, fears and agendas. Invent fitting names (never real people or celebrities).
+- Map figures: every NPC, enemy, guard and person on a map gets a little animated figure. Give each one "sprite": the closest from ${FIGURES} (variants in color are picked automatically).
 - The FIRST time any NPC appears, add them to "new_npcs" (check "NPCS MET" first), with a short "role" (their job or title and how they relate to the party: "watch captain, Judy's commander"). Companions see these roles, so one person is never mistaken for two.
 - Intense and dark themes are fine (danger, violence, horror, moral weight). No explicit sexual content: cut away or steer.
 
@@ -124,12 +127,12 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "player_roll": {"kind": "check|save|attack|damage|initiative", "skill": "Perception", "ability": "WIS", "die": 20, "dc": 15, "advantage": "none|advantage|disadvantage", "reason": "why", "damage": "1d8+3 (for attacks)", "bonus": "only when their sheet has no number for it in skills or tools"},
   "npc_rolls": [{"who": "Judy Hopps", "what": "Stealth", "notation": "1d20+5", "dc": 13, "kind": "check|attack|save", "target": "name (attacks)", "damage": "1d6+2 (attacks)", "on_success": "plain words: what happens", "on_fail": "plain words: what happens"}],
   "directions": [{"speaker": "exact name", "direction": "the brief", "length": "short|normal|long"}],
-  "new_npcs": [{"name": "Brannoc Vell", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile", "stats": "optional: AC 12, HP 11, +4 to hit, 1d6+2"}],
+  "new_npcs": [{"name": "Brannoc Vell", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile", "stats": "optional: AC 12, HP 11, +4 to hit, 1d6+2", "sprite": "human_merchant"}],
   "scene": {"type": "social|exploration|tension|combat|downtime", "location": "short place name", "setting": "road|town|wild|dungeon|sea", "time": "morning|afternoon|evening|night", "changed": false},
   "tension": 0,
   "beats_completed": ["beat id from the plot, e.g. A1.2"],
   "state_changes": {"hp": {"Name": -3}, "conditions_add": {"Name": ["poisoned"]}, "conditions_remove": {"Name": ["poisoned"]}, "gold": 0, "items_add": ["item"], "items_remove": ["item"], "flags": {"key": "value"}},
-  "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
+  "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1, "sprite": "human_bandit"}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
   "positions": {"Name": "d4"},
   "dashing": ["names who take the Dash action this combat round"],
   "scene_map": {"title": "short name", "theme": "crypt", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "e4", "type": "altar"}]},
@@ -315,6 +318,7 @@ export function normalizeDmTurn(raw) {
     out.new_npcs = arr(d.new_npcs).filter(x => x && x.name).slice(0, 6).map(x => ({
         name: str(x.name).slice(0, 60),
         role: str(x.role).slice(0, 80),
+        sprite: LIBRARY[str(x.sprite)] ? str(x.sprite) : '',
         description: str(x.description),
         gender: ['male', 'female', 'any'].includes(String(x.gender).toLowerCase()) ? String(x.gender).toLowerCase() : 'any',
         attitude: str(x.attitude) || 'neutral',
@@ -337,6 +341,7 @@ export function normalizeDmTurn(raw) {
                 ac: Number(e.ac) || 10,
                 hp: Number(e.hp) || 5,
                 dex: Number(e.dex) || 0,
+                sprite: LIBRARY[str(e.sprite)] ? str(e.sprite) : '',
             })),
             map: d.start_combat.map && typeof d.start_combat.map === 'object' ? d.start_combat.map : null,
         };
@@ -405,8 +410,8 @@ const PLACE_JSON = `{
     "windows": "normal|barred|none (leave out for the usual)"
   }],
   "links": [{"a": "B1", "b": "B2", "via": "door|arch|locked|secret|stairs", "key": "Kennel Key (locked doors only)", "dc": 15}],
-  "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"]}],
-  "people": [{"name": "Old Martha", "description": "the cook, frightened of her master", "room": "G5"}],
+  "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"], "sprite": "human_butler"}],
+  "people": [{"name": "Old Martha", "description": "the cook, frightened of her master", "room": "G5", "sprite": "human_servant"}],
   "barred_windows": false,
   "start": "B1"
 }`;
@@ -418,6 +423,7 @@ export const PLACE_PLAN_INSTRUCTIONS = `Design this place as a complete, explora
 Return ONE JSON object and nothing else:
 ${PLACE_JSON}
 
+Give every guard and person a "sprite" (their little map figure), the closest from: ${FIGURES}.
 What makes a great place (follow all of it):
 - Story first. Build it from the campaign bible, plot, notes, NPCs met and the recent chat. The people, clues, threats and secrets of the plot live here, in the rooms where they make sense. Rooms reveal the story as the party explores: a journal, a portrait, a room that shouldn't exist.
 - Every room earns its place: something to find, learn, use, fear, or choose. No filler. Give rooms specific names and specific descriptions.

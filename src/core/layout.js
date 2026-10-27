@@ -84,6 +84,7 @@ export function normalizePlan(raw) {
         room: has(str(g.room)) ? str(g.room) : '',
         patrol: arr(g.patrol).map(str).filter(has).slice(0, 8),
         hostile: g.hostile,
+        sprite: str(g.sprite).slice(0, 30),
     })).filter(g => g.name && (g.room || g.patrol.length));
     for (const g of guards) if (!g.room) g.room = g.patrol[0];
     const start = has(str(d.start)) ? str(d.start) : rooms[0].id;
@@ -623,7 +624,7 @@ function tryBuild(plan, seed, shrink) {
         if (!room) continue;
         const at = freeTile(room.id);
         if (!at) continue;
-        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: 0, floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
+        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: 0, floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
     }
     // Rows (top row first) and the start.
     for (const f of place.floors) {

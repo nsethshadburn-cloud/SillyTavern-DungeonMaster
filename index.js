@@ -21,6 +21,7 @@ import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
 import { forgetPlaces, loadCurrentPlace, requestBuild } from './src/st/atlas.js';
 import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
+import { ensureFigures, redoFigure } from './src/st/figures.js';
 
 let pendingUserMessage = false;
 const BREAK_HOURS = 6;
@@ -45,6 +46,8 @@ async function onChatChanged() {
         if (c) {
             registerCampaignChat(c);
             await loadCurrentPlace(c);
+            // Map figures for the player and companions who don't have one yet (in the background).
+            ensureFigures(c);
             syncPartyHp();
             const away = (Date.now() - (c.meta.session?.lastActivity || Date.now())) / 3600000;
             if (away >= BREAK_HOURS) {
@@ -195,6 +198,19 @@ function registerSlashCommands() {
         },
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmfigure',
+        helpString: 'Redraw the little map figure for you or a companion, e.g. /dmfigure Judy',
+        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'name', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
+        callback: async (_args, text) => {
+            try {
+                await redoFigure(String(text || '').trim());
+            } catch (error) {
+                toastr.error(String(error?.message || error), 'Dungeon Master');
+            }
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmresync',
         helpString: 'After deleting or editing messages: Claude re-reads the chat and fixes what the DM has logged.',
         callback: async () => {
@@ -230,7 +246,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.14.0-beta';
+export const LOADED_VERSION = '0.15.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

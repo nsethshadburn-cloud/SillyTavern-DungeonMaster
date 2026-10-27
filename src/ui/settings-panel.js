@@ -133,6 +133,7 @@ function panelHtml() {
         <select id="dm-helper-profile" class="text_pole">${profileOptions(s.helperProfileId, { emptyLabel: 'Same as actors (current connection)', filter: p => p.api !== 'claude' })}</select></label>
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
       <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
+      <label class="checkbox_label"><input id="dm-map-figures" type="checkbox" ${s.mapFigures !== false ? 'checked' : ''}> Little animated figures on the map (off = round portraits). Your party's are drawn once by Claude from their card and picture (about 1-2 cents each); type <code>/dmfigure Judy</code> to redraw one.</label>
       <small>Profiles come from SillyTavern's Connection Manager. A profile brings its own saved formats, so update old profiles before using them here.</small>
 
       <h4>Budget</h4>
@@ -372,6 +373,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindSelect('dm-helper-profile', 'helperProfileId');
     bindCheck('dm-use-helper', 'useHelper');
     bindCheck('dm-auto-dice', 'autoReadDice');
+    bindCheck('dm-map-figures', 'mapFigures');
     bindNumber('dm-monthly', 'monthlyCap');
     bindNumber('dm-nightly', 'nightlySoftCap');
     bindCheck('dm-caching', 'cachingEnabled');
