@@ -19,10 +19,10 @@ function stored(kind, avatar) {
     return settings().figures?.[keyFor(kind, avatar)] ?? null;
 }
 
-// Figures drawn before v0.15.1 (no facialHair) didn't reliably say man or woman: go by the name and card.
+// Figures drawn before v0.15.1 (no facialHair) didn't reliably say man or woman: go by the card, then the name.
 function settled(look, name, text) {
     if (!look || 'facialHair' in look || look.beast || look.female) return look;
-    const sex = guessGender(name) !== 'any' ? guessGender(name) : sexFromText(text);
+    const sex = sexFromText(text) || guessGender(name);
     return { ...look, female: sex === 'female' };
 }
 
@@ -30,12 +30,12 @@ function settled(look, name, text) {
 export function figureFor(name) {
     const c = campaign();
     if (!c) return libraryLook(presetFor(name));
-    if (name === c.meta.persona.name) return settled(stored('persona', c.meta.persona.avatar), name, c.meta.persona.description) ?? libraryLook(presetFor(c.meta.persona.description || name), 0, sexFromText(c.meta.persona.description));
+    if (name === c.meta.persona.name) return settled(stored('persona', c.meta.persona.avatar), name, c.meta.persona.description) ?? libraryLook(presetFor(c.meta.persona.description || name), 0, sexFromText(c.meta.persona.description) || guessGender(name));
     const member = c.meta.party.find(p => p.name === name);
-    if (member) return settled(stored('character', member.avatar), name, member.summary) ?? libraryLook(presetFor(member.summary || name), 1, sexFromText(member.summary));
+    if (member) return settled(stored('character', member.avatar), name, member.summary) ?? libraryLook(presetFor(member.summary || name), 1, sexFromText(member.summary) || guessGender(name));
     const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
-    // Men and women look different on the map: the DM's gender for them, else the words or the first name.
-    const sex = who => (who.gender === 'male' || who.gender === 'female' ? who.gender : guessGender(who.name));
+    // Men and women look different on the map: the DM's gender for them, else their description, else the first name.
+    const sex = who => (who.gender === 'male' || who.gender === 'female' ? who.gender : sexFromText(`${who.name} ${who.description || ''}`) || guessGender(who.name));
     if (npc) return lookForNpc(npc.name, npc.description, npc.sprite, sex(npc));
     const person = currentPlace(c)?.place.guards?.[name];
     if (person) return lookForNpc(person.name, person.description, person.sprite, sex(person));
