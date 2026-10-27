@@ -367,22 +367,37 @@ export async function walkTo(target, redraw = () => { }) {
     if (!path?.length) { toastr.info(walkable(place, floorId, target.x, target.y) ? 'You can\'t get there from here (yet).' : 'You can\'t stand there.', 'Map', { timeOut: 2500 }); return; }
     walking = true;
     const trail = [{ x: lead.x, y: lead.y }];
-    // Leaving the room: each companion decides (local model) whether to come along. They follow
-    // while the answer is on its way, and stop where they are if it's no.
+    // Leaving the room: each companion in it decides (local model) whether to come along. They
+    // stand still until they've decided; on a yes they walk after the player along the same path
+    // (a little faster, to catch up), on a no they stay where they are.
     const fromRoom = roomAt(place, floorId, lead.x, lead.y), toRoom = roomAt(place, floorId, target.x, target.y);
-    let walkers = followers(c, place).filter(n => place.state.positions[n]?.floor === floorId);
-    if (fromRoom?.id !== toRoom?.id || !fromRoom) {
-        for (const n of walkers) {
-            const p = place.state.positions[n];
-            if (roomAt(place, floorId, p.x, p.y)?.id !== fromRoom?.id) continue;
-            decideFollow(c, n, fromRoom?.name, toRoom?.name).then(d => {
-                if (d.follows) return;
-                walkers = walkers.filter(w => w !== n);
-                setWaiting(n, true, { why: d.why });
-                redraw();
-            });
-        }
-    }
+    const onFloor = followers(c, place).filter(n => place.state.positions[n]?.floor === floorId);
+    const leaving = fromRoom?.id !== toRoom?.id || !fromRoom;
+    const deciding = leaving ? onFloor.filter(n => { const p = place.state.positions[n]; return roomAt(place, floorId, p.x, p.y)?.id === fromRoom?.id; }) : [];
+    const walkers = onFloor.filter(n => !deciding.includes(n));
+    const chasers = new Map(); // name -> how far along the player's path they are (-1 = not started)
+    const refused = new Set();
+    const pending = deciding.map(n => decideFollow(c, n, fromRoom?.name, toRoom?.name).then(d => {
+        if (d.follows) { chasers.set(n, -1); return; }
+        refused.add(n);
+        redraw();
+        return setWaiting(n, true, { why: d.why });
+    }));
+    const order = () => [...walkers, ...chasers.keys()];
+    /** Move companions who decided to come one or two squares further along the player's path. */
+    const advanceChasers = () => {
+        let moved = false;
+        order().forEach((n, i) => {
+            if (!chasers.has(n)) return;
+            const goal = Math.max(0, trail.length - 2 - i), cur = chasers.get(n);
+            if (cur >= goal) return;
+            const next = Math.min(goal, cur + 2);
+            chasers.set(n, next);
+            Object.assign(place.state.positions[n], trail[next]);
+            moved = true;
+        });
+        return moved;
+    };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
     const passive = passivePerception(c);
     let event = null, handoff = null;
@@ -406,6 +421,7 @@ export async function walkTo(target, redraw = () => { }) {
                 const spot = trail[trail.length - 2 - i] ?? trail[0];
                 if (place.state.positions[n]?.floor === floorId) Object.assign(place.state.positions[n], spot);
             });
+            advanceChasers();
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
@@ -424,14 +440,26 @@ export async function walkTo(target, redraw = () => { }) {
             if (d?.enter) { handoff = { building: d }; break; }
             if (d?.exit) { handoff = { exit: d }; break; }
         }
+        // Wait for anyone still deciding, then let those who chose to come catch up.
+        if (pending.length) {
+            await Promise.all(pending);
+            while (advanceChasers()) {
+                look(c, key, place);
+                redraw();
+                await sleep(95);
+            }
+        }
         // Rooms entered on the way; a companion who stayed behind rejoins when you reach them.
         await noteRoom(c, place);
         const here = roomAt(place, lead.floor, lead.x, lead.y);
+        // Coming back into their room (or right up to them in a corridor) brings them along again;
+        // never on the same walk they decided to stay.
         for (const [n, w] of Object.entries(place.state.waiting || {})) {
             const p = place.state.positions[n];
-            if (!w || !p || p.floor !== lead.floor) continue;
-            const near = Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 2;
-            if (near || (here && roomAt(place, p.floor, p.x, p.y)?.id === here.id)) await setWaiting(n, false);
+            if (!w || !p || p.floor !== lead.floor || refused.has(n)) continue;
+            const theirs = roomAt(place, p.floor, p.x, p.y);
+            const near = !theirs && !here && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 2;
+            if (near || (here && theirs?.id === here.id)) await setWaiting(n, false);
         }
         if (handoff?.stairs) {
             const s = handoff.stairs;
