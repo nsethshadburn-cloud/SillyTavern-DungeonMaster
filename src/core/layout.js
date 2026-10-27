@@ -76,11 +76,13 @@ export function normalizePlan(raw) {
         if (links.some(x => (x.a === a && x.b === b) || (x.a === b && x.b === a))) continue;
         links.push({ a, b, via, key: via === 'locked' ? str(l?.key).slice(0, 60) : '', dc: Number.isFinite(Number(l?.dc)) ? clamp(Math.round(Number(l.dc)), 8, 25) : (via === 'secret' ? 15 : 15) });
     }
-    const guards = arr(d.guards).slice(0, 14).map(g => obj(g)).map(g => ({
+    // Guards are hostile; "people" are everyone else who lives or works there (a cook, a prisoner).
+    const guards = [...arr(d.guards).map(g => ({ ...obj(g), hostile: obj(g).hostile !== false })), ...arr(d.people).map(g => ({ ...obj(g), hostile: obj(g).hostile === true }))].slice(0, 20).map(g => ({
         name: str(g.name).slice(0, 60),
         description: str(g.description).slice(0, 240),
         room: has(str(g.room)) ? str(g.room) : '',
         patrol: arr(g.patrol).map(str).filter(has).slice(0, 8),
+        hostile: g.hostile,
     })).filter(g => g.name && (g.room || g.patrol.length));
     for (const g of guards) if (!g.room) g.room = g.patrol[0];
     const start = has(str(d.start)) ? str(d.start) : rooms[0].id;
@@ -609,7 +611,7 @@ function tryBuild(plan, seed, shrink) {
         if (!room) continue;
         const at = freeTile(room.id);
         if (!at) continue;
-        place.guards[g.name] = { name: g.name, description: g.description, room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: 0, floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
+        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: 0, floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
     }
     // Rows (top row first) and the start.
     for (const f of place.floors) {
@@ -737,6 +739,7 @@ export function normalizeTownPlan(raw) {
         size: BUILDING_SIZES[str(b.size).toLowerCase()] ? str(b.size).toLowerCase() : 'medium',
         enterable: b.enterable !== false,
         description: str(b.description).slice(0, 500),
+        keeper: str(b.keeper).slice(0, 60),
     }));
     return {
         normalized: true,
@@ -893,7 +896,9 @@ export function generateInterior(building, seed = 1) {
         const sameFloorHub = rooms.find(x => x.floor === rm.floor && x !== rm && rooms.indexOf(x) < rooms.indexOf(rm));
         links.push({ a: sameFloorHub?.id ?? main.id, b: rm.id, via: rm.floor !== (sameFloorHub ?? main).floor ? 'stairs' : lock || 'door' });
     });
-    const plan = normalizePlan({ name: building.name, kind: 'interior', theme: recipe.theme, fog: false, floors, rooms, links, start: main.id, summary: building.description });
+    // Whoever works or lives there is inside, in the main room.
+    const people = building.keeper ? [{ name: building.keeper, description: building.description || `works at ${building.name}`, room: main.id }] : [];
+    const plan = normalizePlan({ name: building.name, kind: 'interior', theme: recipe.theme, fog: false, floors, rooms, links, people, start: main.id, summary: building.description });
     const place = generatePlace(plan, seed);
     place.kind = 'interior';
     for (const f of place.floors) place.state.explored[f.id] = '1'.repeat(f.map.w * f.map.h);

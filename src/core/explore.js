@@ -85,19 +85,43 @@ function lineOfSight(map, x0, y0, x1, y1) {
     return true;
 }
 
+const zoneCache = new WeakMap();
+
+/** Which room's floor each square is (index + 1), 0 for corridors, doorways and walls. */
+function zones(place, floorId) {
+    const map = floorById(place, floorId).map;
+    const cached = zoneCache.get(map);
+    if (cached) return cached;
+    const z = { grid: new Int16Array(map.w * map.h), rooms: [] };
+    for (const rm of Object.values(place.rooms)) {
+        if (rm.floor !== floorId) continue;
+        z.rooms.push(rm);
+        const n = z.rooms.length, r = rm.rect;
+        for (let x = r.x; x < r.x + r.w; x++) for (let y = r.y; y < r.y + r.h; y++) z.grid[y * map.w + x] = n;
+    }
+    zoneCache.set(map, z);
+    return z;
+}
+
 /**
- * What the party sees right now on one floor: lit squares in line of sight, plus anything close by
- * (a couple of squares, even in the dark). Standing in a lit room shows the whole room.
+ * What the party sees right now on one floor. You only see the space you're in: the room you're
+ * standing in (its floor, walls and doors), or the corridor. Another room stays dark until you step
+ * inside it, even if it's lit and the door is open. Within your own space, walls, closed doors and
+ * pillars block the view, and in the dark you only see lit squares and what's close by.
  * @param {Array<{x:number,y:number}>} viewers
  */
 export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 } = {}) {
     const map = floorById(place, floorId).map;
     const lit = litMask(place, floorId);
     const vis = new Uint8Array(map.w * map.h);
+    const z = zones(place, floorId);
+    const open = OUTDOOR.has(map.theme) || !z.rooms.length;
     for (const v of viewers) {
-        const rm = roomAt(place, floorId, v.x, v.y);
-        if (rm?.lit) {
-            const r = rm.rect;
+        const own = z.grid[v.y * map.w + v.x];
+        const room = own ? z.rooms[own - 1] : null;
+        const inRing = (x, y) => room && x >= room.rect.x - 1 && x <= room.rect.x + room.rect.w && y >= room.rect.y - 1 && y <= room.rect.y + room.rect.h;
+        if (room?.lit) {
+            const r = room.rect;
             for (let x = r.x - 1; x <= r.x + r.w; x++) for (let y = r.y - 1; y <= r.y + r.h; y++) if (x >= 0 && y >= 0 && x < map.w && y < map.h) vis[y * map.w + x] = 1;
         }
         for (let x = Math.max(0, v.x - radius); x <= Math.min(map.w - 1, v.x + radius); x++) {
@@ -105,6 +129,12 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
                 const i = y * map.w + x;
                 if (vis[i]) continue;
                 const d = Math.max(Math.abs(x - v.x), Math.abs(y - v.y));
+                if (!open && d > 1) {
+                    const zone = z.grid[i];
+                    // Another room's floor: not until you're in it. From inside a room: only its own walls and doors.
+                    if (zone && zone !== own) continue;
+                    if (!zone && room && !inRing(x, y)) continue;
+                }
                 if (!lit[i] && d > near) continue;
                 if (lineOfSight(map, v.x, v.y, x, y)) vis[i] = 1;
             }
@@ -258,7 +288,21 @@ export function applyPlaceChanges(place, changes) {
         log.push(`${item.name}: ${v}`);
     }
     for (const [name, raw] of Object.entries(c.guards || {})) {
-        const g = place.guards[name] ?? Object.values(place.guards).find(x => nameKey(x.name) === nameKey(name));
+        let g = place.guards[name] ?? Object.values(place.guards).find(x => nameKey(x.name) === nameKey(name));
+        // Someone new on the map: {"room": "G5", "description": "the cook", "hostile": false}.
+        if (raw && typeof raw === 'object') {
+            const roomId = place.rooms[raw.room] ? raw.room : g?.room;
+            if (!roomId) continue;
+            g ??= place.guards[String(name).slice(0, 60)] = { name: String(name).slice(0, 60), description: '', hostile: false, room: roomId, patrol: [roomId], step: 0, floor: place.rooms[roomId].floor, x: 0, y: 0, state: 'patrol' };
+            if (raw.description) g.description = String(raw.description).slice(0, 240);
+            if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
+            if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(String).filter(id => place.rooms[id]);
+            if (!g.patrol.length) g.patrol = [roomId];
+            moveGuardTo(place, g, roomId);
+            g.state = 'patrol';
+            log.push(`${g.name} is in ${roomId}`);
+            continue;
+        }
         if (!g) continue;
         const v = String(raw);
         if (/^(gone|dead|left|removed)$/i.test(v)) g.state = 'gone';
@@ -349,12 +393,12 @@ export function placeSummary(place) {
     const buildings = Object.values(place.buildings);
     if (buildings.length) {
         lines.push('', '## Buildings');
-        for (const b of buildings) lines.push(`- ${b.id} ${b.name} [${b.kind}]${b.sign ? ` sign: "${b.sign}"` : ''}${b.description ? `: ${b.description}` : ''}`);
+        for (const b of buildings) lines.push(`- ${b.id} ${b.name} [${b.kind}]${b.sign ? ` sign: "${b.sign}"` : ''}${b.keeper ? ` run by ${b.keeper}` : ''}${b.description ? `: ${b.description}` : ''}`);
     }
     const guards = Object.values(place.guards);
     if (guards.length) {
-        lines.push('', '## Guards and wanderers');
-        for (const g of guards) lines.push(`- ${g.name}: ${g.description}${g.patrol.length > 1 ? ` Patrols ${g.patrol.join('→')}.` : ''}`);
+        lines.push('', '## People on the map');
+        for (const g of guards) lines.push(`- ${g.name}${g.hostile !== false ? ' (hostile)' : ''}: ${g.description}${g.patrol.length > 1 ? ` Patrols ${g.patrol.join('→')}.` : ` Stays in ${g.room}.`}`);
     }
     return lines.join('\n');
 }
@@ -392,7 +436,9 @@ export function placeView(place, partyNames) {
     const taken = Object.values(place.items).filter(i => i.state === 'taken' || i.found).map(i => `${i.id} ${i.name} ${i.state === 'taken' ? 'taken' : 'found'}`);
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
     const guards = Object.values(place.guards).filter(g => g.state !== 'gone').map(g => `${g.name} in ${g.room}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}`);
-    if (guards.length) lines.push(`Guards now: ${guards.join('; ')}.`);
+    if (guards.length) lines.push(`People now: ${guards.join('; ')}.`);
+    const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
+    if (waiting.length) lines.push(`Companions who chose not to follow: ${waiting.join('; ')}.`);
     const people = { ...st.positions };
     for (const g of Object.values(place.guards)) if (g.state !== 'gone') people[g.name] = { floor: g.floor, x: g.x, y: g.y };
     const area = room?.rect ?? (lead ? { x: lead.x - 4, y: lead.y - 4, w: 9, h: 9 } : null);

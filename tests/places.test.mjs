@@ -250,3 +250,57 @@ test('multi-square props cover all their squares', () => {
     assert.equal(isWalkable(map, 2, 0), false);
     assert.equal(isWalkable(map, 5, 0), true, 'rugs are walkable');
 });
+
+test('fights: moves are limited to speed, around walls, with rubble costing double', async () => {
+    const { reachable: reach, clampMove, speedSquares } = await import('../src/core/grid.js');
+    const map = normalizeMap({ rows: ['..........', '..........', '....#.....', '....#.....', '..........'] });
+    assert.equal(speedSquares({ speed: 30 }), 6);
+    assert.equal(speedSquares({ speed: 25 }), 5);
+    assert.equal(speedSquares(null), 6, 'no sheet: 30 ft');
+    const r = reach(map, { x: 0, y: 2 }, 6);
+    assert.ok(r.has('5,2') === false || r.get('5,2') <= 6);
+    assert.ok(!r.has('9,2'), 'too far');
+    const ok = clampMove(map, { x: 0, y: 2 }, { x: 9, y: 2 }, 6);
+    assert.ok(Math.max(Math.abs(ok.x), Math.abs(ok.y - 2)) <= 6 && terrainAt(map, ok.x, ok.y) !== '#', 'stopped short, not in a wall');
+    assert.deepEqual(clampMove(map, { x: 0, y: 0 }, { x: 3, y: 0 }, 6), { x: 3, y: 0 }, 'in reach: goes there');
+    const rough = normalizeMap({ rows: ['##########', '.^^^^^....', '##########', '##########'] });
+    assert.ok(!reach(rough, { x: 0, y: 2 }, 6).has('5,2'), 'five rubble squares cost 10');
+    assert.ok(reach(rough, { x: 0, y: 2 }, 6).has('3,2'), 'three cost 6');
+    assert.ok(!reach(map, { x: 0, y: 0 }, 6, new Set(['1,0'])).has('1,0'), 'can pass people but not stop on them');
+});
+
+test("vision: you can't see into a room until you step inside it, even a lit one", () => {
+    const place = tinyPlace();
+    const map = floorById(place, 'G').map;
+    const door = Object.values(place.doors).find(d => d.rooms.includes('A') && d.rooms.includes('B'));
+    applyPlaceChanges(place, { doors: { [door.id]: 'open' }, rooms: { B: { lit: true } } });
+    const A = place.rooms.A.rect, B = place.rooms.B.rect;
+    // Standing just inside room A, next to the open door into the lit room B.
+    const inA = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => ({ x: door.x + dx, y: door.y + dy })).find(p => inRect(A, p.x, p.y));
+    const vis = computeVisible(place, 'G', [inA]);
+    const far = roomTiles(B).filter(([x, y]) => Math.max(Math.abs(x - inA.x), Math.abs(y - inA.y)) > 1);
+    assert.ok(far.every(([x, y]) => !vis[y * map.w + x]), 'the lit room next door stays dark');
+    // One step inside and the lit room shows whole.
+    const inB = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => ({ x: door.x + dx, y: door.y + dy })).find(p => inRect(B, p.x, p.y));
+    const vis2 = computeVisible(place, 'G', [inB]);
+    assert.ok(roomTiles(B).every(([x, y]) => vis2[y * map.w + x]));
+    assert.ok(roomTiles(A).filter(([x, y]) => Math.max(Math.abs(x - inB.x), Math.abs(y - inB.y)) > 1).every(([x, y]) => !vis2[y * map.w + x]), 'and the room behind you is out of view');
+});
+
+test('people on the map: guards are hostile, residents and shopkeepers are not; the DM can add someone', () => {
+    const plan = normalizePlan({ rooms: [{ id: 'A', type: 'kitchen' }, { id: 'B', type: 'hallway' }], links: [{ a: 'A', b: 'B' }], guards: [{ name: 'Graves', room: 'B' }], people: [{ name: 'Old Martha', description: 'the cook', room: 'A' }] });
+    assert.equal(plan.guards.find(g => g.name === 'Graves').hostile, true);
+    assert.equal(plan.guards.find(g => g.name === 'Old Martha').hostile, false);
+    const place = generatePlace(plan, 2);
+    assert.equal(place.guards['Old Martha'].hostile, false);
+    assert.ok(inRect(place.rooms.A.rect, place.guards['Old Martha'].x, place.guards['Old Martha'].y));
+    const log = applyPlaceChanges(place, { guards: { 'Ghost Girl': { room: 'B', description: 'a pale child who wants help', hostile: false } } });
+    assert.match(log[0], /Ghost Girl is in B/);
+    assert.ok(inRect(place.rooms.B.rect, place.guards['Ghost Girl'].x, place.guards['Ghost Girl'].y));
+    assert.match(placeSummary(place), /Graves \(hostile\)/);
+    assert.match(placeSummary(place), /Old Martha: the cook/);
+    const smithy = generateInterior({ id: 'B1', name: 'The Rusty Anvil', kind: 'smithy', keeper: 'Bram Ironhand', description: 'A burly smith.' }, 2);
+    const bram = smithy.guards['Bram Ironhand'];
+    assert.ok(bram && bram.hostile === false, 'the smith is inside');
+    assert.equal(normalizeTownPlan({ buildings: [{ name: 'x', keeper: 'Bram' }] }).buildings[0].keeper, 'Bram');
+});

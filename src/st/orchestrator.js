@@ -14,7 +14,7 @@ import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } f
 import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
-import { normalizeMap, applyPositions, placeMissing, parseCoord, toCoord } from '../core/grid.js';
+import { normalizeMap, applyPositions, placeMissing, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, walkable } from '../core/explore.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look } from './atlas.js';
 import { openMap, refreshMap, closeMap } from '../ui/map.js';
@@ -559,7 +559,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (world.combat?.map) {
         const friends = [meta.persona.name, ...meta.party.map(p => p.name)];
         const foes = Object.keys(world.combat.enemies || {});
-        const { positions, rejected } = applyPositions(world.combat.map, world.combat.positions, t.positions);
+        // The party moves at most their speed each round (twice that when dashing), around walls.
+        const moves = { ...(t.positions || {}) };
+        for (const name of [meta.persona.name, ...meta.party.map(p => p.name)]) {
+            const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
+            if (!from || !to || t.start_combat) continue;
+            const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== name).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
+            const max = speedSquares(statsForName(name, meta)) * (t.dashing.some(n => nameKey(n) === nameKey(name)) ? 2 : 1);
+            const ok = clampMove(world.combat.map, from, to, max, others);
+            if (ok.x !== to.x || ok.y !== to.y) status.note(`${name} can only get to ${toCoord(ok.x, ok.y)} this round`);
+            moves[name] = toCoord(ok.x, ok.y);
+        }
+        const { positions, rejected } = applyPositions(world.combat.map, world.combat.positions, moves);
         world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
         // Downed enemies leave the board.
         for (const [name, e] of Object.entries(world.combat.enemies || {})) {

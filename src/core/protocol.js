@@ -69,6 +69,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
   Build rooms that are fun to look at and to fight in: walls that enclose the space with doors where exits are; a floor that changes in patches (planks by the bar, flagstones near the hearth, a puddle, rubble where the ceiling fell); 4-10 props that tell the room's story (bones beside the cage, a knocked-over table, a cold campfire); at least one light source in dark places (torch, brazier, campfire, candles; lava glows); cover and chokepoints that make tactics matter; one standout feature (an altar, a chasm with a bridge, a flooded corner). Never a bare empty box.
   Example: {"theme": "crypt", "width": 10, "height": 7, "rows": ["##########", "#..^...<.#", "#.T....T.#", "+........#", "#.T..o.T.#", "#....~~..#", "####/#####"], "props": [{"at": "e4", "type": "altar"}, {"at": "b6", "type": "brazier"}, {"at": "i6", "type": "brazier"}, {"at": "c2", "type": "coffin"}, {"at": "h2", "type": "bones"}, {"at": "f3", "type": "skull"}]}
 - Scene maps outside combat: send "scene_map" ({"title": "Flooded crypt", "theme", "width", "height", "rows", "props"}) only where exact, tile-by-tile positions matter: a dungeon room, a trapped corridor, sneaking through a guarded area, a puzzle room. Be conservative: never for towns, roads, wilderness travel or social scenes. Send "scene_map": "close" when the party leaves that space. Use "positions" on it like in combat. If a fight starts in a mapped room, you may leave out start_combat.map and the room becomes the battle map.
+- Movement is limited by speed: the code stops each party member after their speed in squares each round (from their sheet; 30 ft = 6 squares; rubble and shallow water cost double; walls in the way count), so plan moves that fit. List anyone who takes the Dash action this round in "dashing" (they get double).
 - Give everyone a starting square in "positions" ({"Judy Hopps": "c2", "Bandit 1": "f7"}). Each combat round, return "positions" for anyone who moved. One square = 5 feet; typical movement is 6 squares. Use "gone" for anyone who leaves or dies.
 - The player's own moves are THEIR choice (e.g. "move to d4"). Put them exactly where they asked when it's possible. If their square and their action don't fit together (a sword swing from 4 squares away), don't silently relocate them: either move them only as far as their movement allows toward the target and say so plainly in "ooc", or ask them in "ooc" which they meant.
 
@@ -80,7 +81,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - To build one, set "build_place": {"name": "Blackmoor Manor", "size": "big|small", "kind": "mansion|castle|dungeon|cave|prison|temple|crypt|tower|town|village|camp|tavern|...", "why": "one line"}. You'll be asked for the full plan in a separate call. Big sites are expensive: only for a place the plot stays in for a long time (an act or more). Never for travel or a one-scene stop.
 - Never build a place that's already in the ATLAS. To send the party back to one, set "enter_place": "its name". When they leave a place for good, set "leave_place": true.
 - Inside a place, the code moves the party when the player clicks the map, reveals rooms as they're seen (fog of war), opens doors they walk through, spots or springs traps by passive Perception, and calls you when something happens (a sprung trap, a guard coming into view, walking out). You get the whole place (with its secrets) and the party's current room each turn. Entering a room for the first time shows its description automatically: don't repeat it.
-- Change a place with "place_changes": {"doors": {"D4": "open|closed|locked|unlocked|broken|found"}, "traps": {"T2": "found|disarmed|sprung"}, "items": {"I3": "taken|found"}, "guards": {"Graves the Butler": "G4" (send them to a room) | "alert" | "calm" | "gone"}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"] (the party learns a room's layout, e.g. from a floor plan)}. Secret doors need "found" before the party can use them; locked doors need "unlocked" (a key, a picked lock) or "broken".
+- Change a place with "place_changes": {"doors": {"D4": "open|closed|locked|unlocked|broken|found"}, "traps": {"T2": "found|disarmed|sprung"}, "items": {"I3": "taken|found"}, "guards": {"Graves the Butler": "G4" (send them to a room) | "alert" | "calm" | "gone", "Old Martha": {"room": "G5", "description": "the cook", "hostile": false} (put someone new on the map)}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"] (the party learns a room's layout, e.g. from a floor plan)}. Secret doors need "found" before the party can use them; locked doors need "unlocked" (a key, a picked lock) or "broken".
 - Use "positions" with the floor's own squares (like "ab14") to move people on the current floor. One-off tactical spots outside any place (an ambush on the road) can still use "scene_map".
 
 ## Pacing (this matters most)
@@ -129,6 +130,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "state_changes": {"hp": {"Name": -3}, "conditions_add": {"Name": ["poisoned"]}, "conditions_remove": {"Name": ["poisoned"]}, "gold": 0, "items_add": ["item"], "items_remove": ["item"], "flags": {"key": "value"}},
   "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
   "positions": {"Name": "d4"},
+  "dashing": ["names who take the Dash action this combat round"],
   "scene_map": {"title": "short name", "theme": "crypt", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "e4", "type": "altar"}]},
   "npcs_dead": ["names of NPCs who died this turn"],
   "end_combat": false,
@@ -258,6 +260,7 @@ export function normalizeDmTurn(raw) {
         story_add: str(d.story_add),
         event: normalizeEventChoice(d.event),
         positions: normalizePositions(d.positions),
+        dashing: arr(d.dashing).map(String).filter(Boolean).slice(0, 8),
         scene_map: d.scene_map === 'close' ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), theme: str(d.scene_map.theme), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String), props: d.scene_map.props } : null),
         npcs_dead: arr(d.npcs_dead).map(String).filter(Boolean),
         standing_direction: str(d.standing_direction),
@@ -401,6 +404,7 @@ const PLACE_JSON = `{
   }],
   "links": [{"a": "B1", "b": "B2", "via": "door|arch|locked|secret|stairs", "key": "Kennel Key (locked doors only)", "dc": 15}],
   "guards": [{"name": "Graves the Butler", "description": "who or what, one line", "room": "G2", "patrol": ["G2", "G4", "G5"]}],
+  "people": [{"name": "Old Martha", "description": "the cook, frightened of her master", "room": "G5"}],
   "start": "B1"
 }`;
 
@@ -419,7 +423,7 @@ What makes a great place (follow all of it):
 - Floors connect only through "stairs" links: at least one between neighboring floors, two for a big floor (a grand stair and a servants' stair are classic). Links between rooms on the same floor are doors, arches, locked or secret doors.
 - Gating: 2-4 locked doors whose keys are found elsewhere in the place (the code makes sure every key can be reached before its door), 1-3 secret doors (a DC to find) that lead somewhere worth it, maybe one locked door with no key that can only be picked or forced.
 - The start ("start") is where the story puts the party (a cell, the front steps, a kennel). The way out ("exit": true on that room) is where the story needs it, usually far from the start, behind the place's main challenge.
-- Danger that's fair: traps only where they make sense (the master's private wing, a vault, a study), 3-8 for a big place, with a hint in the room's description. Guards or creatures only if the story has them; give each a name, a one-line description and a patrol of 2-5 rooms on one floor, and keep them away from the start so the party can plan.
+- Danger that's fair: traps only where they make sense (the master's private wing, a vault, a study), 3-8 for a big place, with a hint in the room's description. Guards or creatures only if the story has them; give each a name, a one-line description and a patrol of 2-5 rooms on one floor, and keep them away from the start so the party can plan. "people" are everyone else who belongs there and isn't hostile (servants, other prisoners, a ghost who wants help): they're on the map too, and the party can talk to them.
 - Atmosphere: lit rooms are lived-in public rooms; dark ones are cellars, unused wings, secrets. Use "marks" (blood, scratches, papers, stain) and story props to show what happened in a room.
 - Room types (the code furnishes each room from its type, so a library already gets shelves, a desk and a rug): ${ROOM_TYPES_TEXT}.
 - Add props only for story-specific things (a named painting, a cage with something in it, an altar): ${PROPS_LEGEND}.
@@ -440,6 +444,6 @@ Return ONE JSON object and nothing else:
   "summary": "3-4 sentences for yourself: who runs it, its mood, what's going on, who the party might need here",
   "layout": "road|crossroads",
   "features": ["market square", "fountain", "well", "pond", "graveyard"],
-  "buildings": [{"id": "B1", "name": "The Rusty Anvil", "kind": "smithy|tavern|inn|general store|alchemist|bakery|temple|bank|stable|guard post|tailor|house|...", "sign": "the name on its sign (shops and public buildings)", "size": "small|medium|large", "description": "1-2 sentences: who works or lives there, what's notable", "enterable": true}]
+  "buildings": [{"id": "B1", "name": "The Rusty Anvil", "kind": "smithy|tavern|inn|general store|alchemist|bakery|temple|bank|stable|guard post|tailor|house|...", "sign": "the name on its sign (shops and public buildings)", "size": "small|medium|large", "keeper": "the name of who works or lives there (they're inside when the party walks in)", "description": "1-2 sentences: who they are, what's notable", "enterable": true}]
 }
 Rules: 5-12 buildings that fit the story and the town's size: the services the party may need (an inn or tavern, a smithy, a general store, a temple, an alchemist...), homes, and the story's places (where a plot NPC lives or works). Every shop and public building gets a sign name. "crossroads" for a bigger town where two roads meet.`;

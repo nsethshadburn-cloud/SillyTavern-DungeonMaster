@@ -282,3 +282,57 @@ export function renderMapText(map, positions = {}) {
     const props = (map.props || []).map(p => `${p.type}${p.label ? ` (${p.label})` : ''} ${toCoord(p.x, p.y)}`).join(', ');
     return `Theme: ${map.theme || 'dungeon'}\n${lines.join('\n')}\n(@ = someone stands there) Positions: ${tokens || 'none'}\nProps: ${props || 'none'}\nLegend: ${TERRAIN_LEGEND}.`;
 }
+
+// ---------- movement in combat ----------
+
+/** Squares a speed in feet allows (30 ft = 6 squares). */
+export function speedSquares(stats, fallback = 6) {
+    const ft = Number(stats?.speed);
+    return Number.isFinite(ft) && ft > 0 ? Math.max(1, Math.floor(ft / 5)) : fallback;
+}
+
+const STEPS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+/**
+ * Every square someone can reach from `from` within `max` squares of movement: walls and blocking
+ * things in the way, no squeezing diagonally past a wall corner, rubble and shallow water cost 2.
+ * Other people's squares can be passed but not ended on (`blocked`).
+ * @returns {Map<string, number>} "x,y" -> movement used
+ */
+export function reachable(map, from, max, blocked = new Set()) {
+    const cost = new Map([[`${from.x},${from.y}`, 0]]);
+    const queue = [[from.x, from.y, 0]];
+    while (queue.length) {
+        queue.sort((a, b) => a[2] - b[2]);
+        const [x, y, used] = queue.shift();
+        if (used > (cost.get(`${x},${y}`) ?? Infinity)) continue;
+        for (const [dx, dy] of STEPS) {
+            const nx = x + dx, ny = y + dy;
+            if (!isWalkable(map, nx, ny)) continue;
+            if (dx && dy && (!isWalkable(map, x + dx, y) || !isWalkable(map, x, y + dy))) continue;
+            const ch = terrainAt(map, nx, ny);
+            const next = used + (ch === '^' || ch === '~' ? 2 : 1);
+            if (next > max || next >= (cost.get(`${nx},${ny}`) ?? Infinity)) continue;
+            cost.set(`${nx},${ny}`, next);
+            queue.push([nx, ny, next]);
+        }
+    }
+    for (const k of blocked) if (k !== `${from.x},${from.y}`) cost.delete(k);
+    return cost;
+}
+
+/**
+ * The closest square to `to` that someone can actually reach this round (their speed, around walls).
+ * Returns `to` itself when it's in reach.
+ */
+export function clampMove(map, from, to, max, blocked = new Set()) {
+    const reach = reachable(map, from, max, blocked);
+    if (reach.has(`${to.x},${to.y}`)) return to;
+    let best = from, bestD = Infinity, bestUsed = 0;
+    for (const [k, used] of reach) {
+        const [x, y] = k.split(',').map(Number);
+        const d = Math.max(Math.abs(x - to.x), Math.abs(y - to.y));
+        if (d < bestD || (d === bestD && used < bestUsed)) { best = { x, y }; bestD = d; bestUsed = used; }
+    }
+    return best;
+}

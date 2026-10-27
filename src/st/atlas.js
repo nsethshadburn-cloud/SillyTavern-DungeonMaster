@@ -13,8 +13,10 @@ import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior } from '../core/layout.js';
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
-import { lookupModifier } from '../core/world.js';
-import { isAway } from '../core/world.js';
+import { lookupModifier, isAway, applyPresence } from '../core/world.js';
+import { callLocal } from './llm.js';
+import { settings } from './settings.js';
+import { trimToTokens, extractJson } from '../core/text.js';
 
 const places = new Map(); // `${campaignId}:${key}` -> place
 
@@ -87,9 +89,92 @@ export async function loadCurrentPlace(c = campaign()) {
     return place;
 }
 
-/** The party's names on the map: the player first, then companions who are with them. */
+/** The party's names on the map: the player first, then companions who are with them (or waiting nearby). */
 export function partyOnMap(c = campaign()) {
-    return [c.meta.persona.name, ...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n))];
+    const waiting = currentPlace(c)?.place.state.waiting ?? {};
+    return [c.meta.persona.name, ...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n) || waiting[n])];
+}
+
+/** Companions who walk along with the player right now (not the ones who chose to stay). */
+function followers(c, place) {
+    return partyOnMap(c).slice(1).filter(n => !place.state.waiting?.[n]);
+}
+
+/** A companion stays where they are (their choice, or the player asked them to wait). */
+export async function setWaiting(name, wait, { why = '', quiet = false } = {}) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!c || !cur) return;
+    const { key, place } = cur;
+    place.state.waiting ??= {};
+    const p = place.state.positions[name];
+    const room = p ? roomAt(place, p.floor, p.x, p.y) : null;
+    if (wait) {
+        place.state.waiting[name] = true;
+        applyPresence(c.docs.world, c.meta.party.map(m => m.name), { [name]: `stayed behind in ${room?.name ?? 'a passage'} (${place.name})` }, []);
+        if (!quiet) await postNote(`🚶 ${name} stays in ${room?.name ?? 'the passage'}${why ? `: ${why}` : ''}.`);
+    } else {
+        delete place.state.waiting[name];
+        applyPresence(c.docs.world, c.meta.party.map(m => m.name), {}, [name]);
+        if (!quiet) await postNote(`🚶 ${name} comes along with you again.`);
+    }
+    saveDoc('world');
+    savePlace(key, c);
+}
+
+/**
+ * Would this companion follow the player out of the room right now? Asked to the local model (free),
+ * from the recent chat. Companions normally come along; only a clear reason in the story keeps them.
+ */
+async function decideFollow(c, name, fromRoom, toRoom) {
+    const s = settings();
+    if (!s.useHelper) return { follows: true };
+    const member = c.meta.party.find(p => p.name === name);
+    const recent = [];
+    for (let i = ST.chat.length - 1; i >= 0 && recent.length < 8; i--) {
+        const m = ST.chat[i];
+        if (!m?.mes || m.is_system) continue;
+        recent.unshift(`${m.name}: ${trimToTokens(m.mes, 120)}`);
+    }
+    const player = c.meta.persona.name;
+    const system = 'You decide one thing about a character in a roleplay. Reply with JSON only: {"follows": true or false, "why": "under 12 words, in plain words"}.';
+    const user = [
+        `${name}: ${trimToTokens(member?.summary || '', 200)}`,
+        c.meta.knowledge?.[name] ? `What ${name} knows: ${trimToTokens(c.meta.knowledge[name], 200)}` : '',
+        c.meta.standing ? `Right now: ${c.meta.standing}` : '',
+        `Recent chat:\n${recent.join('\n')}`,
+        '',
+        `${player} is walking out of ${fromRoom || 'here'} toward ${toRoom || 'somewhere else'}. Does ${name} go with ${player} right now?`,
+        `Companions normally stay with ${player}. Answer false only if the recent chat clearly gives ${name} a reason to stay (hurt, angry at ${player}, refusing, told to wait, guarding something, busy with something).`,
+    ].filter(Boolean).join('\n');
+    try {
+        const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId });
+        const json = extractJson(raw);
+        if (json && json.follows === false) return { follows: false, why: String(json.why || '').slice(0, 120) };
+    } catch (error) {
+        console.warn('[Dungeon Master] follow check failed', error);
+    }
+    return { follows: true };
+}
+
+/** Walk up next to someone on the map (for Talk, Attack...). Resolves when the walk is done. */
+export async function approach(name, redraw = () => { }) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!cur) return false;
+    const { place } = cur;
+    const lead = place.state.positions[c.meta.persona.name];
+    const other = place.guards[name] ?? place.state.positions[name];
+    if (!lead || !other || other.floor !== lead.floor) return false;
+    if (Math.max(Math.abs(other.x - lead.x), Math.abs(other.y - lead.y)) <= 1) return true;
+    let best = null;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const p = findPath(place, lead.floor, lead, { x: other.x + dx, y: other.y + dy });
+        if (p && (!best || p.length < best.path.length)) best = { path: p, x: other.x + dx, y: other.y + dy };
+    }
+    if (!best) return false;
+    await walkTo({ x: best.x, y: best.y }, redraw);
+    return true;
 }
 
 // ---------- entering and leaving ----------
@@ -99,8 +184,10 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
     const c = campaign();
     const place = await loadPlace(key, c);
     if (!place) throw new Error(`No stored map for ${key}.`);
-    const names = partyOnMap(c);
     const st = place.state;
+    st.waiting ??= {};
+    // Companions who chose to stay don't come along through stairs or doors to another map.
+    const names = partyOnMap(c).filter((n, i) => i === 0 || !st.waiting[n]);
     const lead = at ?? (st.positions[names[0]] ?? place.start);
     st.positions[names[0]] = { floor: lead.floor, x: lead.x, y: lead.y };
     const taken = new Set([`${lead.x},${lead.y}`]);
@@ -272,11 +359,30 @@ export async function walkTo(target, redraw = () => { }) {
     const floorId = lead.floor;
     const door = doorAt(place, floorId, target.x, target.y);
     if (door && door.state === 'locked') { toastr.info(`That door is locked (${door.id}). Tell the DM how you deal with it.`, 'Map', { timeOut: 3500 }); return; }
-    const others = new Set(Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId).map(g => `${g.x},${g.y}`));
+    const others = new Set([
+        ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId).map(g => `${g.x},${g.y}`),
+        ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
+    ]);
     const path = findPath(place, floorId, lead, target, { blocked: others });
     if (!path?.length) { toastr.info(walkable(place, floorId, target.x, target.y) ? 'You can\'t get there from here (yet).' : 'You can\'t stand there.', 'Map', { timeOut: 2500 }); return; }
     walking = true;
     const trail = [{ x: lead.x, y: lead.y }];
+    // Leaving the room: each companion decides (local model) whether to come along. They follow
+    // while the answer is on its way, and stop where they are if it's no.
+    const fromRoom = roomAt(place, floorId, lead.x, lead.y), toRoom = roomAt(place, floorId, target.x, target.y);
+    let walkers = followers(c, place).filter(n => place.state.positions[n]?.floor === floorId);
+    if (fromRoom?.id !== toRoom?.id || !fromRoom) {
+        for (const n of walkers) {
+            const p = place.state.positions[n];
+            if (roomAt(place, floorId, p.x, p.y)?.id !== fromRoom?.id) continue;
+            decideFollow(c, n, fromRoom?.name, toRoom?.name).then(d => {
+                if (d.follows) return;
+                walkers = walkers.filter(w => w !== n);
+                setWaiting(n, true, { why: d.why });
+                redraw();
+            });
+        }
+    }
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
     const passive = passivePerception(c);
     let event = null, handoff = null;
@@ -296,7 +402,7 @@ export async function walkTo(target, redraw = () => { }) {
             if (d && d.state === 'closed') setDoorState(place, d, 'open');
             lead.x = x; lead.y = y;
             trail.push({ x, y });
-            names.slice(1).forEach((n, i) => {
+            walkers.forEach((n, i) => {
                 const spot = trail[trail.length - 2 - i] ?? trail[0];
                 if (place.state.positions[n]?.floor === floorId) Object.assign(place.state.positions[n], spot);
             });
@@ -309,7 +415,7 @@ export async function walkTo(target, redraw = () => { }) {
                 event = `${names[0]} stepped on a hidden ${trap.kind} (${trap.id}) in ${room?.name ?? 'a passage'}: DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}. Ask for the save (player_roll) and narrate it.`;
                 break;
             }
-            const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name));
+            const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);
             if (up) { handoff = { stairs: up }; break; }
@@ -318,8 +424,15 @@ export async function walkTo(target, redraw = () => { }) {
             if (d?.enter) { handoff = { building: d }; break; }
             if (d?.exit) { handoff = { exit: d }; break; }
         }
-        // Rooms entered on the way.
+        // Rooms entered on the way; a companion who stayed behind rejoins when you reach them.
         await noteRoom(c, place);
+        const here = roomAt(place, lead.floor, lead.x, lead.y);
+        for (const [n, w] of Object.entries(place.state.waiting || {})) {
+            const p = place.state.positions[n];
+            if (!w || !p || p.floor !== lead.floor) continue;
+            const near = Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 2;
+            if (near || (here && roomAt(place, p.floor, p.x, p.y)?.id === here.id)) await setWaiting(n, false);
+        }
         if (handoff?.stairs) {
             const s = handoff.stairs;
             await enterPlace(key, { at: { floor: s.floor, x: s.x, y: s.y } });
@@ -360,5 +473,5 @@ export function tickPlace(c = campaign()) {
     tickGuards(place);
     const now = visibleGuards(place, floorId, look(c, key, place));
     savePlace(key, c);
-    return now.filter(g => !before.has(g.name));
+    return now.filter(g => !before.has(g.name) && g.hostile !== false);
 }

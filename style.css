@@ -237,3 +237,16 @@
 .dm-build-title { font-weight: 600; margin-bottom: 4px; }
 .dm-build canvas { display: block; width: 100%; height: auto; border-radius: 8px; box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5); }
 .dm-build-caption { font-size: 0.85em; opacity: 0.8; margin-top: 4px; font-style: italic; min-height: 1.3em; }
+
+/* The tap menu for someone on the map */
+.dm-map-body { position: relative; }
+.dm-map-menu { position: absolute; z-index: 5; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: 250px; padding: 8px; border-radius: 10px; background: var(--SmartThemeBlurTintColor); border: 1px solid var(--SmartThemeBorderColor); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55); backdrop-filter: blur(var(--SmartThemeBlurStrength, 10px)); }
+.dm-map-menu-title { grid-column: 1 / -1; font-weight: 600; padding: 0 2px 4px; }
+.dm-map-menu-title small { display: block; font-weight: normal; opacity: 0.75; font-size: 0.8em; }
+.dm-map-menu .menu_button { margin: 0; padding: 8px 10px; display: flex; align-items: center; gap: 8px; width: auto; }
+.dm-map-chip.other { border-color: #8fb4d9; }
+@media (max-width: 700px) {
+    /* Phone: the menu is a bar of big buttons along the bottom of the map. */
+    .dm-map-menu { position: sticky; left: 0 !important; top: auto !important; bottom: 0; width: 100%; }
+    .dm-map-menu .menu_button { justify-content: center; padding: 12px 8px; }
+}
