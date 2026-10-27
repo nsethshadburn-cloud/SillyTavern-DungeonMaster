@@ -12,7 +12,8 @@ import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
 import { addNpcs, isAway } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
-import { trimToTokens, stripSpeakerPrefix, matchName, nameKey } from '../core/text.js';
+import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
+import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
 
 const KEY_NOTE = 'DM_NOTE';
 const LEGACY_KEYS = ['DM_DIRECTION', 'DM_STANDING'];
@@ -31,6 +32,37 @@ function sceneVars(c) {
         present: npcsHere.join(', '),
         situation: c.meta.standing || '',
         goal: c.meta.objective || '',
+    };
+}
+
+/** Party conditions by name (poisoned, prone...), for the scene card. */
+function partyConditions(w) {
+    return Object.fromEntries(Object.entries(w.party || {}).map(([n, p]) => [n, p?.conditions || []]));
+}
+
+/** A character's recent replies (the shown swipe), newest last. */
+function recentRepliesOf(name, max = 8) {
+    const out = [];
+    for (let i = ST.chat.length - 1; i >= 0 && out.length < max; i--) {
+        const m = ST.chat[i];
+        if (m && !m.is_user && !m.is_system && m.name === name && m.mes) out.unshift(m.mes);
+    }
+    return out;
+}
+
+/** What is true right now: the scene card, people met, the timeline (companions only), table rules. */
+function stateVars(c, speaker, { npc = false } = {}) {
+    const w = c.docs.world;
+    const avoid = speaker
+        ? repeatedPhrases(recentRepliesOf(speaker), { exclude: [speaker, c.meta.persona.name, ...c.meta.party.map(p => p.name)] })
+        : [];
+    return {
+        scenecard: renderSceneCard(w.sceneCard, partyConditions(w)),
+        people: renderPeople(c.docs.npcs, { exclude: speaker }),
+        // NPCs don't get the party's timeline: it can hold things only the party knows.
+        timeline: npc ? '' : renderTimeline(c.meta.timeline, { day: w.day, time: w.time }, { skipLatest: Boolean(c.meta.happened) }),
+        rules: (c.meta.tableRules || []).join(' '),
+        avoid: avoid.map(p => `"${p}"`).join(', '),
     };
 }
 
@@ -53,10 +85,13 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
             attitude: npc.attitude || '',
         })]
         : [renderTemplate(s.templates.scene, vars)];
+    const state = stateVars(c, speaker, { npc: Boolean(npc) });
+    parts.push(renderTemplate(s.templates.state, { ...vars, ...state }));
     if (c.meta.happened) parts.push(renderTemplate(s.templates.happened, { ...vars, happened: c.meta.happened }));
     const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
     if (knowledge) parts.push(renderTemplate(s.templates.knowledge, { ...vars, knowledge }));
     if (c.meta.pacing?.inCombat) parts.push(renderTemplate(s.templates.combat, vars));
+    if (state.avoid) parts.push(renderTemplate(s.templates.avoid, { ...vars, avoid: state.avoid }));
     if (brief) parts.push(renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }));
     return parts.filter(Boolean).join('\n');
 }
@@ -137,10 +172,38 @@ export function clearPrompts() {
  */
 export function hideNarrationFromBot(chat) {
     const c = campaign();
-    if (!c || c.meta.paused || !settings().hideNarration || !Array.isArray(chat)) return;
+    if (!c || c.meta.paused || !Array.isArray(chat)) return;
+    hideOtherScenesFromNpc(c, chat);
+    if (!settings().hideNarration) return;
     for (let i = chat.length - 1; i >= 0; i--) {
         if (HIDDEN_TYPES.has(dmType(chat[i]))) chat.splice(i, 1);
     }
+}
+
+/** Message flag set where a new scene starts (see markSceneStart). */
+export function isSceneStart(message) {
+    return Boolean(message?.extra?.dungeon_master?.sceneStart || message?.extra?.dm_scene_start);
+}
+
+/**
+ * NPCs only remember the scene they're in: everything before the latest scene start is dropped
+ * from an NPC's prompt, so a magistrate can't quote what was said in a cell. Their brief and the
+ * scene card tell them what they need. SillyTavern's copy keeps each message's `extra`.
+ */
+function hideOtherScenesFromNpc(c, chat) {
+    const speaker = ST.context().name2;
+    if (!speaker || c.meta.party.some(p => p.name === speaker) || !npcForName(speaker)) return;
+    const start = chat.findLastIndex(m => isSceneStart(m));
+    if (start > 0) chat.splice(0, start);
+}
+
+/** Mark a message as the start of a new scene (the arrival narration, or the latest message). */
+export async function markSceneStart(messageId = ST.chat.length - 1) {
+    const msg = ST.chat[messageId];
+    if (!msg) return;
+    msg.extra = msg.extra || {};
+    msg.extra.dm_scene_start = true;
+    await ST.saveChat();
 }
 
 // ---------------- Who can speak ----------------

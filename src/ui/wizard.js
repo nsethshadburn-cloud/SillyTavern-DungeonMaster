@@ -262,6 +262,7 @@ async function buildCampaign(form) {
             world.time = String(json.scene.time || 'morning');
         }
         meta.standing = String(json.standing_direction || '');
+        meta.tableRules = Array.isArray(json.table_rules) ? json.table_rules.map(String).filter(Boolean).slice(0, 8) : [];
         meta.objective = String(json.objective || '');
         if (json.knowledge && typeof json.knowledge === 'object') {
             for (const ch of partyChars) {
@@ -344,6 +345,7 @@ async function buildCampaign(form) {
             narration: json.opening,
             scene: { ...(json.scene || {}), changed: true },
             standing_direction: json.standing_direction,
+            scene_card: json.scene_card,
             directions: json.directions,
             new_npcs: json.new_npcs,
             tension: json.tension,

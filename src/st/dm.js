@@ -11,6 +11,7 @@ import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
+import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/state.js';
 import { modelLabel } from '../core/models.js';
 
 let stableCache = { key: '', text: '' };
@@ -89,7 +90,7 @@ export function transcript(maxMessages) {
         }
         if (m.is_user && /^\s*(nat(ural)?\s*)?\d{1,3}\b.{0,40}$/i.test(text)) continue;
         text = trimToTokens(text, 400);
-        if (type === 'ooc') out.unshift(`[DM, out of character] ${text}`);
+        if (type === 'ooc') out.unshift(m.is_user ? `${m.name} (PLAYER, out of character): ${text}` : `[DM, out of character] ${text}`);
         else if (m.is_user) out.unshift(`${m.name} (PLAYER): ${text}`);
         else out.unshift(`${m.name}: ${text}`);
         counted++;
@@ -125,7 +126,7 @@ const REASON_TEXT = {
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
     companion_action: 'A companion just attempted something risky in their own reply (below). Rule on it like a player\'s action: roll for them in npc_rolls against a DC or the right opponent (for example the player\'s passive Perception), narrate what actually happens, and brief them only if they need to react. If it truly needs no roll, just narrate the result.',
     solo: 'No companion or NPC is with the player right now, or nobody nearby would answer. Respond as the world: what they notice, what happens, who shows up. Keep it short if nothing much happens. Absent companions stay silent.',
-    checkin: 'The world moves on: a few turns have passed since it last acted. Advance it one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. Usually that happens through briefs to the NPCs and companions, with narration only if something new arrives, a place changes or time skips. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. Then set world_next.',
+    checkin: 'The world moves on: a few turns have passed since it last acted. Advance it one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. Usually that happens through briefs to the NPCs and companions, with narration only if something new arrives, a place changes or time skips. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. But if they just set something up ("I have a question…", "there\'s something I need to tell you"), the world waits: brief the listener only. Then set world_next (at least 2 after a setup).',
     opening: 'Open the campaign.',
     manual: 'The player asked the DM to step in.',
 };
@@ -147,7 +148,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const w = c.docs.world;
 
     const plotLayer = [
-        '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)',
+        '# TABLE RULES (settled by the player out of character; always true)', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none yet)',
+        '', '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)',
         '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
     ].join('\n');
 
@@ -172,6 +174,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
     else if (w.sceneMap?.map) sections.push(`Scene map "${w.sceneMap.title}" (columns a.., rows 1.. from the bottom; send "scene_map": "close" when they leave):`, renderMapText(w.sceneMap.map, w.sceneMap.positions || {}));
     sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
+    sections.push('SCENE CARD (what companions and NPCs are told is physically true right now; send "scene_card" changes to fix or update it):', renderSceneCard(w.sceneCard) || '(empty: send a full "scene_card" this turn)');
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
     sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90, plot: c.docs.plot, worldEvery: Number(s.checkinEvery) || 5 }));
@@ -285,6 +288,8 @@ export async function resyncWithChat() {
         standing_direction: c.meta.standing,
         objective: c.meta.objective,
         knowledge: c.meta.knowledge ?? {},
+        scene_card: w.sceneCard ?? {},
+        timeline: c.meta.timeline ?? [],
         npcs_met: (c.docs.npcs || []).map(n => `${n.name} (${n.attitude}${n.lastSeen ? `, last seen: ${n.lastSeen}` : ''})`),
         pending_roll: c.meta.pendingRoll ? `${c.meta.pendingRoll.skill}: ${c.meta.pendingRoll.reason || ''}` : 'none',
     };
@@ -334,6 +339,11 @@ function applyResync(c, j) {
     if (typeof j.story === 'string') c.docs.story = j.story;
     if (typeof j.standing_direction === 'string' && j.standing_direction) c.meta.standing = j.standing_direction;
     if (typeof j.objective === 'string' && j.objective) c.meta.objective = j.objective;
+    const card = normalizeSceneCard(j.scene_card);
+    if (card) w.sceneCard = applySceneCard(null, card);
+    if (Array.isArray(j.timeline)) {
+        c.meta.timeline = j.timeline.filter(e => e && e.text).slice(-8).map(e => ({ day: Number(e.day) || 1, time: String(e.time || ''), place: String(e.place || ''), text: String(e.text) }));
+    }
     if (j.knowledge && typeof j.knowledge === 'object') {
         c.meta.knowledge ??= {};
         for (const p of c.meta.party) {

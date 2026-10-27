@@ -181,8 +181,10 @@ function panelHtml() {
       </div>
       ${templateEditor('scene', 'Scene note (every reply in a D&D chat)', 'Fill-ins: {{player}} {{party}} {{location}} {{present}} {{situation}} {{goal}} and SillyTavern macros like {{char}}. A line whose fill-in is empty is left out.')}
       ${templateEditor('brief', 'DM brief (only when Claude handles the turn)', 'Fill-ins: {{brief}} (what Claude says the character needs to know) and {{length}}.')}
+      ${templateEditor('state', 'What is true right now (scene card, people, timeline, table rules)', 'Fill-ins: {{scenecard}} (place, where everyone is and their hands/restraints, objects), {{people}} (people met, with roles), {{timeline}} (earlier events with when they happened; companions only), {{rules}} (table rules). Kept up to date by the DM.')}
       ${templateEditor('happened', 'Just happened (what the last DM turn changed)', 'Fill-in: {{happened}}. Stops companions from redoing actions the DM already resolved.')}
       ${templateEditor('knowledge', 'What each companion knows (written by the DM at the start, updated now and then)', 'Fill-in: {{knowledge}}. Added to that companion\'s note on every reply.')}
+      ${templateEditor('avoid', 'Repeated phrases (when a character keeps reusing the same words)', 'Fill-in: {{avoid}}. Found automatically in that character\'s last 8 replies.')}
       ${templateEditor('combat', 'Combat note (added during fights)', '')}
       ${templateEditor('npc', 'NPC note (side characters the bot voices)', 'Fill-ins: {{npc}} {{description}} {{pronouns}} {{attitude}} {{player}} {{party}}.')}
       <div class="dm-template">

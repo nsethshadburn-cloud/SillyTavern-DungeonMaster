@@ -56,6 +56,15 @@ export async function postOoc(text) {
     return push(baseMessage(DM_NAME, `*(OOC)* ${text.trim()}`, { avatar: DM_AVATAR, hidden: true, type: 'ooc' }), { emitReceived: false });
 }
 
+/** The player's own out-of-character question (asked with /dm or the DM Screen), so it shows in the chat. */
+export async function postPlayerOoc(name, text) {
+    if (!text?.trim()) return null;
+    const message = baseMessage(name, `*(OOC)* ${text.trim()}`, { hidden: true, type: 'ooc' });
+    message.is_user = true;
+    delete message.force_avatar;
+    return push(message, { emitReceived: false });
+}
+
 /** A line spoken by an NPC (voiced by the local model). */
 export async function postNpc(name, text, npc = null) {
     if (!text?.trim()) return null;

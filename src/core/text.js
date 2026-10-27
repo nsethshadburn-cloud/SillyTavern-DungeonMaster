@@ -158,3 +158,50 @@ export function matchName(name, candidates) {
     hit = candidates.find(c => nameKey(c).includes(key) || key.includes(nameKey(c)));
     return hit ?? null;
 }
+
+const STOPWORDS = new Set(('a an and or but so if then than the to of in on at for with from by as into onto up down out over about '
+    + 'is are was were be been am it its this that these those there here i you he she we they me him her us them my your his our their '
+    + 'not no just do does did don\'t can can\'t will would could should have has had i\'m it\'s that\'s what who how why when where all too very '
+    + 'one more some any something back off again still').split(/\s+/));
+
+function phraseTokens(text) {
+    return String(text ?? '').toLowerCase().replace(/[\u2018\u2019]/g, '\'').replace(/[*_"\u201c\u201d]/g, ' ').match(/[a-z']+/g) || [];
+}
+
+/**
+ * Phrases a character keeps reusing across their recent replies (tics like "presses her back
+ * against the wall" or "the same"), so their note can ask for something different.
+ * Long phrases (4-7 words) count when they show up in 2+ replies; short ones (2-3 words, at least
+ * one real word) in 3+ replies. Phrases with an excluded word (names) are skipped.
+ * @param {string[]} texts the character's recent replies
+ * @param {{exclude?: string[], max?: number}} [o]
+ */
+export function repeatedPhrases(texts, { exclude = [], max = 5 } = {}) {
+    const banned = new Set(exclude.flatMap(n => phraseTokens(n)));
+    const docs = texts.map(phraseTokens);
+    const kept = [];
+    const count = (n) => {
+        const seen = new Map();
+        for (const words of docs) {
+            const here = new Set();
+            for (let i = 0; i + n <= words.length; i++) {
+                const gram = words.slice(i, i + n);
+                if (gram.some(w => banned.has(w)) || gram.every(w => STOPWORDS.has(w))) continue;
+                here.add(gram.join(' '));
+            }
+            for (const g of here) seen.set(g, (seen.get(g) || 0) + 1);
+        }
+        return seen;
+    };
+    for (let n = 7; n >= 2; n--) {
+        const need = n >= 4 ? 2 : 3;
+        for (const [gram, hits] of count(n)) {
+            if (hits < need || kept.some(k => k.includes(gram))) continue;
+            // Short phrases must not start or end on a filler word ("the same" is fine, "same the" isn't a phrase anyway).
+            const words = gram.split(' ');
+            if (n < 4 && (STOPWORDS.has(words[words.length - 1]))) continue;
+            kept.push(gram);
+        }
+    }
+    return kept.slice(0, max);
+}

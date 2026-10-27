@@ -10,8 +10,8 @@ import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
 import { modelLabel } from '../core/models.js';
 import { rotateIdleNpcs, removeNpcsFromGroup, touchNpc } from './npccards.js';
 import { withDmThinking } from '../ui/thinking.js';
-import { makeSpeak, refreshStandingPrompt, speakerCandidates } from './actors.js';
-import { postNarration, postOoc, postDiceCard, postNote, dmType } from './messages.js';
+import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } from './actors.js';
+import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing } from '../core/grid.js';
@@ -24,6 +24,7 @@ import { roll, judge, formatModifier, random01 } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway } from '../core/world.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens } from '../core/text.js';
+import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 
 let running = false;
 let rerunRequested = false;
@@ -502,6 +503,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
 
     // Scene.
+    const prevLocation = world.location;
     if (t.scene) {
         if (t.scene.location) world.location = t.scene.location;
         if (t.scene.setting) world.setting = guessSetting(world.location, t.scene.setting);
@@ -510,6 +512,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             world.time = t.scene.time;
         }
     }
+    // A new place: the old scene card no longer applies. A new scene: NPCs forget the last one.
+    const newPlace = Boolean(t.scene?.location && prevLocation && nameKey(t.scene.location) !== nameKey(prevLocation));
+    const newScene = newPlace || Boolean(t.scene?.changed);
+    world.sceneCard = applySceneCard(world.sceneCard, t.scene_card, { newPlace, partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
     // Who split off from the player, and who is back.
     applyPresence(world, meta.party.map(p => p.name), t.party_away, t.party_back);
     // NPCs who get briefs are "here".
@@ -617,8 +623,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             status.note('No random event: nothing fit the moment');
         }
     }
-    // What just visibly changed: companions see it until the DM's next turn, so they don't redo it.
+    // What just visibly changed: companions see it until the DM's next turn, so they don't redo it,
+    // and then in their timeline with when and where it happened.
     meta.happened = t.happened || '';
+    if (t.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: t.happened });
+    if (t.table_rules_add.length || t.table_rules_remove.length) {
+        meta.tableRules = applyTableRules(meta.tableRules, t.table_rules_add, t.table_rules_remove);
+        status.note('Table rules updated');
+    }
     if (t.standing_direction) meta.standing = t.standing_direction;
     if (t.objective) meta.objective = t.objective;
     // What each companion knows (rare, full-text updates).
@@ -640,8 +652,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // What the player sees, in order.
     if (t.ooc) await postOoc(t.ooc);
     if (t.narration) {
-        await postNarration(t.narration);
+        const id = await postNarration(t.narration);
+        if (newScene && id !== null) await markSceneStart(id);
         voiceLine({ kind: 'dm', text: t.narration });
+    } else if (newScene) {
+        await markSceneStart(ST.chat.findLastIndex(m => !m.is_system));
     }
     if (initiativeCard) await postDiceCard(initiativeCard, { combat: true });
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
@@ -757,6 +772,8 @@ export async function askDmNow(text = '') {
         toastr.info('No Dungeon Master campaign in this chat.', 'Dungeon Master');
         return;
     }
+    // Show the player's question in the chat too, not only the DM's answer.
+    if (text) await postPlayerOoc(c.meta.persona.name, text);
     await runTurn({ force: text ? 'ooc' : 'manual', oocText: text });
 }
 

@@ -3,7 +3,8 @@
 // Pure module (no SillyTavern imports).
 //
 // Placeholders the plugin fills in: {{player}} {{party}} {{location}} {{present}} {{situation}}
-// {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}} {{knowledge}}.
+// {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}} {{knowledge}}
+// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}}.
 // SillyTavern's own macros ({{char}}, {{user}}, ...) also work. A line containing a plugin
 // placeholder that's empty is dropped, so empty fields never leave half-sentences behind.
 
@@ -23,11 +24,19 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{brief}}',
         'Length: {{length}}.]',
     ].join('\n'),
+    state: [
+        '[What is true right now. Keep every detail consistent with it (where everyone is, hands, restraints, light, objects); never contradict it.',
+        '{{scenecard}}',
+        'People {{char}} knows of: {{people}}',
+        'Earlier (oldest first; keep these times straight): {{timeline}}',
+        'Always true in this story: {{rules}}]',
+    ].join('\n'),
     happened: '[Just happened, already done (react to it; never redo it): {{happened}}]',
     knowledge: [
         '[What {{char}} knows about the story so far. Background for this reply; don\'t recite it.',
         '{{knowledge}}]',
     ].join('\n'),
+    avoid: '[{{char}} has been repeating these lately. Use different words and gestures this time: {{avoid}}]',
     combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight.]',
     npc: [
         '[You play only {{npc}}, a side character in this story.',
@@ -50,7 +59,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: '4-6 sentences at most',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**
@@ -69,7 +78,11 @@ export function renderTemplate(template, vars) {
             if (/\]\s*$/.test(line)) lostClosingBracket = true;
             continue;
         }
-        out.push(line.replace(KEY_RE, (_, k) => String(vars[k] ?? '').trim()));
+        // A list ("- ..." lines) after a label starts on its own line.
+        out.push(line.replace(KEY_RE, (_, k, offset) => {
+            const v = String(vars[k] ?? '').trim();
+            return line.slice(0, offset).trim() && (v.includes('\n') || v.startsWith('- ')) ? `\n${v}` : v;
+        }).replace(/[ \t]+\n/g, '\n'));
     }
     let text = out.join('\n').trim();
     if (lostClosingBracket && text.startsWith('[') && !text.endsWith(']')) text += ']';

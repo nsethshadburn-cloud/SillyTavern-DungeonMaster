@@ -324,6 +324,19 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.11 (state, from "The Lantern and the Glass")
+Companions and NPCs never see the DM's narration, and all they had of the scene was the 35-word standing line plus the last "happened" sentence. So they made up the rest: cuffs moved from behind the back to the lap, a door shut twice, a brass lamp got "glass", the meat pie moved to "last week".
+- Scene card (`world.sceneCard`, `src/core/state.js`): the place and its light, where each person is and their body (restraints and how, posture, what they hold), and the objects that matter. The DM sends `scene_card` changes in the same turn something physical changes ("" removes an entry) and a full card on arrival somewhere new. Moving to a new location drops the old place, objects and NPC entries; the party's own entries carry over. The DM sees the card in WHERE THINGS STAND and fixes anything stale.
+- Timeline (`meta.timeline`): each "happened" line is kept with day, time and place (last 8) and shown to companions with relative labels ("Last night, vault corridor: ..."). NPCs don't get it, because it can hold things only the party knows. Knowledge texts are written with plain time anchors.
+- People met, with a short `role` per NPC (new in `new_npcs`, falls back to the description's first sentence), so "Captain Dray" and "the commander" are one person.
+- Table rules (`meta.tableRules`): things the player settled out of character ("Amber and Judy always stay together"). The opening derives 0-5 from the premise; the DM adds or removes them with `table_rules_add` / `table_rules_remove`. They're in the DM's cached plot layer and in every companion and NPC note.
+- All of the above go in one new editable template, "state" (`{{scenecard}} {{people}} {{timeline}} {{rules}}`). A list after a label starts on its own line.
+- NPCs only remember their current scene: the first message of a new scene is flagged (`extra.dm_scene_start`), and an NPC's prompt drops everything before the latest flag. A magistrate can't quote what was said in a cell.
+- Repeated phrases: the note lists phrases a character used in 2+ (4-7 words) or 3+ (2-3 words) of their last 8 replies, names excluded ("avoid" template). Catches "presses her back against the wall" and "the same".
+- Out-of-character questions asked with /dm or the DM Screen are posted in the chat (hidden from the bot) before the DM's answer; the DM transcript labels them as the player's.
+- Dice: sheets have a `tools` map (Thieves' Tools with expertise), matched loosely ("Thieves Tools"). For older sheets the DM can set `player_roll.bonus` from the sheet; a number the sheet's skills or tools have always wins.
+- DM rules: never quote anyone in narration who speaks this turn; briefs say what narration just did that the speaker must not redo; NPC orders worded so they can't be misread and never against the table rules; never interrupt between a setup and its payoff ("I have a question…").
+
 ### v0.10.1 (code sweep)
 - Saves: a campaign file save queued just before switching chats is now written (it was dropped), and queued saves are flushed before the next chat's files load.
 - Voices: stopping playback (swipe, chat change) could leave the old play loop running beside the new one, so two lines played at once. Only the newest loop runs now.

@@ -15,6 +15,7 @@ export function createWorldState() {
         flags: {},
         combat: null,     // {round, order: [{name, init}], enemies: {name: {hp, hp_max, ac}}}
         away: {},         // companion name -> where they are (split off from the player)
+        sceneCard: null,  // {place, people: {name: body/position}, objects: {name: look}} (see state.js)
     };
 }
 
@@ -155,6 +156,7 @@ export function addNpcs(roster, newNpcs, scene = '') {
         const existing = roster.find(n => nameKey(n.name) === nameKey(npc.name));
         if (existing) {
             if (npc.description) existing.description = npc.description;
+            if (npc.role) existing.role = npc.role;
             if (npc.attitude) existing.attitude = npc.attitude;
             if (npc.stats) existing.stats = npc.stats;
             existing.lastSeen = scene || existing.lastSeen;
@@ -163,6 +165,7 @@ export function addNpcs(roster, newNpcs, scene = '') {
         const entry = {
             name: npc.name,
             description: npc.description || '',
+            role: npc.role || '',
             gender: npc.gender || 'any',
             attitude: npc.attitude || 'neutral',
             stats: npc.stats || '',
@@ -218,10 +221,15 @@ export function lookupModifier(stats, req) {
         if (ab && Number.isFinite(Number(stats.saves?.[ab]))) return { mod: Number(stats.saves[ab]), source: `${ab} save` };
         if (ab) return { mod: abilityModifier(stats.abilities?.[ab]), source: `${ab} save` };
     }
-    // Skills (case-insensitive key match).
-    const skills = stats.skills || {};
-    const skillKey = Object.keys(skills).find(k => k.toLowerCase() === skill);
-    if (skillKey && Number.isFinite(Number(skills[skillKey]))) return { mod: Number(skills[skillKey]), source: skillKey };
+    // Skills, then tools (loose key match: "Thieves Tools" = "Thieves' Tools").
+    const loose = s => String(s).toLowerCase().replace(/[^a-z]+/g, '');
+    for (const group of [stats.skills, stats.tools]) {
+        const list = group && typeof group === 'object' ? group : {};
+        const key = Object.keys(list).find(k => loose(k) === loose(skill));
+        if (key && Number.isFinite(Number(list[key]))) return { mod: Number(list[key]), source: key };
+    }
+    // The DM read the bonus off the sheet (a tool or feature the stats have no number for).
+    if (req.bonus !== null && req.bonus !== undefined && Number.isFinite(Number(req.bonus))) return { mod: Number(req.bonus), source: 'sheet' };
     // Unlisted skill: fall back to its ability.
     const ab = abilityKey || SKILL_ABILITY[skill] || ABILITY_ALIASES[skill];
     if (ab && stats.abilities?.[ab] !== undefined) return { mod: abilityModifier(stats.abilities[ab]), source: ab };
