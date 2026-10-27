@@ -502,6 +502,26 @@ function outcomeText(r, judged) {
 }
 
 /** Apply everything the DM decided, in a sensible order. */
+/**
+ * A fight the DM didn't start: someone rolled an attack. The enemies are whoever attacks the party
+ * and whoever the party attacks, with their stats from the NPC list when the DM gave them.
+ */
+export function combatFromAttacks(c, t) {
+    const partyNames = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+    const inParty = n => Boolean(matchName(String(n || ''), partyNames));
+    const attacks = (t.npc_rolls || []).filter(r => r.kind === 'attack');
+    if (!attacks.length && t.player_roll?.kind !== 'attack') return null;
+    const foes = new Map();
+    const add = n => { const name = String(n || '').trim(); if (name && !inParty(name) && !foes.has(nameKey(name))) foes.set(nameKey(name), name); };
+    for (const r of attacks) inParty(r.who) ? add(r.target) : add(r.who);
+    const enemies = [...foes.values()].map(name => {
+        const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
+        const stats = String(npc?.stats || '');
+        return { name: npc?.name ?? name, ac: Number(/\bAC\s*(\d+)/i.exec(stats)?.[1]) || 12, hp: Number(/\bHP\s*(\d+)/i.exec(stats)?.[1]) || 10, dex: 0, sprite: npc?.sprite || '' };
+    });
+    return { enemies, map: null };
+}
+
 export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [] } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
@@ -542,6 +562,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name));
     let initiativeCard = '';
     let mapChanged = false;
+    // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.
+    if (!world.combat && !t.start_combat && !t.end_combat) {
+        const auto = combatFromAttacks(c, t);
+        if (auto) {
+            t.start_combat = auto;
+            status.note(`Fight started (an attack was rolled)${auto.enemies.length ? `: ${auto.enemies.map(e => e.name).join(', ')}` : ''}`);
+        }
+    }
     if (t.start_combat && !world.combat) {
         const companions = meta.party.map(p => ({ name: p.name, stats: statsForName(p.name, meta) }));
         const combat = startCombat(world, t.start_combat, companions);

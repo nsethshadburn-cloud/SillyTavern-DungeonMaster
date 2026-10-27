@@ -17,6 +17,7 @@ export function createWorldState() {
         away: {},         // companion name -> where they are (split off from the player)
         sceneCard: null,  // {place, people: {name: body/position}, objects: {name: look}} (see state.js)
         place: null,      // {key, floor} while the party is inside a mapped place (see st/atlas.js)
+        others: {},       // name -> {conditions: []} for NPCs outside a fight (a tied-up prisoner)
     };
 }
 
@@ -79,7 +80,7 @@ export function applyStateChanges(world, changes, knownNames = []) {
         const map = changes[key];
         if (!map || typeof map !== 'object') continue;
         for (const [who, conds] of Object.entries(map)) {
-            const target = resolveCreature(world, who, names);
+            const target = resolveCreature(world, who, names) ?? otherCreature(world, who);
             if (!target) continue;
             const list = (Array.isArray(conds) ? conds : [conds]).map(String).filter(Boolean);
             target.ref.conditions = target.ref.conditions || [];
@@ -134,6 +135,22 @@ function resolveCreature(world, who, names) {
     const enemyName = matchName(who, Object.keys(enemies));
     if (enemyName) return { name: enemyName, ref: enemies[enemyName], isEnemy: true };
     return null;
+}
+
+/** Anyone else (an NPC outside a fight): a place to keep their conditions. */
+function otherCreature(world, who) {
+    const name = String(who || '').trim().slice(0, 60);
+    if (!name) return null;
+    world.others ??= {};
+    const key = matchName(name, Object.keys(world.others)) ?? name;
+    world.others[key] ??= { conditions: [] };
+    return { name: key, ref: world.others[key], isEnemy: false };
+}
+
+/** Someone's conditions, whoever they are (party, enemy, or anyone else). */
+export function conditionsOf(world, name) {
+    const pick = obj => obj?.[matchName(name, Object.keys(obj || {})) ?? '']?.conditions;
+    return pick(world.party) ?? pick(world.combat?.enemies) ?? pick(world.others) ?? [];
 }
 
 /** Flags used by event prerequisites. */

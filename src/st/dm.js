@@ -174,6 +174,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push('# WHERE THINGS STAND');
     sections.push(`Location: ${w.location || 'unknown'} (${w.setting || 'any'}), time: ${w.time || '?'}, day ${w.day ?? 1}.`);
     sections.push(`Party HP: ${Object.entries(w.party).map(([n, p]) => `${n} ${p.hp}/${p.hp_max}${p.conditions?.length ? ` [${p.conditions.join(', ')}]` : ''}`).join('; ') || 'unknown'}.`);
+    const held = Object.entries(w.others || {}).filter(([, o]) => o.conditions?.length);
+    if (held.length) sections.push(`Others' conditions: ${held.map(([n, o]) => `${n} [${o.conditions.join(', ')}]`).join('; ')}.`);
     sections.push(`Gold: ${w.gold ?? 0}. Items: ${w.items?.length ? w.items.join(', ') : 'none noted'}.`);
     if (Object.keys(w.flags || {}).length) sections.push(`Flags: ${JSON.stringify(w.flags)}`);
     sections.push(combatSummary(w));

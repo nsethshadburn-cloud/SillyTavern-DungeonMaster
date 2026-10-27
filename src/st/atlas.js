@@ -13,7 +13,8 @@ import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
-import { lookupModifier, isAway, applyPresence } from '../core/world.js';
+import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
+import { restraintOf, lockedLine } from '../core/restraints.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
 import { trimToTokens, extractJson } from '../core/text.js';
@@ -103,9 +104,22 @@ export function partyOnMap(c = campaign()) {
     return [c.meta.persona.name, ...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n) || waiting[n])];
 }
 
-/** Companions who walk along with the player right now (not the ones who chose to stay). */
+/** Why someone can't move themselves right now (tied up, caged, held...), or null. Others can still move them. */
+export function lockedReason(c, name) {
+    const r = restraintOf(conditionsOf(c.docs.world, name));
+    return r.locked ? lockedLine(name, r) : null;
+}
+
+/** Say why the player can't move, if they can't. */
+function stuck(c) {
+    const why = lockedReason(c, c.meta.persona.name);
+    if (why) toastr.info(why, 'Map', { timeOut: 4000 });
+    return Boolean(why);
+}
+
+/** Companions who walk along with the player right now (not the ones who chose to stay, or who can't move). */
 function followers(c, place) {
-    return partyOnMap(c).slice(1).filter(n => !place.state.waiting?.[n]);
+    return partyOnMap(c).slice(1).filter(n => !place.state.waiting?.[n] && !lockedReason(c, n));
 }
 
 /** A companion stays where they are (their choice, or the player asked them to wait). */
@@ -182,6 +196,7 @@ export async function approachSpot(spot, redraw = () => { }) {
     const w = spot.w || 1, h = spot.h || 1;
     const near = (x, y) => x >= spot.x - 1 && x <= spot.x + w && y >= spot.y - 1 && y <= spot.y + h;
     if (near(lead.x, lead.y)) return true;
+    if (stuck(c)) return false;
     let best = null;
     for (let x = spot.x - 1; x <= spot.x + w; x++) for (let y = spot.y - 1; y <= spot.y + h; y++) {
         if (x >= spot.x && x < spot.x + w && y >= spot.y && y < spot.y + h) continue;
@@ -200,6 +215,8 @@ export function pushProp(id, dir) {
     const cur = currentPlace(c);
     if (!cur) return { ok: false, why: 'no map' };
     const { key, place } = cur;
+    const held = lockedReason(c, c.meta.persona.name);
+    if (held) return { ok: false, why: held };
     const people = [...Object.values(place.state.positions), ...Object.values(place.guards).filter(g => g.state !== 'gone')];
     const r = moveProp(place, id, dir, { people });
     if (r.ok) { savePlace(key, c); look(c, key, place); }
@@ -214,6 +231,7 @@ export async function climbOut(winId) {
     const { key, place } = cur;
     const win = place.windows?.[winId];
     if (!win || win.state !== 'broken') return;
+    if (stuck(c)) return;
     if (place.parent) {
         const town = await loadPlace(place.parent.key, c);
         const door = town?.doors[place.parent.door];
@@ -249,6 +267,7 @@ export async function approach(name, redraw = () => { }) {
     const other = place.guards[name] ?? place.state.positions[name];
     if (!lead || !other || other.floor !== lead.floor) return false;
     if (Math.max(Math.abs(other.x - lead.x), Math.abs(other.y - lead.y)) <= 1) return true;
+    if (stuck(c)) return false;
     let best = null;
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
         const p = findPath(place, lead.floor, lead, { x: other.x + dx, y: other.y + dy });
@@ -441,6 +460,7 @@ export async function walkTo(target, redraw = () => { }) {
     const names = partyOnMap(c);
     const lead = place.state.positions[names[0]];
     if (!lead) return;
+    if (stuck(c)) return;
     const { isRunning } = await import('./orchestrator.js');
     if (isRunning()) { toastr.info('The DM is busy. Move when the turn is done.', 'Map', { timeOut: 2500 }); return; }
     const floorId = lead.floor;

@@ -10,7 +10,9 @@ import { campaign } from '../st/campaign.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction } from '../st/atlas.js';
+import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason } from '../st/atlas.js';
+import { conditionsOf } from '../core/world.js';
+import { restraintOf, escapeOptions } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
 import { settings } from '../st/settings.js';
@@ -34,6 +36,7 @@ function playerSpeed(c) {
 function reachFor(c, b) {
     const me = parseCoord(b.positions[c.meta.persona.name], b.map);
     if (!me) return null;
+    if (lockedReason(c, c.meta.persona.name)) return new Set();
     const blocked = new Set(Object.entries(b.positions).filter(([n]) => n !== c.meta.persona.name).map(([, cd]) => parseCoord(cd, b.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
     return reachable(b.map, me, playerSpeed(c), blocked);
 }
@@ -188,9 +191,9 @@ function renderMap(center = false) {
   <div class="dm-map-hover dm-muted">&nbsp;</div>
   <div class="dm-map-roster">${roster}</div>
   ${exploring
-        ? '<div class="dm-map-actions"><span class="dm-map-pending">Tap a square to walk there, or tap someone for options. Doors open as you go; locked ones need a key or a plan.</span></div>'
+        ? `<div class="dm-map-actions"><span class="dm-map-pending">${lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : 'Tap a square to walk there, or tap someone for options. Doors open as you go; locked ones need a key or a plan.'}</span></div>`
         : `<div class="dm-map-actions">
-    <span class="dm-map-pending">${pending ? escapeHtml(pending) : b.kind === 'combat' ? `Tap a lit square to move (up to ${playerSpeed(c)} squares, ${playerSpeed(c) * 5} ft), or an enemy to target.` : 'Tap a square to move, or an enemy to target.'}</span>
+    <span class="dm-map-pending">${pending ? escapeHtml(pending) : lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : b.kind === 'combat' ? `Your move this round: tap a lit square (up to ${playerSpeed(c)} squares, ${playerSpeed(c) * 5} ft), or an enemy to target.` : 'Tap a square to move, or an enemy to target.'}</span>
     <div class="menu_button" data-act="add" ${pending ? '' : 'disabled'}>Add to message</div>
     <div class="menu_button" data-act="clear">Clear</div>
   </div>`}
@@ -215,6 +218,7 @@ function renderMap(center = false) {
         closeMenu();
         const sq = squareFromEvent(ev, canvas, map);
         if (!sq) return;
+        if (whoAt(b.positions, map, sq) === c.meta.persona.name && openSelfMenu(ev, c)) return;
         const who = exploring ? whoAt(b.positions, map, sq) : null;
         if (who && who !== c.meta.persona.name) {
             openMenu(ev, c, b, who, view, canvas);
@@ -381,6 +385,7 @@ function drawTokens(ctx, c, b, tile, now, restore) {
         const cx = px + tile / 2, cy = py + tile / 2;
         const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : '#8fb4d9';
         const hp = hpOf(c, name);
+        const held = restraintOf(conditionsOf(c.docs.world, name));
         if (figures) {
             // A colored ring on the floor, the figure standing on it.
             ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -393,7 +398,8 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             if (hp && hp.hp_max && hp.hp <= 0) anim = 'down';
             else if (m.anim && now < m.animUntil) { anim = m.anim; elapsed = now - m.animStart; }
             else if (m.walkUntil && now < m.walkUntil) anim = 'walk';
-            drawFigure(ctx, figureFor(name), px, py - tile * 0.06, tile, { anim, elapsed, flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, red: anim === 'hurt' && Math.floor(elapsed / 120) % 2 === 0 });
+            const look = figureFor(name);
+            drawFigure(ctx, held.bound && !look.beast ? { ...look, bound: held.bound } : look, px, py - tile * 0.06, tile, { anim, elapsed, flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, red: anim === 'hurt' && Math.floor(elapsed / 120) % 2 === 0 });
         } else {
             const rad = tile * 0.38;
             ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -416,6 +422,7 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             ctx.lineWidth = selection.target === name ? 5 : 3;
             ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke();
         }
+        if (held.caged) drawCage(ctx, px, py, tile);
         if (hp?.hp_max) {
             const pct = Math.max(0, Math.min(1, hp.hp / hp.hp_max));
             ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(px + 8, py + tile - 7, tile - 16, 5);
@@ -423,6 +430,24 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             ctx.fillRect(px + 8, py + tile - 7, (tile - 16) * pct, 5);
         }
     }
+}
+
+/** Iron bars around whoever is caged (drawn over the figure, inside their square). */
+function drawCage(ctx, x, y, s) {
+    const bar = Math.max(2, Math.round(s * 0.04));
+    ctx.fillStyle = '#23232a';
+    ctx.fillRect(x + s * 0.06, y + s * 0.03, s * 0.88, bar + 2);
+    ctx.fillRect(x + s * 0.06, y + s * 0.93 - bar, s * 0.88, bar + 2);
+    for (let i = 0; i <= 5; i++) {
+        const bx = Math.round(x + s * 0.08 + i * (s * 0.84 - bar) / 5);
+        ctx.fillStyle = '#3c3c46';
+        ctx.fillRect(bx, y + s * 0.04, bar, s * 0.9);
+        ctx.fillStyle = 'rgba(200, 205, 220, 0.45)';
+        ctx.fillRect(bx, y + s * 0.04, 1, s * 0.9);
+    }
+    // The lock on the door.
+    ctx.fillStyle = '#c9a227';
+    ctx.fillRect(x + s * 0.47, y + s * 0.5, Math.max(3, s * 0.08), Math.max(4, s * 0.1));
 }
 
 /** The animation loop: only while the map is open, shown, and has figures to animate. */
@@ -467,7 +492,7 @@ function describeSquare(b, sq) {
     return [toCoord(sq.x, sq.y), room, who, doorText || prop, doorText ? '' : ground].filter(Boolean).join(' · ');
 }
 
-function onSquare(sq, positions) {
+async function onSquare(sq, positions) {
     const c = campaign();
     const map = board(c).map;
     const who = whoAt(positions, map, sq);
@@ -476,6 +501,10 @@ function onSquare(sq, positions) {
         if (who === c.meta.persona.name) return;
         selection.target = selection.target === who ? '' : who;
     } else {
+        const { isRunning } = await import('../st/orchestrator.js');
+        if (isRunning()) { toastr.info('The DM is working out the round. Pick your move when it\'s your turn again.', 'Map', { timeOut: 3000 }); return; }
+        const held = lockedReason(c, c.meta.persona.name);
+        if (held) { toastr.info(held, 'Map', { timeOut: 4000 }); return; }
         if (!isWalkable(map, sq.x, sq.y)) {
             toastr.info(`${coord} is ${squareName(map, sq.x, sq.y) || TERRAIN[terrainAt(map, sq.x, sq.y)]?.name || 'blocked'}: you can't stand there.`, 'Map', { timeOut: 2500 });
             return;
@@ -544,24 +573,17 @@ function openMenu(ev, c, b, who, view, canvas) {
             ['Sneak past', 'fa-user-ninja', async () => { sendAsPlayer(`*${player} tries to sneak past ${who} without being noticed.*`); }],
             ['Steal', 'fa-sack-dollar', async () => { await approach(who, redraw); sendAsPlayer(`*${player} tries to pick ${who}'s pocket.*`); done(); }],
         ];
-    const menu = document.createElement('div');
-    menu.className = 'dm-map-menu';
-    menu.innerHTML = `<div class="dm-map-menu-title">${escapeHtml(who)}${person?.description ? `<small>${escapeHtml(person.description)}</small>` : ''}</div>${actions.map(([label, icon], i) => `<div class="menu_button" data-i="${i}"><i class="fa-solid ${icon}"></i> ${escapeHtml(label)}</div>`).join('')}`;
-    const body = panel.querySelector('.dm-map-body');
-    body.appendChild(menu);
-    // Next to the tap on a big screen; a bar along the bottom on a phone (see style.css).
-    const box = body.getBoundingClientRect();
-    // Keep it inside the visible part of the panel: below the tap if it fits, otherwise above it.
-    const tapX = ev.clientX - box.left, tapY = ev.clientY - box.top;
-    const below = tapY + 8 + menu.offsetHeight <= body.clientHeight;
-    menu.style.left = `${Math.max(8, Math.min(tapX + 8, box.width - menu.offsetWidth - 8))}px`;
-    menu.style.top = `${body.scrollTop + Math.max(8, below ? tapY + 8 : tapY - menu.offsetHeight - 8)}px`;
-    menu.addEventListener('click', async e => {
-        const i = Number(e.target.closest('[data-i]')?.dataset.i);
-        if (!Number.isInteger(i)) return;
-        closeMenu();
-        try { await actions[i][2](); } catch (error) { toastr.error(String(error?.message || error), 'Map'); }
-    });
+    showMenu(ev, who, person?.description || '', actions);
+}
+
+/** Tapping yourself while tied up, cuffed or caged: ways to try to get free. False if there's nothing to offer. */
+function openSelfMenu(ev, c) {
+    const me = c.meta.persona.name;
+    const r = restraintOf(conditionsOf(c.docs.world, me));
+    const options = escapeOptions(me, r);
+    if (!options.length) return false;
+    showMenu(ev, me, r.reason || r.look || '', options.map(([label, icon, text]) => [label, icon, async () => sendAsPlayer(text)]));
+    return true;
 }
 
 // ---------- the tap menu for things: furniture and windows ----------

@@ -45,6 +45,8 @@ export const WEAPONS = ['none', 'sword', 'dagger', 'axe', 'mace', 'club', 'spear
 export const HAIRSTYLES = ['short', 'long', 'ponytail', 'bun', 'mohawk', 'none'];
 export const BUILDS = ['small', 'medium', 'large'];
 export const FACIAL_HAIR = ['none', 'stubble', 'mustache', 'beard'];
+/** Restraints drawn on the figure itself (a cage is drawn around them by the map). */
+export const BOUND = ['rope', 'cuffs'];
 
 /** The NPC and monster library: a base look, plus color variants so several can share a map. */
 export const LIBRARY = {
@@ -177,6 +179,7 @@ export function normalizeLook(raw) {
         female: d.female === true || d.female === 'true',
         facialHair: d.female === true || d.female === 'true' ? 'none' : pickIn(d.facialHair, FACIAL_HAIR, 'none'),
         young: d.young === true,
+        ...(BOUND.includes(d.bound) ? { bound: d.bound } : {}),
     };
 }
 
@@ -195,15 +198,16 @@ function shade(hexColor, f) {
 }
 
 // Palette slots.
-const O = 1, SK = 2, SKD = 3, HR = 4, HRD = 5, OF = 6, OFD = 7, AC = 8, EYE = 9, MET = 10, METD = 11, WOOD = 12, WH = 13, PINK = 14, BOOT = 15, BLK = 16, GOLD = 17, HORN = 18, SKL = 19, STB = 20;
+const O = 1, SK = 2, SKD = 3, HR = 4, HRD = 5, OF = 6, OFD = 7, AC = 8, EYE = 9, MET = 10, METD = 11, WOOD = 12, WH = 13, PINK = 14, BOOT = 15, BLK = 16, GOLD = 17, HORN = 18, SKL = 19, STB = 20, ROPE = 21, ROPED = 22;
 
 function paletteFor(look) {
-    const p = new Array(21).fill(null);
+    const p = new Array(23).fill(null);
     const skin = look.skin ?? look.fur ?? '#9aa0a8';
     p[O] = '#17131a';
     p[SK] = skin; p[SKD] = shade(skin, -0.22); p[SKL] = shade(skin, 0.28);
     p[HR] = look.hairColor ?? shade(skin, -0.15); p[HRD] = shade(p[HR], -0.25);
     p[STB] = mix(shade(skin, -0.12), p[HRD], 0.45);
+    p[ROPE] = '#c2a06a'; p[ROPED] = '#7d6238';
     p[OF] = look.outfitColor ?? '#5a4a3a'; p[OFD] = shade(p[OF], -0.3);
     p[AC] = look.accentColor ?? '#c9a227';
     p[EYE] = look.eyes ?? '#2a2030';
@@ -291,7 +295,14 @@ const POSES = {
     hurt: [{ lean: -2, blink: true, armsUp: true }],
 };
 
-function humanoid(look, pose) {
+// Tied up: a slow squirm (lean one way, then the other) instead of breathing; dragged, a little bob.
+const SQUIRM = [{}, { lean: 1 }, { lean: 1, bob: 1 }, { lean: -1, blink: true }];
+const DRAGGED = [{ lean: -1 }, { lean: -1, bob: 1 }, { lean: -1 }, { lean: -1, bob: 1 }];
+
+function humanoid(look, poseIn) {
+    const tied = look.bound === 'rope', cuffed = look.bound === 'cuffs';
+    const pose = tied ? { ...poseIn, back: 0, front: 0, armF: 0, armB: 0, reach: 0, wpn: undefined, handUp: false, armsUp: false, pull: false }
+        : cuffed ? { ...poseIn, reach: 0, wpn: undefined, handUp: false, armsUp: false, pull: false } : poseIn;
     const sp = SPECIES[look.species] ?? SPECIES.human;
     const px = new Px();
     const small = look.build === 'small', large = look.build === 'large';
@@ -321,7 +332,7 @@ function humanoid(look, pose) {
 
     // Back arm and back leg (darker, behind the body).
     const shoulderB = [tl + 1 + lean, tt + 1], shoulderF = [tl + torsoW - 2 + lean, tt + 1];
-    const handB = zombie ? [shoulderB[0] + 5, shoulderB[1] + 1] : pose.armsUp ? [shoulderB[0] - 1, shoulderB[1] - 2] : [shoulderB[0] + (pose.armB ?? -1), shoulderB[1] + 4];
+    const handB = tied ? [shoulderB[0] - 1, shoulderB[1] + 4] : cuffed ? [tl + Math.floor(torsoW / 2) - 1 + lean, tt + 3] : zombie ? [shoulderB[0] + 5, shoulderB[1] + 1] : pose.armsUp ? [shoulderB[0] - 1, shoulderB[1] - 2] : [shoulderB[0] + (pose.armB ?? -1), shoulderB[1] + 4];
     const sleeve = look.outfit === 'none' || skeleton ? SKD : look.outfit === 'armor' ? METD : OFD;
     px.line(...shoulderB, ...handB, sleeve, 2);
     px.rect(handB[0], handB[1], 2, 2, SKD);
@@ -444,17 +455,34 @@ function humanoid(look, pose) {
 
     // Front arm, hand and weapon.
     const reach = pose.reach ?? 0;
-    let handF = zombie ? [shoulderF[0] + 5, shoulderF[1] + 1] : pose.handUp ? [shoulderF[0] - 1, shoulderF[1] - 2] : pose.armsUp ? [shoulderF[0], shoulderF[1] - 3] : [shoulderF[0] + 1 + (pose.armF ?? 0) + reach, shoulderF[1] + 4 - (reach ? 1 : 0)];
+    let handF = tied ? [shoulderF[0] + 1, shoulderF[1] + 4] : cuffed ? [tl + Math.floor(torsoW / 2) + lean, tt + 3] : zombie ? [shoulderF[0] + 5, shoulderF[1] + 1] : pose.handUp ? [shoulderF[0] - 1, shoulderF[1] - 2] : pose.armsUp ? [shoulderF[0], shoulderF[1] - 3] : [shoulderF[0] + 1 + (pose.armF ?? 0) + reach, shoulderF[1] + 4 - (reach ? 1 : 0)];
     const sleeveF = look.outfit === 'none' || skeleton ? SK : look.outfit === 'armor' ? MET : OF;
-    if (look.weapon === 'bow') {
+    if (look.weapon === 'bow' && !tied && !cuffed) {
         handF = [shoulderF[0] + 3, shoulderF[1] + 1];
         px.line(...shoulderF, ...handF, sleeveF, 2);
         bow(px, handF[0] + 1, handF[1], Boolean(pose.pull) || Boolean(pose.handUp), shoulderB[0] + 1);
         px.rect(handF[0], handF[1], 2, 2, SK);
     } else {
         px.line(...shoulderF, ...handF, sleeveF, 2);
-        if (pose.wpn !== undefined || !['none', 'claws'].includes(look.weapon)) weapon(px, look.weapon, handF[0] + 1, handF[1], pose.wpn ?? -65);
+        if (!tied && !cuffed && (pose.wpn !== undefined || !['none', 'claws'].includes(look.weapon))) weapon(px, look.weapon, handF[0] + 1, handF[1], pose.wpn ?? -65);
         px.rect(handF[0], handF[1], 2, 2, SK);
+    }
+    if (tied) {
+        // Coils of rope around the chest and arms, and around the ankles; knots in a darker brown.
+        for (const y of [tt + 1, tt + 3]) {
+            px.rect(tl - 2 + lean, y + bob * 0, torsoW + 4, 1, ROPE);
+            for (let x = tl - 2 + lean; x < tl + torsoW + 2 + lean; x += 3) px.set(x, y, ROPED);
+        }
+        px.set(tl + torsoW + 2 + lean, tt + 2, ROPED);
+        px.rect(tl + lean, feet - 2, torsoW, 1, ROPE);
+        px.set(tl + 1 + lean, feet - 2, ROPED); px.set(tl + torsoW - 2 + lean, feet - 2, ROPED);
+    }
+    if (cuffed) {
+        // Iron cuffs on both wrists and a short chain between them.
+        px.rect(handF[0] - 1, handF[1], 4, 1, MET);
+        px.set(handF[0], handF[1], WH); px.set(handF[0] + 2, handF[1], WH);
+        px.rect(handF[0] - 1, handF[1] - 1, 4, 1, METD);
+        px.set(handF[0] + 1, handF[1] + 2, METD); px.set(handF[0], handF[1] + 3, METD); px.set(handF[0] + 1, handF[1] + 4, METD);
     }
     return px.outline();
 }
@@ -565,7 +593,7 @@ export function buildSprite(lookIn) {
     const look = lookIn?.beast ? normalizeLook(lookIn) : normalizeLook(lookIn);
     const isBeast = Boolean(look.beast);
     const draw = isBeast ? beast : humanoid;
-    const poses = isBeast ? BEAST_POSES : POSES;
+    const poses = isBeast ? BEAST_POSES : look.bound === 'rope' ? { ...POSES, idle: SQUIRM, walk: DRAGGED } : POSES;
     const anims = {};
     for (const [name, list] of Object.entries(poses)) anims[name] = list.map(p => draw(look, p).d);
     anims.down = [lyingDown(anims.idle[3])];
