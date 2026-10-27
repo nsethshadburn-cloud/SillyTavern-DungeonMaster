@@ -30,6 +30,32 @@ const ROUGH = new Set(['dungeon', 'cave', 'crypt', 'prison', 'sewer', 'mine']);
 
 // ---------- the plan ----------
 
+/**
+ * Every room must be reachable. A group of rooms with no link to the rest (a tower or a cellar the
+ * plan forgot the stairs to) gets one: a door to a room on the same floor if there is one, otherwise
+ * stairs from the nearest level.
+ */
+function connectRooms(rooms, floors, links, start) {
+    const parent = Object.fromEntries(rooms.map(r => [r.id, r.id]));
+    const find = id => (parent[id] === id ? id : (parent[id] = find(parent[id])));
+    for (const l of links) parent[find(l.a)] = find(l.b);
+    const level = id => floors.find(f => f.id === rooms.find(r => r.id === id)?.floor)?.level ?? 0;
+    for (;;) {
+        const main = find(start);
+        const cut = rooms.filter(r => find(r.id) !== main);
+        if (!cut.length) return;
+        const group = cut.filter(r => find(r.id) === find(cut[0].id));
+        const joined = rooms.filter(r => find(r.id) === main);
+        let best = null;
+        for (const a of group) for (const b of joined) {
+            const cost = a.floor === b.floor ? 0 : 1 + Math.abs(level(a.id) - level(b.id));
+            if (!best || cost < best.cost) best = { a, b, cost };
+        }
+        links.push({ a: best.b.id, b: best.a.id, via: best.a.floor === best.b.floor ? 'door' : 'stairs', key: '', dc: 15 });
+        parent[find(best.a.id)] = main;
+    }
+}
+
 /** Validate a place plan from Claude. Never throws; fills sensible defaults. */
 export function normalizePlan(raw) {
     const d = obj(raw);
@@ -65,9 +91,11 @@ export function normalizePlan(raw) {
     }
     if (!rooms.length) rooms.push({ id: 'R1', name: 'Room', type: 'room', floor: floors[0].id, size: '', lit: null, description: '', props: [], marks: [], traps: [], items: [], exit: true });
     const has = id => rooms.some(r => r.id === id);
+    // Links may name a room by id ("G1") or by name ("the gatehouse").
+    const roomRef = v => { const t = str(v); if (has(t)) return t; const k = nameKey(t.replace(/^thes+/i, '')); return (rooms.find(r => r.id.toLowerCase() === t.toLowerCase()) ?? rooms.find(r => nameKey(r.name.replace(/^thes+/i, '')) === k))?.id ?? ''; };
     const links = [];
     for (const l of arr(d.links).slice(0, 200)) {
-        const a = str(l?.a ?? l?.from), b = str(l?.b ?? l?.to);
+        const a = roomRef(l?.a ?? l?.from), b = roomRef(l?.b ?? l?.to);
         if (!has(a) || !has(b) || a === b) continue;
         let via = str(l?.via).toLowerCase();
         if (!VIA.includes(via)) via = /stair|ladder|lift/.test(via) ? 'stairs' : /lock|bar|seal/.test(via) ? 'locked' : /secret|hidden/.test(via) ? 'secret' : /arch|open|gap/.test(via) ? 'arch' : 'door';
@@ -87,7 +115,8 @@ export function normalizePlan(raw) {
         sprite: str(g.sprite).slice(0, 30),
     })).filter(g => g.name && (g.room || g.patrol.length));
     for (const g of guards) if (!g.room) g.room = g.patrol[0];
-    const start = has(str(d.start)) ? str(d.start) : rooms[0].id;
+    const start = roomRef(d.start) || rooms[0].id;
+    connectRooms(rooms, floors, links, start);
     // Every big place has a way out: the start's floor gets one if Claude named none.
     if (!rooms.some(r => r.exit) && kind !== 'interior') {
         const ground = floors.slice().sort((a, b) => Math.abs(a.level) - Math.abs(b.level))[0].id;
@@ -257,7 +286,7 @@ function buildFloor(r, plan, floor, rects, shrink, doors) {
             const near = rects[neighbors(id).find(n => rects[n])] ?? rects[order.find(o => rects[o])];
             rect = tryNear(grid, r, near, w, h) ?? tryNear(grid, r, near, Math.max(3, w - 2), Math.max(3, h - 2));
         }
-        if (!rect) return null;
+        if (!rect) { failWhy = `no room to fit "${plan.rooms.find(x => x.id === id)?.name}" on ${floor.name}`; return null; }
         rects[id] = rect;
         grid.place(rect, id);
     }
@@ -457,6 +486,8 @@ function areaStyle(r, room, theme, level = 0) {
  * big), then furnishes, places traps, items, keys and guards, and makes sure it can be solved.
  * @returns {object} the place (see DESIGN.md "Places")
  */
+let failWhy = '';
+
 export function generatePlace(planIn, seed = 1) {
     let plan = planIn?.normalized ? planIn : normalizePlan(planIn);
     // A floor with more rooms than fit gets split: its far half becomes a level of its own, up the stairs.
@@ -467,7 +498,7 @@ export function generatePlace(planIn, seed = 1) {
         }
         plan = splitBusiestFloor(plan);
     }
-    throw new Error(`Couldn't lay out "${planIn?.name ?? 'the place'}": too many rooms for one floor. Split it over more floors.`);
+    throw new Error(`Couldn't lay out "${planIn?.name ?? 'the place'}": ${failWhy || 'the rooms would not fit together'}.`);
 }
 
 /**
@@ -526,7 +557,7 @@ function tryBuild(plan, seed, shrink) {
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const k of grid.cells.keys()) { const [x, y] = k.split(',').map(Number); minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
         const w = maxX - minX + 3, h = maxY - minY + 3;
-        if (w > MAX_PLACE_SIZE || h > MAX_PLACE_SIZE) return null;
+        if (w > MAX_PLACE_SIZE || h > MAX_PLACE_SIZE) { failWhy = `${floor.name} came out bigger than ${MAX_PLACE_SIZE}x${MAX_PLACE_SIZE} squares`; return null; }
         const ox = 1 - minX, oy = 1 - minY;
         offsets[floor.id] = [ox, oy];
         const c = [...Array(h)].map(() => Array(w).fill('%'));
@@ -574,7 +605,8 @@ function tryBuild(plan, seed, shrink) {
         const room = place.rooms[roomId], c = chars[room.floor];
         const tiles = shuffle(r, roomTiles(room.rect)).filter(([x, y]) => c[y][x] === '.' && !reserved.has(`${room.floor}:${x},${y}`));
         const edge = tiles.filter(([x, y]) => x === room.rect.x || y === room.rect.y || x === room.rect.x + room.rect.w - 1 || y === room.rect.y + room.rect.h - 1);
-        return (prefer === 'edge' && edge.length ? edge : tiles)[0] ?? null;
+        // A small room with doors all round may have no free square left: stairs still go in (never dropped).
+        return (prefer === 'edge' && edge.length ? edge : tiles)[0] ?? shuffle(r, roomTiles(room.rect)).find(([x, y]) => c[y][x] === '.') ?? null;
     };
     let stairN = 0;
     for (const l of plan.links.filter(x => x.via === 'stairs')) {
@@ -613,7 +645,7 @@ function tryBuild(plan, seed, shrink) {
     for (const rm of Object.values(place.rooms)) if (rm.exit && !place.exits.some(e => place.doors[e.door]?.rooms.includes(rm.id))) rm.exit = false;
     if (!place.exits.length) {
         const pick = Object.values(place.rooms).filter(rm => outsideOf[rm.id]?.length).sort((a, b) => Math.abs(levelOf(a.floor)) - Math.abs(levelOf(b.floor)))[0];
-        if (!pick) return null;
+        if (!pick) { failWhy = 'no room has an outside wall for a way out'; return null; }
         const [x, y] = outsideOf[pick.id][Math.floor(outsideOf[pick.id].length / 2)];
         const d = addDoor(pick.floor, x, y, 'door', [pick.id, null], { exit: true });
         place.exits.push({ floor: pick.floor, x, y, door: d.id });
@@ -688,7 +720,10 @@ function tryBuild(plan, seed, shrink) {
     clearDoorways(place);
     ensureIds(place);
     // A layout where some room can never be reached is thrown away (the next attempt uses another seed).
-    return solvePlace(place, r) ? place : null;
+    // Repairs may add doors: keep furniture out of those doorways too.
+    if (solvePlace(place, r)) { clearDoorways(place); return place; }
+    failWhy = `some rooms can't be reached (${Object.values(place.rooms).filter(rm => !new Set(reachable(place).roomsReached).has(rm.id)).map(rm => rm.name).slice(0, 4).join(', ')})`;
+    return null;
 }
 
 /**
@@ -784,6 +819,51 @@ export function reachable(place) {
     return { seen, keys, roomsReached };
 }
 
+/**
+ * A cut-off room with nothing reachable right next to it: dig a corridor from one of its walls,
+ * through the empty space around the building, to the nearest wall with reachable floor behind it,
+ * with a door at each end. False if there's no way.
+ */
+function tunnel(place, cut, seen) {
+    const map = place.floors.find(f => f.id === cut.floor).map;
+    const rows = map.rows.map(row => row.split(''));
+    const at = (x, y) => (x < 0 || y < 0 || x >= map.w || y >= map.h ? null : rows[map.h - 1 - y][x]);
+    const set = (x, y, ch) => { rows[map.h - 1 - y][x] = ch; };
+    const inRoom = (x, y) => x >= cut.rect.x && x < cut.rect.x + cut.rect.w && y >= cut.rect.y && y < cut.rect.y + cut.rect.h;
+    const K = (x, y) => `${x},${y}`;
+    const prev = new Map(), queue = [];
+    for (const [x, y] of roomTiles({ x: cut.rect.x - 1, y: cut.rect.y - 1, w: cut.rect.w + 2, h: cut.rect.h + 2 })) {
+        if (at(x, y) !== '#' || isCorner(cut.rect, x, y) || !DIRS.some(([dx, dy]) => inRoom(x + dx, y + dy))) continue;
+        prev.set(K(x, y), null);
+        queue.push([x, y]);
+    }
+    let end = null;
+    for (let i = 0; i < queue.length && !end; i++) {
+        const [x, y] = queue[i];
+        for (const [dx, dy] of DIRS) {
+            const nx = x + dx, ny = y + dy, k = K(nx, ny);
+            if (prev.has(k)) continue;
+            const ch = at(nx, ny);
+            // A wall with reachable floor right behind it: the far end.
+            if (ch === '#' && i > 0 && DIRS.some(([ex, ey]) => seen.has(`${cut.floor}:${nx + ex},${ny + ey}`))) { prev.set(k, K(x, y)); end = [nx, ny]; break; }
+            if (ch !== '%') continue;
+            prev.set(k, K(x, y));
+            queue.push([nx, ny]);
+        }
+    }
+    if (!end) return false;
+    const path = [];
+    for (let k = K(...end); k; k = prev.get(k)) path.push(k.split(',').map(Number));
+    path.forEach(([x, y], i) => set(x, y, i === 0 || i === path.length - 1 ? '+' : '.'));
+    for (const [x, y] of path.slice(1, -1)) for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) if (at(x + dx, y + dy) === '%') set(x + dx, y + dy, '#');
+    for (const [x, y] of [path[0], path[path.length - 1]]) {
+        const id = `D${Object.keys(place.doors).length + 1}t`;
+        place.doors[id] = { id, floor: cut.floor, x, y, kind: 'door', state: 'closed', rooms: [inRoom(...DIRS.map(([dx, dy]) => [x + dx, y + dy]).find(([a, b]) => inRoom(a, b)) ?? [-1, -1]) ? cut.id : null, null] };
+    }
+    map.rows = rows.map(row => row.join(''));
+    return true;
+}
+
 /** Fix what can't be reached: move keys that sit behind their own lock, add doors to cut-off rooms. */
 export function solvePlace(place, r = Math.random) {
     for (let round = 0; round < 80; round++) {
@@ -822,7 +902,7 @@ export function solvePlace(place, r = Math.random) {
             done = true;
             break;
         }
-        if (!done) return false;
+        if (!done && !tunnel(place, cut, seen)) return false;
     }
     return false;
 }

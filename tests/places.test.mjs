@@ -441,12 +441,21 @@ test('a fight on a big floor: newcomers arrive near the party, not across the bu
     assert.notEqual(pos['Wolf 1'], pos['Wolf 2']);
 });
 
-test('a floor with too many rooms is split onto another level instead of failing', () => {
+test('crowded, half-linked plans still build: big floors split, cut-off rooms get joined', async () => {
+    const { splitBusiestFloor } = await import('../src/core/layout.js');
     const rooms = Array.from({ length: 60 }, (_, i) => ({ id: `R${i + 1}`, name: `Hall ${i + 1}`, type: i % 3 ? 'hall' : 'bedroom', size: 'large', floor: 'F0', exit: i === 0 }));
     const links = rooms.slice(1).map((r, i) => ({ a: rooms[Math.floor(i / 2)].id, b: r.id, via: 'door' }));
-    const place = generatePlace({ name: 'Crowded Keep', kind: 'castle', floors: [{ id: 'F0', name: 'Ground floor', level: 0 }], rooms, links }, 3);
-    assert.ok(place.floors.length >= 2, 'split over more floors');
+    const plan = normalizePlan({ name: 'Crowded Keep', kind: 'castle', floors: [{ id: 'F0', name: 'Ground floor', level: 0 }], rooms, links });
+    const split = splitBusiestFloor(plan);
+    assert.equal(split.floors.length, 2, 'the busy floor splits in two');
+    assert.ok(split.links.some(l => l.via === 'stairs'), 'stairs join the halves');
+    const place = generatePlace(plan, 3);
     assert.equal(Object.keys(place.rooms).length, 60, 'every room is still there');
-    assert.ok(place.stairs.length >= 1, 'stairs join the levels');
     for (const f of place.floors) assert.ok(f.map.w <= MAX_PLACE_SIZE && f.map.h <= MAX_PLACE_SIZE);
+    // Links by room name, and a tower floor with no stairs at all: it still builds, every room reachable.
+    const messy = generatePlace({ name: 'Gallowmere Keep', kind: 'castle', floors: [{ id: 'G', name: 'Ground', level: 0 }, { id: 'T', name: 'Tower top', level: 2 }],
+        rooms: [{ id: 'G1', name: 'Gatehouse', floor: 'G', exit: true }, { id: 'G2', name: 'Courtyard', floor: 'G' }, { id: 'G3', name: 'Great Hall', floor: 'G' }, { id: 'T1', name: 'Lookout', floor: 'T' }, { id: 'T2', name: 'Bell room', floor: 'T' }],
+        links: [{ a: 'Gatehouse', b: 'Courtyard' }, { a: 'the courtyard', b: 'G3' }, { a: 'T1', b: 'T2' }] }, 5);
+    assert.equal(reachable(messy).roomsReached.length, 5, 'every room can be reached');
+    assert.ok(messy.stairs.length >= 1, 'the tower got stairs');
 });
