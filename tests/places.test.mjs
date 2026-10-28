@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { stepOn, adoptTrapProps, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { stepOn, adoptTrapProps, hiddenNow, hideIn, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
 import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
@@ -589,4 +589,28 @@ test('companions follow on their own way, around traps they know about, over the
     // Set in plain sight: everyone knows.
     applyPlaceChanges(place, { add_traps: [{ at: toCoord(5, 10), kind: 'caltrops' }] });
     assert.ok(trapsKnownTo(place, 'G', 'Anyone').includes('5,10'));
+});
+
+test('hiding is tracked live: the DM sees who is hidden where, and walking off ends it', () => {
+    const place = tinyPlace();
+    const map = floorById(place, 'G').map;
+    const barrel = map.props.find(p => p.type === 'barrel');
+    place.state.positions.Amber = { floor: 'G', x: barrel.x + 1, y: barrel.y };
+    assert.equal(hiddenNow(place, 'Amber'), null);
+    assert.match(placeView(place, ['Amber']), /Amber at .*: not hiding, out in the open/);
+    assert.equal(hideIn(place, 'Amber', barrel.id).mode, 'in');
+    assert.deepEqual([place.state.positions.Amber.x, place.state.positions.Amber.y], [barrel.x, barrel.y], 'in the barrel: on its square');
+    assert.ok(placeView(place, ['Amber']).includes(`Amber at ${toCoord(barrel.x, barrel.y)} in West room: HIDING in the barrel (${barrel.id})`));
+    // Running off without anyone clearing it: no longer hidden.
+    place.state.positions.Amber.x += 2;
+    assert.equal(hiddenNow(place, 'Amber'), null, 'not in the barrel any more');
+    assert.match(placeView(place, ['Amber']), /not hiding/);
+    // The DM hides them and brings them out.
+    const log = applyPlaceChanges(place, { hide: { amber: barrel.id } });
+    assert.match(log.join(' '), /Amber hides in the barrel/);
+    assert.ok(hiddenNow(place, 'Amber'));
+    applyPlaceChanges(place, { hide: { Amber: 'out' } });
+    assert.equal(hiddenNow(place, 'Amber'), null);
+    applyPlaceChanges(place, { hide: { Amber: 'barrel' } });
+    assert.equal(hiddenNow(place, 'Amber')?.what, 'barrel', 'by what it is, too');
 });

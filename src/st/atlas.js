@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -274,7 +274,8 @@ export function searchForTraps(c, name, total) {
 
 /** How someone is hidden right now ({prop, mode: 'in'|'under'|'behind', at}), or null. */
 export function hiding(c, name) {
-    return currentPlace(c)?.place.state.hidden?.[name] ?? null;
+    const cur = currentPlace(c);
+    return cur ? hiddenNow(cur.place, name) : null;
 }
 
 /**
@@ -285,16 +286,10 @@ export function hideAt(c, name, propId) {
     const cur = currentPlace(c);
     if (!cur) return null;
     const { key, place } = cur;
-    const pos = place.state.positions[name];
-    const map = pos && floorById(place, pos.floor).map;
-    const prop = map?.props.find(p => p.id === propId);
-    const mode = prop && HIDE[prop.type];
-    if (!mode) return null;
-    if (mode !== 'behind') Object.assign(pos, { x: prop.x, y: prop.y });
-    place.state.hidden ??= {};
-    place.state.hidden[name] = { prop: prop.id, mode, at: Date.now() };
+    const r = hideIn(place, name, propId);
+    if (!r) return null;
     savePlace(key, c);
-    return { mode, name: prop.label || PROPS[prop.type]?.name || prop.type };
+    return { mode: r.mode, name: r.what };
 }
 
 /** Come out of hiding (walking anywhere does this too). */
@@ -723,6 +718,7 @@ export async function walkTo(target, redraw = () => { }) {
                 const d = doorAt(place, floorId, x, y);
                 if (d && d.state === 'closed') setDoorState(place, d, 'open');
                 Object.assign(p, { x, y });
+                if (place.state.hidden?.[n]) delete place.state.hidden[n];
                 moved = true;
                 // Their own way, their own traps.
                 const sprung = stepOn(place, n, floorId, x, y);

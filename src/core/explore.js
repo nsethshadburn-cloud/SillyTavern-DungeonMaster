@@ -2,7 +2,7 @@
 // has seen), walking paths, guards on patrol, the DM's view of the place, and the DM's changes
 // (doors, traps, items, guards). Pure module.
 
-import { PROPS, TERRAIN, HEAVY, terrainAt, propsAt, colName, parseCoord } from './grid.js';
+import { PROPS, TERRAIN, HEAVY, HIDE, terrainAt, propsAt, colName, parseCoord } from './grid.js';
 import { doorChar, ensureIds } from './layout.js';
 import { nameKey } from './text.js';
 
@@ -360,6 +360,43 @@ export function followSteps(place, floorId, from, leader, { taken = new Set(), s
     return [];
 }
 
+// ---------- hiding ----------
+
+/**
+ * How `name` is hidden right now ({prop, mode, what}), or null. Checked against where they stand:
+ * inside or under a thing means on its square, behind it means right beside it. So it's never stale
+ * (walked off, moved by the DM, carried away).
+ */
+export function hiddenNow(place, name) {
+    const h = place.state.hidden?.[name];
+    const pos = place.state.positions[name];
+    if (!h || !pos) return null;
+    const prop = (floorById(place, pos.floor).map.props || []).find(p => p.id === h.prop);
+    if (!prop) return null;
+    const w = prop.w || 1, ht = prop.h || 1;
+    const on = pos.x >= prop.x && pos.x < prop.x + w && pos.y >= prop.y && pos.y < prop.y + ht;
+    const beside = pos.x >= prop.x - 1 && pos.x <= prop.x + w && pos.y >= prop.y - 1 && pos.y <= prop.y + ht;
+    if (h.mode === 'behind' ? !beside : !on) return null;
+    return { ...h, what: prop.label || PROPS[prop.type]?.name || prop.type };
+}
+
+/**
+ * `name` hides in, under or behind a thing on their floor. Inside or underneath, they move onto its
+ * square; behind it, they crouch beside it. Returns {mode, what}, or null if it can't hide anyone.
+ */
+export function hideIn(place, name, propId) {
+    const pos = place.state.positions[name];
+    const prop = pos && (floorById(place, pos.floor).map.props || []).find(p => p.id === propId);
+    const mode = prop && HIDE[prop.type];
+    if (!mode) return null;
+    const w = prop.w || 1, ht = prop.h || 1;
+    if (mode !== 'behind') Object.assign(pos, { x: prop.x, y: prop.y });
+    else if (!(pos.x >= prop.x - 1 && pos.x <= prop.x + w && pos.y >= prop.y - 1 && pos.y <= prop.y + ht)) Object.assign(pos, freeNear(place, pos.floor, prop.x, prop.y));
+    place.state.hidden ??= {};
+    place.state.hidden[name] = { prop: prop.id, mode, at: Date.now() };
+    return { mode, what: prop.label || PROPS[prop.type]?.name || prop.type };
+}
+
 /** A free square next to (x, y) for a companion to stand on. */
 export function freeNear(place, floorId, x, y, taken = new Set()) {
     for (let d = 1; d <= 3; d++) {
@@ -510,6 +547,21 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         ensureIds(place);
         bump(place, floorId);
         log.push(`${type} added at ${a.at}`);
+    }
+    // Hiding: {"Amber": "p12"} hides them in/under/behind that thing; "out" brings them out.
+    for (const [who, raw] of Object.entries(c.hide || {})) {
+        const name = Object.keys(place.state.positions).find(n => nameKey(n) === nameKey(who));
+        if (!name) continue;
+        if (/^(out|none|no|false|leave|left)$/i.test(String(raw).trim())) {
+            if (place.state.hidden?.[name]) { delete place.state.hidden[name]; log.push(`${name} out of hiding`); }
+            continue;
+        }
+        const pos = place.state.positions[name];
+        const map = floorById(place, pos.floor).map;
+        const want = String(raw).trim().toLowerCase();
+        const prop = (map.props || []).find(p => String(p.id).toLowerCase() === want) ?? (map.props || []).filter(p => HIDE[p.type] && (p.label || PROPS[p.type]?.name || p.type).toLowerCase().includes(want)).sort((a, b) => Math.hypot(a.x - pos.x, a.y - pos.y) - Math.hypot(b.x - pos.x, b.y - pos.y))[0];
+        const r = prop && hideIn(place, name, prop.id);
+        if (r) { bump(place, pos.floor); log.push(`${name} hides ${r.mode} the ${r.what}`); }
     }
     // Windows: by id, by room, or all of them ("all": "barred").
     for (const [key, raw] of Object.entries(c.windows || {})) {
@@ -796,6 +848,12 @@ export function placeView(place, partyNames) {
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
     const guards = Object.values(place.guards).filter(g => g.state !== 'gone').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
+    const party = partyNames.filter(n => st.positions[n]).map(n => {
+        const p = st.positions[n], h = hiddenNow(place, n);
+        const rm = roomAt(place, p.floor, p.x, p.y);
+        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}`;
+    });
+    if (party.length) lines.push(`Party now (live from the map, the truth whatever earlier messages said): ${party.join('; ')}.`);
     const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
     if (waiting.length) lines.push(`Companions who chose not to follow: ${waiting.join('; ')}.`);
     const people = { ...st.positions };

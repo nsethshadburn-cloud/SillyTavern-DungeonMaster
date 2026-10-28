@@ -13,7 +13,7 @@ import { escapeHtml } from '../core/text.js';
 import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, unhide, hiding } from '../st/atlas.js';
 import { conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions } from '../core/restraints.js';
-import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight } from '../core/explore.js';
+import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
 import { settings } from '../st/settings.js';
 import { drawFigure } from './sprite-render.js';
@@ -386,7 +386,7 @@ function drawTokens(ctx, c, b, tile, now, restore) {
         const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : '#8fb4d9';
         const hp = hpOf(c, name);
         const held = restraintOf(conditionsOf(c.docs.world, name));
-        const hid = b.kind === 'place' ? b.place.state.hidden?.[name] : null;
+        const hid = b.kind === 'place' ? hiddenNow(b.place, name) : null;
         if (hid) {
             drawHidden(ctx, c, name, hid, px, py, tile, now, figures);
             continue;
