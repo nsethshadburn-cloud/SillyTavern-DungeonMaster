@@ -27,6 +27,7 @@ export const TASKS = Object.freeze([
     { key: 'roll_result', group: 'Everyday play', label: 'Narrating your roll results', main: true },
     { key: 'scene_move', group: 'Everyday play', label: 'Travel, rests and time skips', main: true },
     { key: 'event', group: 'Everyday play', label: 'Random events', main: true },
+    { key: 'companion_task', group: 'Everyday play', label: 'Things you tell a companion to do (search, scout)', main: true },
     { key: 'companion_action', group: 'Everyday play', label: 'Ruling on a companion\'s risky attempt', main: true },
     { key: 'npc_addressed', group: 'Everyday play', label: 'Talking to someone new', main: false },
     { key: 'ooc', group: 'Everyday play', label: 'Out-of-character questions', main: false },

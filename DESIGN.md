@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.18.2 (companion tasks go through the DM)
+- The helper triage also gets the companions with the player and the things and rooms around them (goTargets) and returns `task: {who, what, go, dm}` when the player tells a companion to do something. `go`: the companion walks there right away (companionGoTo, in the background while the DM thinks; the reply waits for the walk). `dm`: the result is not known yet, so a new reason `companion_task` calls the DM, who rolls for them (npc_rolls) and briefs them with what they actually find. The free-reply companion check skips moving someone who already walked.
+
 ### v0.18.1 (run into the dark)
 - Tapping an unexplored square walks there anyway: `findPath(..., { toward: true })` uses the real map, not what's explored, and when the square can't be reached (a wall, a locked door) returns the way to the closest square it can reach. No "can't go there" or locked-door hints for squares you haven't seen. In a fight in the dark, a solid black square picks the reachable square nearest it.
 

@@ -164,7 +164,12 @@ async function turnBody(c, opts, status, signal) {
             const step = status.step('Reading your move (local helper)');
             try {
                 const candidates = speakerCandidates();
+                // Companions here, and what's around them on the map, so the helper can spot a task ("Judy, search that crate").
+                const helpers = meta.party.map(p => p.name).filter(n => candidates.includes(n));
+                const places = c.docs.world.combat || !helpers.length ? [] : goTargets(c, helpers[0]);
                 const { system, user } = helperTriagePrompt({
+                    companions: helpers,
+                    places,
                     player: meta.persona.name,
                     message: trimToTokens(playerText, 500),
                     recent: recentForHelper(),
@@ -172,8 +177,10 @@ async function turnBody(c, opts, status, signal) {
                     scene: `${c.docs.world.location || 'unknown'}; ${meta.standing || ''}`,
                     away: Object.entries(c.docs.world.away ?? {}).map(([n, where]) => `${n} (${where})`),
                 });
-                const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: Number(s.helperMaxTokens) || 160, profileId: s.helperProfileId });
+                const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: Math.max(240, Number(s.helperMaxTokens) || 0), profileId: s.helperProfileId });
                 const h = parseHelperTriage(raw, candidates);
+                const who = h.task && matchName(h.task.who, helpers);
+                if (who) triage.task = { ...h.task, who, go: places.some(p => p.id === h.task.go) ? h.task.go : '' };
                 if (!rule.category) triage.category = h.category;
                 triage.stalled = h.stalled;
                 triage.speakers = h.speakers;
@@ -190,7 +197,7 @@ async function turnBody(c, opts, status, signal) {
                         touchNpc(c.docs.npcs.find(n => n.name === known));
                     }
                 }
-                step.done(`${triage.category}${triage.unknownAddressee ? ` · talking to ${triage.unknownAddressee} (new)` : ''}${triage.speakers.length ? ` → ${triage.speakers.join(', ')}` : ''}`);
+                step.done(`${triage.category}${triage.task ? ` · ${triage.task.who}: ${triage.task.what || 'a task'}${triage.task.dm ? ' (DM decides)' : ''}` : ''}${triage.unknownAddressee ? ` · talking to ${triage.unknownAddressee} (new)` : ''}${triage.speakers.length ? ` → ${triage.speakers.join(', ')}` : ''}`);
             } catch (error) {
                 step.fail(error);
                 if (!triage.category) triage.category = 'banter';
@@ -213,6 +220,14 @@ async function turnBody(c, opts, status, signal) {
     if (!opts.force && !autoRoll && !pacing.inCombat) {
         const spotted = tickPlace(c);
         if (spotted.length) placeEvent = `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party and what they do.`;
+    }
+
+    // A companion was told to do something: they walk there now, in the background, while the DM
+    // (if the result needs deciding) works out what they find. Their reply waits for both.
+    let taskWalk = null, taskWent = '';
+    if (triage.task?.go && !signal.aborted) {
+        const { who, go } = triage.task;
+        taskWalk = companionGoTo(c, who, go).then(went => { taskWent = went; if (went) status.note(`${who} goes to the ${went}`); }).catch(() => { });
     }
 
     // ---------- 2. Player roll resolution ----------
@@ -243,6 +258,7 @@ async function turnBody(c, opts, status, signal) {
     });
     if (opts.force) reasons = [...new Set([opts.force, ...reasons])];
     if (placeEvent && !reasons.includes('explore')) reasons.push('explore');
+    if (triage.task?.dm && !reasons.includes('companion_task')) reasons.push('companion_task');
     // Nobody would answer this locally (alone, or nobody nearby would reply): the world responds.
     if (!reasons.length && !opts.force && !triage.rollResult && !localSpeakers(c, triage, playerText).length) reasons = ['solo'];
     if (b.level === 'blocked' && reasons.length) {
@@ -262,6 +278,7 @@ async function turnBody(c, opts, status, signal) {
                 events,
                 oocText: opts.oocText || triage.oocText || '',
                 placeEvent,
+                companionTask: triage.task?.dm ? { name: triage.task.who, what: triage.task.what, went: triage.task.go ? goTargets(c, triage.task.who).find(p => p.id === triage.task.go)?.name ?? '' : '' } : null,
             }, { signal, model }));
             step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
             turnUsd += result.usd;
@@ -278,6 +295,7 @@ async function turnBody(c, opts, status, signal) {
         }
         if (reasons.includes('stalled')) pacing.fillerStreak = 0;
         if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
+        await taskWalk;
         await applyDmTurn(c, result.turn, status, signal, { events, reasons });
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
@@ -290,9 +308,10 @@ async function turnBody(c, opts, status, signal) {
             // A roll without a DM call can't happen (roll_result always calls the DM), but be safe.
             await postNote(rollResolution);
         }
+        await taskWalk;
         await localReplies(c, triage, playerText, status, signal);
         meta.stats.localTurns = (meta.stats.localTurns || 0) + 1;
-        await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal);
+        await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal, { moved: taskWent ? [triage.task.who] : [] });
     }
 }
 
@@ -358,7 +377,7 @@ function localSpeakers(c, triage, playerText) {
  * pocket, sneaking off, lying. Then the DM rules on it with a roll, like for the player.
  * Only free replies are checked; replies the DM directed were already ruled on.
  */
-async function ruleOnCompanionAttempts(c, names, status, signal) {
+async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } = {}) {
     const s = settings();
     if (!s.useHelper) return;
     for (const name of names) {
@@ -366,7 +385,8 @@ async function ruleOnCompanionAttempts(c, names, status, signal) {
         const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
         if (!msg?.mes) continue;
         let attempt;
-        const places = c.docs.world.combat ? [] : goTargets(c, name);
+        // Already walked where the player told them: don't move them again.
+        const places = c.docs.world.combat || moved.includes(name) ? [] : goTargets(c, name);
         try {
             const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}`, places });
             attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }), places);

@@ -69,7 +69,7 @@ export function ruleTriage(text, ctx = {}) {
  * Prompt for the local helper. Kept tiny, no thinking trigger.
  * @param {{player:string, message:string, recent:string, speakers:string[], scene:string}} p
  */
-export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [] }) {
+export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [], companions = [], places = [] }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
     const user = [
         `Scene: ${scene || 'unknown'}`,
@@ -89,7 +89,9 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
             : '"speakers": [] (nobody is with the player right now).',
         away.length ? `Not with the player (can't hear or reply): ${away.join('; ')}.` : '',
         '"addressed": the name of the character the player is speaking to or acting toward (any name, even if not in that list), or "" if nobody in particular.',
-        'Example: {"category":"banter","engaged":2,"stalled":false,"speakers":["Judy Hopps"],"addressed":"Judy Hopps"}',
+        companions.length ? `"task": only if the player tells or asks a companion (${companions.map(s => JSON.stringify(s)).join(', ')}) to DO something now (not just talk): {"who": their name, "what": "a few words", "go": ${places.length ? '"the id of the place or thing they have to go to first, from the list below, or empty"' : '""'}, "dm": true if what happens or what they find isn't known yet and the Dungeon Master has to decide it (searching, looking inside, checking for something, opening, picking a lock, sneaking, scouting, listening at a door, anything that could need a dice roll), false for simple things whose result is obvious (follow me, wait here, sit down, hand me that, go stand over there)}. Otherwise "task": null.` : '',
+        companions.length && places.length ? `Places and things on the map near the party: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}.` : '',
+        'Example: {"category":"banter","engaged":2,"stalled":false,"speakers":["Judy Hopps"],"addressed":"Judy Hopps"' + (companions.length ? ',"task":null' : '') + '}',
     ].filter(Boolean).join('\n');
     return { system, user };
 }
@@ -113,6 +115,18 @@ export function parseHelperTriage(text, speakers = []) {
         refusing: data.refusing === true || data.refusing === 'true',
         speakers: picked.filter(s => speakers.some(x => x.toLowerCase() === s.toLowerCase())).slice(0, 2),
         addressed: typeof data.addressed === 'string' ? data.addressed.trim().slice(0, 60) : '',
+        task: parseTask(data.task),
+    };
+}
+
+/** The companion task in the helper's reply ({who, what, go, dm}), or null. */
+function parseTask(t) {
+    if (!t || typeof t !== 'object' || typeof t.who !== 'string' || !t.who.trim()) return null;
+    return {
+        who: t.who.trim().slice(0, 60),
+        what: String(t.what ?? '').trim().slice(0, 120),
+        go: String(t.go ?? '').trim().slice(0, 40),
+        dm: t.dm === true || t.dm === 'true',
     };
 }
 
@@ -125,7 +139,7 @@ export function companionActionPrompt({ name, message, scene, places = [], askAt
         message,
         '',
         askAttempt ? `1. Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
-        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now, not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it)?` : '',
+        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now (on their own or because they were asked to), not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it)?` : '',
         `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty", "hide": true or false' : ''}}`,
     ].filter(Boolean).join('\n');
     return { system, user };

@@ -494,3 +494,16 @@ test('v0.10.1 fixes: scene_map null keeps the map, 2d20kh1 has a natural die', (
     assert.equal(judge(adv.total, 30, adv.natural, 'attack').critical, true);
     assert.equal(roll('2d20+1', { rng: () => 7 }).natural, null, 'two kept d20s have no single natural');
 });
+
+test('v0.18.2: telling a companion to do something: where they go, and whether the DM decides', async () => {
+    const { helperTriagePrompt, parseHelperTriage } = await import('../src/core/triage.js');
+    const places = [{ id: 'p12', name: 'the crate (in this room)' }, { id: 'R3', name: 'Guard Room (next door)' }];
+    const { user } = helperTriagePrompt({ player: 'Amber', message: 'Judy go to that crate and tell me if you find anything', recent: '', speakers: ['Judy Hopps'], scene: 'x', companions: ['Judy Hopps'], places });
+    assert.match(user, /"task"/);
+    assert.match(user, /p12 = the crate/);
+    assert.doesNotMatch(helperTriagePrompt({ player: 'Amber', message: 'hi', recent: '', speakers: [], scene: 'x' }).user, /"task"/, 'no companions: no task question');
+    const h = parseHelperTriage('{"category":"action","speakers":["Judy Hopps"],"task":{"who":"Judy Hopps","what":"search the crate","go":"p12","dm":true}}', ['Judy Hopps']);
+    assert.deepEqual(h.task, { who: 'Judy Hopps', what: 'search the crate', go: 'p12', dm: true });
+    assert.equal(parseHelperTriage('{"category":"banter","task":null}', []).task, null);
+    assert.equal(parseHelperTriage('{"category":"action","task":{"who":"Judy Hopps","what":"wait here"}}', []).task.dm, false);
+});
