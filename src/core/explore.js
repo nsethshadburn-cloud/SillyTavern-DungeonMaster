@@ -569,13 +569,17 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
             if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(id => findRoom(place, id)?.id).filter(Boolean);
             if (!g.patrol.length && g.room) g.patrol = [g.room];
             g.state = raw.state === 'alert' ? 'alert' : 'patrol';
-            log.push(`${g.name} at ${coord(g.x, g.y)}`);
+            setIntent(g, raw.intent, raw.target);
+            log.push(`${g.name} at ${coord(g.x, g.y)}${g.intent ? ` (${g.intent}${g.target ? ` ${g.target}` : ''})` : ''}`);
             continue;
         }
         const v = String(raw);
         if (/^(gone|dead|left|removed)$/i.test(v)) { if (g) g.state = 'gone'; }
-        else if (/^(alert|hunting|chasing)$/i.test(v)) { if (g) g.state = 'alert'; }
-        else if (/^(calm|patrol|patrolling)$/i.test(v)) { if (g) g.state = 'patrol'; }
+        else if (/^(alert)$/i.test(v)) { if (g) g.state = 'alert'; }
+        else if (/^(hunting|chasing|attacking|attack)$/i.test(v)) { if (g) { g.state = 'alert'; setIntent(g, 'attack'); } }
+        else if (/^(fleeing|flee|running|runs away)$/i.test(v)) { if (g) setIntent(g, 'flee'); }
+        else if (/^(following|follow)$/i.test(v)) { if (g) setIntent(g, 'follow'); }
+        else if (/^(calm|patrol|patrolling|stay|staying)$/i.test(v)) { if (g) { g.state = 'patrol'; setIntent(g, /^stay/i.test(v) ? 'stay' : ''); } }
         else {
             // A square or a room: move them there (someone new appears there).
             g = placePerson(place, name, v, { floor });
@@ -810,7 +814,7 @@ export function placePerson(place, name, where, { floor = place.state?.floor, in
     const clean = String(name || '').trim().slice(0, 60);
     if (!clean) return null;
     // Squares other people already stand on (party and the place's people), unless told otherwise.
-    const busy = f => taken ?? new Set([...Object.entries(place.state?.positions || {}).map(([, p]) => p), ...Object.values(place.guards).filter(g => g.state !== 'gone' && nameKey(g.name) !== nameKey(clean))].filter(p => p && p.floor === f).map(p => `${p.x},${p.y}`));
+    const busy = f => taken ?? new Set([...Object.entries(place.state?.positions || {}).map(([, p]) => p), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && nameKey(g.name) !== nameKey(clean))].filter(p => p && p.floor === f).map(p => `${p.x},${p.y}`));
     let spot = null, floorId = floor ?? place.floors[0].id;
     if (where && typeof where === 'object' && Number.isFinite(where.x)) {
         floorId = where.floor ?? floorId;
@@ -859,7 +863,7 @@ export function adoptStrays(place, partyNames) {
 export function tickGuards(place, r = Math.random, chance = 0.5) {
     const moved = [];
     for (const g of Object.values(place.guards)) {
-        if (g.state === 'gone' || g.patrol.length < 2 || r() > chance) continue;
+        if (g.state === 'gone' || g.state === 'dead' || g.patrol.length < 2 || (g.intent && g.intent !== 'wander') || r() > chance) continue;
         g.step = ((g.step ?? 0) + 1) % g.patrol.length;
         moveGuardTo(place, g, g.patrol[g.step], r);
         moved.push({ name: g.name, room: g.room });
@@ -870,7 +874,91 @@ export function tickGuards(place, r = Math.random, chance = 0.5) {
 /** Guards the party can see right now. */
 export function visibleGuards(place, floorId, visible) {
     const map = floorById(place, floorId).map;
-    return Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId && visible[g.y * map.w + g.x]);
+    return Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId && visible[g.y * map.w + g.x]);
+}
+
+/** What people on the map can be set on doing, besides standing about or walking their rounds. */
+export const INTENTS = ['attack', 'follow', 'flee', 'stay', 'wander'];
+
+/** Set what someone is set on doing (and who at); "" or junk clears it. */
+export function setIntent(g, intent, target = '') {
+    const want = String(intent ?? '').toLowerCase().trim();
+    if (want === '' || !INTENTS.includes(want)) { if (intent !== undefined && want === '') { delete g.intent; delete g.target; } return; }
+    g.intent = want;
+    if (want === 'attack') { g.hostile = true; g.state = 'alert'; }
+    if (target) g.target = String(target).slice(0, 60); else if (want !== 'attack' && want !== 'follow') delete g.target;
+}
+
+/**
+ * People with somewhere to be take up to `steps` steps: hunters (intent "attack") and hangers-on
+ * ("follow") close in on whoever they're after (the nearest of the party if nobody in particular),
+ * the frightened ("flee") get away from the party. Doors on the way open. A hunter who reaches
+ * their quarry strikes once (they're "engaged" until the next turn clears it).
+ * Returns [{name, target}] for each hunter who just reached someone.
+ */
+export function moveHunters(place, floorId, partyNames, steps = 1) {
+    const struck = [];
+    const party = partyNames.filter(n => place.state.positions[n]?.floor === floorId);
+    if (!party.length) return struck;
+    const busy = except => new Set([
+        ...party.filter(n => n !== except).map(n => `${place.state.positions[n].x},${place.state.positions[n].y}`),
+        ...Object.values(place.guards).filter(o => o.state !== 'gone' && o.state !== 'dead' && o.floor === floorId && o.name !== except).map(o => `${o.x},${o.y}`),
+    ]);
+    const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+    for (const g of Object.values(place.guards)) {
+        if (g.state === 'gone' || g.state === 'dead' || g.floor !== floorId || !['attack', 'follow', 'flee'].includes(g.intent)) continue;
+        const named = g.target && party.find(n => nameKey(n) === nameKey(g.target));
+        const quarry = named ?? [...party].sort((a, b) => dist(g, place.state.positions[a]) - dist(g, place.state.positions[b]))[0];
+        const q = place.state.positions[quarry];
+        if (g.intent === 'flee') {
+            for (let i = 0; i < steps; i++) {
+                const taken = busy(g.name);
+                const away = (x, y) => Math.min(...party.map(n => dist({ x, y }, place.state.positions[n])));
+                let best = null;
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+                    const nx = g.x + dx, ny = g.y + dy;
+                    if (!walkable(place, floorId, nx, ny) || taken.has(`${nx},${ny}`) || stairsAt(place, floorId, nx, ny)) continue;
+                    if (away(nx, ny) > away(g.x, g.y) && (!best || away(nx, ny) > away(best.x, best.y))) best = { x: nx, y: ny };
+                }
+                if (!best) break;
+                Object.assign(g, best);
+            }
+        } else {
+            const path = followSteps(place, floorId, g, q, { taken: busy(g.name), steps });
+            for (const [x, y] of path) {
+                const d = doorAt(place, floorId, x, y);
+                if (d && d.state === 'closed') setDoorState(place, d, 'open');
+                Object.assign(g, { x, y });
+            }
+            if (g.intent === 'attack' && dist(g, q) <= 1 && !g.engaged) {
+                g.engaged = true;
+                struck.push({ name: g.name, target: quarry });
+            }
+        }
+        g.room = roomAt(place, floorId, g.x, g.y)?.id ?? g.room;
+    }
+    return struck;
+}
+
+/** Someone died on the map: their body stays where they fell for a few turns. */
+export function killPerson(place, name, turn) {
+    const g = personByName(place, name);
+    if (!g || g.state === 'gone') return null;
+    Object.assign(g, { state: 'dead', deadTurn: turn });
+    delete g.intent; delete g.target; delete g.engaged;
+    return g;
+}
+
+/** Bodies that have lain there `turns` turns are cleared away. Returns how many went. */
+export function clearBodies(place, turn, turns = 3) {
+    let n = 0;
+    for (const g of Object.values(place.guards || {})) if (g.state === 'dead' && turn - (g.deadTurn ?? turn) >= turns) { g.state = 'gone'; n++; }
+    return n;
+}
+
+/** A new turn: hunters who struck may strike again (if their quarry is still in reach after it). */
+export function clearEngaged(place) {
+    for (const g of Object.values(place.guards || {})) delete g.engaged;
 }
 
 // ---------- the DM's view ----------
@@ -950,7 +1038,9 @@ export function placeView(place, partyNames) {
     if (traps.length) lines.push(`Traps known/used: ${traps.join(', ')}.`);
     const taken = Object.values(place.items).filter(i => i.state === 'taken' || i.found).map(i => `${i.id} ${i.name} ${i.state === 'taken' ? 'taken' : 'found'}`);
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}`);
+    const bodies = Object.values(place.guards).filter(g => g.state === 'dead').map(g => `${g.name} at ${coord(g.x, g.y)}`);
+    if (bodies.length) lines.push(`Bodies on the floor (dead; cleared away after a few turns): ${bodies.join('; ')}.`);
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put' }[g.intent]}${g.target && g.intent !== 'flee' && g.intent !== 'stay' ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);

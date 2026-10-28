@@ -29,6 +29,7 @@ let zoom = 1;
 let lastPlaceKey = '';
 let follow = true;          // the camera follows the player until they scroll the map themselves
 let autoAt = null;          // where our own scrolling put the view (anything else is the player scrolling)
+let choosing = null;        // {title, choices, done}: the player is picking which thing they meant
 
 /** How far the player can move this combat round, in squares. */
 function playerSpeed(c) {
@@ -40,7 +41,7 @@ function reachFor(c, b) {
     const me = parseCoord(b.positions[c.meta.persona.name], b.map);
     if (!me) return null;
     if (lockedReason(c, c.meta.persona.name)) return new Set();
-    const blocked = new Set(Object.entries(b.positions).filter(([n]) => n !== c.meta.persona.name).map(([, cd]) => parseCoord(cd, b.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
+    const blocked = new Set(Object.entries(b.positions).filter(([n]) => n !== c.meta.persona.name && !(hpOf(c, n)?.hp <= 0 && b.enemies.has(n))).map(([, cd]) => parseCoord(cd, b.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
     return reachable(b.map, me, playerSpeed(c), blocked);
 }
 
@@ -71,6 +72,37 @@ export function openMap() {
 
 export function closeMap() {
     panel?.classList.add('dm-hidden');
+    choosing?.done(null);
+}
+
+/**
+ * Ask the player which thing they meant ("Which bookshelf?"): the map opens with each one ringed
+ * and numbered; they tap one on the map or pick it from the list. Resolves with the choice, or null
+ * if they back out (or the turn is stopped).
+ * @param {{title:string, choices:{id:string, name:string, x:number, y:number, w:number, h:number, where:string}[], signal?:AbortSignal}} o
+ */
+export function chooseOnMap({ title, choices, signal = null }) {
+    choosing?.done(null);
+    return new Promise(resolve => {
+        const pick = {
+            title, choices,
+            done: choice => {
+                if (choosing !== pick) return;
+                choosing = null;
+                signal?.removeEventListener('abort', abort);
+                resolve(choice);
+                if (panel && !panel.classList.contains('dm-hidden')) renderMap();
+            },
+        };
+        const abort = () => pick.done(null);
+        signal?.addEventListener('abort', abort);
+        choosing = pick;
+        const c = campaign();
+        if (!c || !board(c) || board(c).kind !== 'place') { pick.done(null); return; }
+        ensurePanel().classList.remove('dm-hidden', 'dm-map-min');
+        viewFloor = null;
+        renderMap(true);
+    });
 }
 
 export function refreshMap() {
@@ -150,7 +182,7 @@ function board(c) {
             if (g.state === 'gone' || g.floor !== floorId || !visible[g.y * floor.map.w + g.x]) continue;
             positions[g.name] = toCoord(g.x, g.y);
             people.add(g.name);
-            if (g.hostile !== false) enemies.add(g.name);
+            if (g.hostile !== false && g.state !== 'dead') enemies.add(g.name);
         }
         const room = lead && lead.floor === floorId ? roomAt(place, floorId, lead.x, lead.y) : null;
         return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? ''].filter(Boolean).join(' · '), map: floor.map, positions, enemies, people, visible, fog: place.fog !== false };
@@ -199,7 +231,8 @@ function renderMap(center = false) {
   <div class="dm-map-hover dm-muted">&nbsp;</div>
   <div class="dm-map-roster">${roster}</div>
   ${exploring
-        ? `<div class="dm-map-actions"><span class="dm-map-pending">${lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : 'Tap a square to walk there, or tap someone for options. Doors open as you go; locked ones need a key or a plan.'}</span></div>`
+        ? choosing ? `<div class="dm-map-actions dm-map-choose"><span class="dm-map-pending"><b>${escapeHtml(choosing.title)}</b> Tap one on the map, or pick:</span>${choosing.choices.map((ch, i) => `<div class="menu_button" data-pick="${i}" title="${escapeHtml(ch.where || '')}"><b>${i + 1}</b> ${escapeHtml(ch.name)}<small> · ${escapeHtml(ch.where || '')}</small></div>`).join('')}<div class="menu_button" data-pick="-1">Never mind</div></div>`
+        : `<div class="dm-map-actions"><span class="dm-map-pending">${lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : 'Tap a square to walk there, or tap someone for options. Doors open as you go; locked ones need a key or a plan.'}</span></div>`
         : `<div class="dm-map-actions">
     <span class="dm-map-pending">${pending ? escapeHtml(pending) : lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : b.kind === 'combat' ? `Your move this round: tap a lit square (up to ${playerSpeed(c)} squares, ${playerSpeed(c) * 5} ft), or an enemy to target.` : 'Tap a square to move, or an enemy to target.'}</span>
     <div class="menu_button" data-act="add" ${pending ? '' : 'disabled'}>Add to message</div>
@@ -226,6 +259,13 @@ function renderMap(center = false) {
         closeMenu();
         const sq = squareFromEvent(ev, canvas, map);
         if (!sq) return;
+        if (choosing) {
+            const hit = choosing.choices.find(ch => sq.x >= ch.x - 0 && sq.x < ch.x + (ch.w || 1) && sq.y >= ch.y && sq.y < ch.y + (ch.h || 1))
+                ?? choosing.choices.find(ch => sq.x >= ch.x - 1 && sq.x <= ch.x + (ch.w || 1) && sq.y >= ch.y - 1 && sq.y <= ch.y + (ch.h || 1));
+            if (hit) choosing.done(hit);
+            else toastr.info(`${choosing.title} Tap one of the numbered ones.`, 'Map', { timeOut: 2000 });
+            return;
+        }
         // Anyone (you included): a little card with their name, health and what they're doing. What
         // people do goes through the chat, so the story and the characters decide it.
         const who = exploring ? whoAt(b.positions, map, sq) : null;
@@ -259,6 +299,7 @@ function renderMap(center = false) {
     panel.querySelector('[data-act="min"]').addEventListener('click', () => { panel.classList.toggle('dm-map-min'); ensureLoop(); });
     panel.querySelector('[data-act="clear"]')?.addEventListener('click', () => { selection = { move: '', target: '' }; renderMap(); });
     panel.querySelector('[data-act="add"]')?.addEventListener('click', addToMessage);
+    panel.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => { const i = Number(el.dataset.pick); choosing?.done(i >= 0 ? choosing.choices[i] : null); }));
 }
 
 /** Big maps keep their real size (scrollable, zoomable); small ones fit the panel. */
@@ -352,6 +393,19 @@ function drawBoard(canvas, c, b) {
     if (reach) {
         lctx.fillStyle = 'rgba(120,200,255,0.16)';
         for (const k of reach.keys()) { const [x, y] = k.split(',').map(Number); const [px, py] = cell(x, y); lctx.fillRect(px + 2, py + 2, tile - 4, tile - 4); }
+    }
+    // Picking which one: each candidate ringed and numbered.
+    if (choosing && b.kind === 'place') {
+        choosing.choices.forEach((ch, i) => {
+            if (ch.floor && ch.floor !== b.floor.id) return;
+            const [px, py] = cell(ch.x, ch.y + (ch.h || 1) - 1), w = (ch.w || 1) * tile, h = (ch.h || 1) * tile;
+            lctx.strokeStyle = '#ffd54a'; lctx.lineWidth = 3; lctx.setLineDash([6, 4]);
+            lctx.strokeRect(px + 2, py + 2, w - 4, h - 4);
+            lctx.setLineDash([]);
+            const r = Math.max(9, tile * 0.2);
+            lctx.fillStyle = '#ffd54a'; lctx.beginPath(); lctx.arc(px + r + 2, py + r + 2, r, 0, Math.PI * 2); lctx.fill();
+            lctx.fillStyle = '#222'; lctx.font = `bold ${Math.round(r * 1.2)}px sans-serif`; lctx.fillText(String(i + 1), px + r + 2, py + r + 3);
+        });
     }
     const sel = parseCoord(selection.move, map);
     if (sel) { const [px, py] = cell(sel.x, sel.y); lctx.strokeStyle = '#ffd54a'; lctx.lineWidth = 4; lctx.strokeRect(px + 3, py + 3, tile - 6, tile - 6); }
@@ -458,7 +512,7 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             let anim = 'idle', elapsed = now + nameOffset(name);
             const rest = b.kind === 'place' ? poseNow(b.place, name) : null;
             const conds = conditionsOf(c.docs.world, name).join(' ').toLowerCase();
-            const out = (hp && hp.hp_max && hp.hp <= 0) || /unconscious|knocked out/.test(conds);
+            const out = (hp && hp.hp_max && hp.hp <= 0) || /unconscious|knocked out|dead/.test(conds) || b.place?.guards?.[name]?.state === 'dead';
             if (out) anim = 'down';
             else if (rest) anim = rest.pose;
             else if (/asleep|sleeping/.test(conds)) anim = 'sleep';

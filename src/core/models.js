@@ -9,6 +9,9 @@ export const DEFAULT_LIGHT_MODEL = 'claude-haiku-5-5';
  * Every job Claude does, in the order the settings panel shows them.
  * key = the DM call reason (core/pacing.js dmReasons) or a non-turn job; main = uses the main model by default.
  */
+/** Everyday jobs that moved to the light model in v0.24 (they hand up to the main model for big moments). */
+export const LIGHT_V24 = Object.freeze(['checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'sprite']);
+
 export const TASKS = Object.freeze([
     { key: 'campaign_design', group: 'Setup', label: 'Designing a new campaign', main: true },
     { key: 'pitches', group: 'Setup', label: 'Pitching story ideas', main: true },
@@ -16,24 +19,25 @@ export const TASKS = Object.freeze([
     { key: 'persona_sheet', group: 'Setup', label: 'Reading your PDF character sheet', main: true },
     { key: 'character_sheet', group: 'Setup', label: 'Writing sheets for party members', main: true },
     { key: 'build_place', group: 'Setup', label: 'Planning a map (every room of a big place, a town)', main: true },
-    { key: 'sprite', group: 'Setup', label: 'Describing your party\'s little map figures', main: true },
+    { key: 'sprite', group: 'Setup', label: 'Describing your party\'s little map figures', main: false },
     { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: true },
     { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: true },
     { key: 'deadlock', group: 'Story direction', label: 'Breaking a deadlock (you keep refusing)', main: true },
-    { key: 'checkin', group: 'Story direction', label: 'The world moving on between your actions', main: true },
-    { key: 'combat_action', group: 'Combat', label: 'Starting fights and your combat actions', main: true },
-    { key: 'combat_round', group: 'Combat', label: 'Running combat rounds', main: true },
-    { key: 'risky_action', group: 'Everyday play', label: 'Risky actions (sneak, lie, climb)', main: true },
-    { key: 'roll_result', group: 'Everyday play', label: 'Narrating your roll results', main: true },
-    { key: 'scene_move', group: 'Everyday play', label: 'Travel, rests and time skips', main: true },
-    { key: 'event', group: 'Everyday play', label: 'Random events', main: true },
-    { key: 'companion_task', group: 'Everyday play', label: 'Things you tell a companion to do (search, scout)', main: true },
-    { key: 'companion_action', group: 'Everyday play', label: 'Ruling on a companion\'s risky attempt', main: true },
+    { key: 'checkin', group: 'Story direction', label: 'The world moving on between your actions', main: false },
+    { key: 'combat_action', group: 'Combat', label: 'Starting fights and your combat actions', main: false },
+    { key: 'combat_round', group: 'Combat', label: 'Running combat rounds', main: false },
+    { key: 'risky_action', group: 'Everyday play', label: 'Risky actions (sneak, lie, climb)', main: false },
+    { key: 'roll_result', group: 'Everyday play', label: 'Narrating your roll results', main: false },
+    { key: 'scene_move', group: 'Everyday play', label: 'Travel, rests and time skips', main: false },
+    { key: 'event', group: 'Everyday play', label: 'Random events', main: false },
+    { key: 'companion_task', group: 'Everyday play', label: 'Things you tell a companion to do (search, scout)', main: false },
+    { key: 'companion_action', group: 'Everyday play', label: 'Ruling on a companion\'s risky attempt', main: false },
     { key: 'npc_addressed', group: 'Everyday play', label: 'Talking to someone new', main: false },
     { key: 'ooc', group: 'Everyday play', label: 'Out-of-character questions', main: false },
     { key: 'manual', group: 'Everyday play', label: 'When you ask the DM to step in', main: false },
     { key: 'solo', group: 'Everyday play', label: 'Your moments with no companion around', main: false },
     { key: 'explore', group: 'Everyday play', label: 'Exploring a map (traps, guards spotted)', main: false },
+    { key: 'map_sync', group: 'Housekeeping', label: 'Keeping the map in step with the story (when the local helper is off)', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
     { key: 'resync', group: 'Housekeeping', label: 'Fixing a mismatch with the chat', main: true },

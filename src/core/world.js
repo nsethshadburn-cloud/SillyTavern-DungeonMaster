@@ -290,7 +290,7 @@ export function startCombat(world, start, companions, rng) {
     const enemies = {};
     const order = [];
     for (const e of start.enemies || []) {
-        enemies[e.name] = { hp: e.hp, hp_max: e.hp, ac: e.ac, conditions: [], ...(e.sprite ? { sprite: e.sprite } : {}) };
+        enemies[e.name] = { hp: e.hp, hp_max: e.hp, ac: e.ac, conditions: [], ...(e.sprite ? { sprite: e.sprite } : {}), ...(e.damage ? { damage: e.damage } : {}) };
         const r = roll(`1d20${e.dex >= 0 ? '+' : ''}${e.dex}`, { rng });
         order.push({ name: e.name, init: r?.total ?? 10, detail: r?.detail ?? '' });
     }
@@ -319,9 +319,15 @@ export function endCombat(world) {
     world.combat = null;
 }
 
-export function combatSummary(world) {
+export function combatSummary(world, player = '') {
     if (!world.combat) return 'Not in combat.';
     const lines = [`Round ${world.combat.round}. Initiative: ${world.combat.order.map(o => `${o.name} ${o.init}`).join(', ')}.`];
+    const at = world.combat.order.findIndex(o => o.name === player);
+    if (player && at < 0) lines.push(`WAITING for ${player}'s initiative roll: nobody acts yet. Ask for it (player_roll kind "initiative") if it isn't already asked.`);
+    else if (player) {
+        const before = world.combat.order.slice(0, at).map(o => o.name), after = world.combat.order.slice(at + 1).map(o => o.name);
+        lines.push(`Order around the player: ${before.length ? before.join(', ') : 'nobody'} act before ${player}; ${after.length ? after.join(', ') : 'nobody'} after. Act only for those whose turn it is, then stop at ${player}'s turn.`);
+    }
     const enemies = Object.entries(world.combat.enemies);
     if (enemies.length) {
         lines.push('Enemies: ' + enemies.map(([n, e]) => `${n} HP ${e.hp}/${e.hp_max} AC ${e.ac}${e.conditions?.length ? ` (${e.conditions.join(', ')})` : ''}`).join('; ') + '.');
@@ -333,4 +339,36 @@ function arrayOf(v) {
     if (Array.isArray(v)) return v.filter(x => x !== null && x !== undefined && x !== '');
     if (v === null || v === undefined || v === '') return [];
     return [v];
+}
+
+// ---------- who has noticed whom ----------
+
+/** Record a sighting (or that someone stayed unseen): world.aware = {watcher: [who they've seen]}. */
+export function noteSeen(world, seer, seen, yes) {
+    const a = String(seer || '').trim(), b = String(seen || '').trim();
+    if (!a || !b) return;
+    world.aware ??= {};
+    const key = Object.keys(world.aware).find(k => k.toLowerCase() === a.toLowerCase()) ?? a;
+    const list = (world.aware[key] ?? []).filter(n => n.toLowerCase() !== b.toLowerCase());
+    if (yes) list.push(b);
+    if (list.length) world.aware[key] = list; else delete world.aware[key];
+}
+
+/** The DM's "noticed" field: {watcher: [names]} replaces what that watcher has seen ([] = lost track of everyone). */
+export function applyNoticed(world, noticed) {
+    const log = [];
+    for (const [seer, raw] of Object.entries(noticed && typeof noticed === 'object' ? noticed : {})) {
+        const names = arrayOf(raw).map(String).filter(n => !/^(none|nobody|no one)$/i.test(n));
+        world.aware ??= {};
+        const key = Object.keys(world.aware).find(k => k.toLowerCase() === seer.toLowerCase()) ?? seer;
+        if (names.length) world.aware[key] = [...new Set(names)]; else delete world.aware[key];
+        log.push(names.length ? `${seer} has seen ${names.join(', ')}` : `${seer} has seen nobody`);
+    }
+    return log;
+}
+
+/** Who has noticed whom, for the DM. */
+export function awareSummary(world) {
+    const rows = Object.entries(world.aware ?? {}).filter(([, l]) => l?.length);
+    return rows.length ? rows.map(([k, l]) => `${k} has seen ${l.join(', ')}`).join('; ') + '. Everyone else is unaware of the party.' : '';
 }

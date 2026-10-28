@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS, OLD_DEFAULTS } from '../core/notes.js';
-import { DEFAULT_MAIN_MODEL, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
+import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -32,7 +32,8 @@ export const DEFAULTS = Object.freeze({
     helperMaxTokens: 160,
     useHelper: true,
     mapTier: 'some',            // 'off' (no maps, all in the chat) | 'some' (where needed or asked) | 'always' (every new location)
-    bookkeeper: true,           // after each turn the helper checks the story against HP, conditions and items
+    bookkeeper: true,
+    mapSync: 'local',           // after each turn the map is put in step with the story: 'local' (the helper; Haiku without one), 'claude' (Haiku), 'off'           // after each turn the helper checks the story against HP, conditions and items
 
     // Budget (USD) and Claude prices (USD per million tokens)
     monthlyCap: 20,
@@ -112,6 +113,15 @@ export function settings() {
             for (const k of ['risky_action', 'roll_result', 'scene_move', 'event']) if (s.taskModels[k] === 'claude-haiku-5-5') s.taskModels[k] = main;
         }
         s.defaultsV7 = true;
+    }
+    // v0.24: everyday jobs left on the main model move to the light one (Haiku), which hands big
+    // moments up by itself. Jobs someone set to another model stay as they are.
+    if (!s.lightV24) {
+        if (s.taskModels) {
+            const main = s.dmModel || DEFAULT_MAIN_MODEL;
+            for (const k of LIGHT_V24) if (s.taskModels[k] === main) s.taskModels[k] = DEFAULT_LIGHT_MODEL;
+        }
+        s.lightV24 = true;
     }
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();

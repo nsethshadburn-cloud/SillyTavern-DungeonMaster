@@ -324,6 +324,20 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.24 (the map and the story in step)
+- Why they drifted apart: the DM's prose could add a creature or move someone without the matching place_changes, and nothing caught it; "the kennel" was matched by a helper picking an id from a list deduplicated by name (one kennel shown, the rest invisible), and nothing at all pinned down which bookshelf the player meant.
+- Which thing: the triage helper returns `thing` (the player's words for what is acted on). `core/targets.js` matches it against the furniture, doors, windows and people on the floor that have been seen (own name counts double, other words once; "north", "nearest", "other" understood; the last one acted on is remembered per actor). One match: `approachSpot` (in-turn walk) or the companion's task walk goes there, and the DM gets a TARGET line with the id. Several in reach: `chooseOnMap` rings and numbers them, the turn waits (stop/close = none).
+- Map sync (`core/mapsync.js`, `atlas.applyMapSync`): after each turn, queued like the bookkeeper and awaited at the start of the next turn. Local helper by default (`mapSync` setting: local / claude = Haiku task `map_sync` / off). Ops: spawn, move, hide, pose, door, thing, gone, intent; every id and name checked against `syncContext`; party members walk.
+- Intents on people (`setIntent`, `moveHunters`): attack / follow / flee / stay / wander. Hunters step with each walking step and a turn's worth (6) each turn; reaching someone stops the walk and calls the DM once per turn (`engaged`, cleared each player turn). The DM can set intents through place_changes.guards.
+- Moved turns: 12 squares walked without a chat turn → `runTurn({ moved: true })`: fire, patrols, hunters, the world clock; the DM only for events or a due check-in.
+- Awareness: `spot` {seer, seen} on npc_rolls and player_roll, `noticed` for the obvious; kept in world.aware, shown to the DM (AWARE) and companions.
+- Initiative: while the player has no initiative in the order, npc_rolls are held back and initiative is asked for; `combatSummary` names who acts before and after the player.
+- Attacks: a missing target, AC or damage is filled in (`attackTarget`, `armorOf`, `attackDice`; enemies can carry `damage` from start_combat).
+- Bodies: `killPerson` / `clearBodies` (3 turns); downed enemies stay on the battle board 3 rounds; bodies never block, hunt, patrol or "come into view".
+- Companions' people line marks enemies, the dead and who has spotted the party.
+- Traps: `trapTile` (doorways, in front of TRAP_GUARDS things, along hallways; by the trap's own words; 15% anywhere) and `wildTrap` (trails into a clearing, by its altar or graves).
+- Models: everyday jobs (check-ins, combat, risky actions, roll results, travel, events, companion tasks and attempts, figures) default to Haiku; the `lightV24` migration moves saved ones still on the main model.
+
 ### v0.23.1 (building maps works again)
 - Since v0.20, `requestBuild` declared a `const plan` in the same block where it first reads its own `plan` option (the ready-plan argument), so reading the option hit the temporal dead zone and every place build but towns failed with "Cannot access 'plan' before initialization". The normalized plan is now `placePlan`. A scan of all the code for other uses before a const/let found none.
 

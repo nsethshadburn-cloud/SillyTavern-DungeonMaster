@@ -69,7 +69,7 @@ export function ruleTriage(text, ctx = {}) {
  * Prompt for the local helper. Kept tiny, no thinking trigger.
  * @param {{player:string, message:string, recent:string, speakers:string[], scene:string}} p
  */
-export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [], companions = [], places = [] }) {
+export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [], companions = [], places = [], mapOn = false }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
     const user = [
         `Scene: ${scene || 'unknown'}`,
@@ -89,9 +89,10 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
             : '"speakers": [] (nobody is with the player right now).',
         away.length ? `Not with the player (can't hear or reply): ${away.join('; ')}.` : '',
         '"addressed": the name of the character the player is speaking to or acting toward (any name, even if not in that list), or "" if nobody in particular.',
-        companions.length ? `"task": only if the player tells or asks a companion (${companions.map(s => JSON.stringify(s)).join(', ')}) to DO something now (not just talk): {"who": their name, "what": "a few words", "go": ${places.length ? '"the id of the place or thing they have to go to first, from the list below, or empty"' : '""'}, "dm": true if what happens or what they find isn't known yet and the Dungeon Master has to decide it (searching, looking inside, checking for something, opening, picking a lock, sneaking, scouting, listening at a door, anything that could need a dice roll), false for simple things whose result is obvious (follow me, wait here, sit down, hand me that, go stand over there)}. Otherwise "task": null.` : '',
+        companions.length ? `"task": only if the player tells or asks a companion (${companions.map(s => JSON.stringify(s)).join(', ')}) to DO something now (not just talk): {"who": their name, "what": "a few words", "go": ${places.length ? '"the id of a room they have to go to, from the list below, or empty"' : '""'}, "dm": true if what happens or what they find isn't known yet and the Dungeon Master has to decide it (searching, looking inside, checking for something, opening, picking a lock, sneaking, scouting, listening at a door, anything that could need a dice roll), false for simple things whose result is obvious (follow me, wait here, sit down, hand me that, go stand over there)}. Otherwise "task": null.` : '',
+        mapOn ? '"thing": the object, door, window or creature on the map that the player (or the companion given the task) is about to touch, open, search, smash, take from, hide in, sit on, climb, unlock or attack, in the words the player used ("bookshelf", "the kennel", "north door", "the dog"), or "" if they only talk or move about.' : '',
         companions.length ? `"warned": the name of the companion the player tells or warns about a trap or a dangerous spot (where it is, to watch out for it), or "".` : '',
-        companions.length && places.length ? `Places and things on the map near the party: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}.` : '',
+        companions.length && places.length ? `Rooms near the party: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}.` : '',
         'Example: {"category":"banter","engaged":2,"stalled":false,"speakers":["Judy Hopps"],"addressed":"Judy Hopps"' + (companions.length ? ',"task":null' : '') + '}',
     ].filter(Boolean).join('\n');
     return { system, user };
@@ -118,6 +119,7 @@ export function parseHelperTriage(text, speakers = []) {
         addressed: typeof data.addressed === 'string' ? data.addressed.trim().slice(0, 60) : '',
         task: parseTask(data.task),
         warned: typeof data.warned === 'string' ? data.warned.trim().slice(0, 60) : '',
+        thing: typeof data.thing === 'string' ? data.thing.trim().slice(0, 60) : '',
     };
 }
 

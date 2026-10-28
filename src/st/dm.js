@@ -13,7 +13,7 @@ import { activeBoard } from './fire-turn.js';
 import { fireSummary } from '../core/fire.js';
 import { GRAND_KINDS } from '../core/layout.js';
 import { pacingReport } from '../core/pacing.js';
-import { rosterSummary, combatSummary, isAway } from '../core/world.js';
+import { rosterSummary, combatSummary, isAway, awareSummary } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
 import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/state.js';
@@ -149,7 +149,7 @@ const REASON_TEXT = {
  *  handUp = this model may hand the turn to the main DM model
  * @returns {Promise<{layers:string[], user:string}>}
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, companionTask = null, placeEvent = '' }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, companionTask = null, placeEvent = '', target = null }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
@@ -193,7 +193,9 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const carried = Object.entries(w.inventory || {}).filter(([, l]) => l.length).map(([n, l]) => `${n}: ${l.join(', ')}`);
     sections.push(`Gold: ${w.gold ?? 0}. Shared pack: ${w.items?.length ? w.items.join(', ') : 'nothing noted'}.${carried.length ? ` Carried: ${carried.join('; ')}.` : ''}`);
     if (Object.keys(w.flags || {}).length) sections.push(`Flags: ${JSON.stringify(w.flags)}`);
-    sections.push(combatSummary(w));
+    sections.push(combatSummary(w, c.meta.persona.name));
+    const aware = awareSummary(w);
+    if (aware) sections.push(`AWARE (who has noticed whom; decided by rolls, keep to it): ${aware}`);
     if (w.combat?.map && w.combat.inPlace && here) {
         // A fight inside a big place: only the area around the party, in the floor's own squares.
         const lead = Object.values(w.combat.positions || {}).map(cd => /^([a-z]{1,2})(\d+)$/.exec(cd)).filter(Boolean)[0];
@@ -233,6 +235,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     }
     if (playerMessage) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
     if (companionTask) sections.push('', `COMPANION TASK: the player told ${companionTask.name} to ${companionTask.what || 'do something'}${companionTask.went ? ` (they're now at ${companionTask.went} on the map)` : ''}.`);
+    if (target) sections.push('', `TARGET: ${target.actor} acts on ${target.line}, ${target.where}${target.reached ? `; ${target.actor} is standing right beside it now` : ''}. It's that one exactly (picked on the map), not another ${target.name}: any place_changes for it use ${target.kind === 'person' ? 'that name' : `the id ${target.id}`}.`);
     if (companionAction) sections.push('', `COMPANION ATTEMPT TO RULE ON: ${companionAction.name} tries to ${companionAction.what || 'do something risky'}. Their reply: ${trimToTokens(companionAction.text, 500)}`);
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));

@@ -184,15 +184,15 @@ test('budget estimates', () => {
     assert.equal(nightKey(new Date(2026, 9, 19, 2, 0)), '2026-10-18');
 });
 
-test('per-job models: Sonnet for setup, direction and combat, Haiku for the rest', () => {
+test('per-job models: Sonnet for setup and story direction, Haiku for everyday play', () => {
     const S = 'claude-sonnet-5-5', H = 'claude-haiku-5-5';
     const taskModels = defaultTaskModels();
     const price = { [S]: 2, [H]: 0.1, 'claude-opus-5-5': 5 };
     const o = { hybrid: true, mainModel: S, taskModels, rank: m => price[m] ?? 0 };
-    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'drift', 'stalled', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_action']) {
+    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'build_place', 'drift', 'stalled', 'deadlock']) {
         assert.equal(pickModel([k], o), S, k);
     }
-    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes']) {
+    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'explore', 'map_sync']) {
         assert.equal(pickModel([k], o), H, k);
     }
     assert.equal(pickModel(['ooc', 'drift'], o), S, 'the more capable model wins when jobs disagree');

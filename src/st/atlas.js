@@ -15,8 +15,9 @@ import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, fi
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
-import { PROPS, HIDE } from '../core/grid.js';
-import { personByName, openSquareNear } from '../core/explore.js';
+import { PROPS, HIDE, colName } from '../core/grid.js';
+import { personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
+import { resolveTarget, whereWords, thingName } from '../core/targets.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
 import { trimToTokens, extractJson } from '../core/text.js';
@@ -210,12 +211,15 @@ export async function companionGoTo(c, name, targetId, { hide = false, pose = ''
     const others = new Set([...Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === pos.floor).map(g => `${g.x},${g.y}`)]);
     const prop = (map.props || []).find(p => p.id === targetId);
     const room = place.rooms[targetId];
+    // Or a door, a window, or someone on the map: they go and stand beside it.
+    const other = prop || room ? null : place.doors[targetId] ?? place.windows?.[targetId] ?? personByName(place, targetId) ?? (place.state.positions[targetId] && targetId !== name ? { ...place.state.positions[targetId], name: targetId } : null);
+    const spot = prop ?? (other && other.floor === pos.floor ? other : null);
     let goals = [];
-    if (prop) {
+    if (spot) {
         // Right beside it (or on it, if you can stand there: a pile of hay).
-        const w = prop.w || 1, h = prop.h || 1;
-        for (let x = prop.x - 1; x <= prop.x + w; x++) for (let y = prop.y - 1; y <= prop.y + h; y++) goals.push({ x, y });
-        goals = goals.filter(g => walkable(place, pos.floor, g.x, g.y) && !others.has(`${g.x},${g.y}`));
+        const w = spot.w || 1, h = spot.h || 1;
+        for (let x = spot.x - 1; x <= spot.x + w; x++) for (let y = spot.y - 1; y <= spot.y + h; y++) goals.push({ x, y });
+        goals = goals.filter(g => walkable(place, pos.floor, g.x, g.y) && !others.has(`${g.x},${g.y}`) && !(g.x === spot.x && g.y === spot.y && !prop));
     } else if (room && room.floor === pos.floor) {
         const spot = openSquareNear(place, pos.floor, room.rect.x + Math.floor(room.rect.w / 2), room.rect.y + Math.floor(room.rect.h / 2), others, 4);
         if (spot) goals.push(spot);
@@ -258,7 +262,8 @@ export async function companionGoTo(c, name, targetId, { hide = false, pose = ''
     savePlace(key, c);
     refreshMap();
     const restingNow = !hide && pose && prop ? poseNow(place, name) : null;
-    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} the ` : restingNow ? `${restingNow.pose === 'sit' ? 'sit on' : restingNow.pose === 'sleep' ? 'sleep on' : 'lie on'} the ` : ''}${prop.label || PROPS[prop.type]?.name || prop.type}` : room.name;
+    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} the ` : restingNow ? `${restingNow.pose === 'sit' ? 'sit on' : restingNow.pose === 'sleep' ? 'sleep on' : 'lie on'} the ` : ''}${prop.label || PROPS[prop.type]?.name || prop.type}`
+        : room ? room.name : other.name ? other.name : place.doors[targetId] ? 'door' : 'window';
 }
 
 /**
@@ -435,7 +440,7 @@ export function setMapAction(text) { mapAction = String(text || ''); }
 export function takeMapAction() { const t = mapAction; mapAction = ''; return t; }
 
 /** Walk up next to a thing (a rect of squares) on the map. Resolves true when standing beside it. */
-export async function approachSpot(spot, redraw = () => { }) {
+export async function approachSpot(spot, redraw = () => { }, { inTurn = false } = {}) {
     const c = campaign();
     const cur = currentPlace(c);
     if (!cur) return false;
@@ -452,7 +457,7 @@ export async function approachSpot(spot, redraw = () => { }) {
         if (p && (!best || p.length < best.length)) best = { length: p.length, x, y };
     }
     if (!best) { toastr.info('You can\'t get next to that from here.', 'Map', { timeOut: 2500 }); return false; }
-    await walkTo({ x: best.x, y: best.y }, redraw);
+    await walkTo({ x: best.x, y: best.y }, redraw, { inTurn });
     const now = place.state.positions[c.meta.persona.name];
     return near(now.x, now.y);
 }
@@ -745,6 +750,16 @@ async function enterBuilding(c, townKey, town, door) {
 
 let walking = false;
 
+/** Squares walked since the last turn; enough walking is a turn of its own. */
+let walked = 0;
+const MOVE_TURN_SQUARES = 12;
+export function resetWalked() { walked = 0; }
+
+/** What a hunter reaching someone tells the DM. */
+function hunterEvent(caught) {
+    return `${caught.map(h => `${h.name} catches up with ${h.target} and attacks`).join('; ')}. That starts a fight: send start_combat now (with them in it) and ask for initiative; their attack comes in initiative order.`;
+}
+
 /** Squares a companion steers around: traps they know about, and fire. */
 function dangersFor(place, floorId, name) {
     return [...trapsKnownTo(place, floorId, name), ...Object.keys(floorById(place, floorId).map.fire || {})];
@@ -772,7 +787,7 @@ function passivePerception(c) {
  * @param {{x:number, y:number}} target
  * @param {(()=>void)} redraw called after each step
  */
-export async function walkTo(target, redraw = () => { }) {
+export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}) {
     const c = campaign();
     const cur = currentPlace(c);
     if (!c || !cur || walking) return;
@@ -784,14 +799,14 @@ export async function walkTo(target, redraw = () => { }) {
     if (place.state.hidden?.[names[0]]) delete place.state.hidden[names[0]];
     standUp(place, names[0]);
     const { isRunning } = await import('./orchestrator.js');
-    if (isRunning()) { toastr.info('The DM is busy. Move when the turn is done.', 'Map', { timeOut: 2500 }); return; }
+    if (!inTurn && isRunning()) { toastr.info('The DM is busy. Move when the turn is done.', 'Map', { timeOut: 2500 }); return; }
     const floorId = lead.floor;
     // Running into the dark: no warnings about what's there. Walk the real way toward it, as far as it goes.
     const dark = place.fog !== false && !isExplored(place, floorId, target.x, target.y);
     const door = dark ? null : doorAt(place, floorId, target.x, target.y);
     if (door && door.state === 'locked') { toastr.info(`That door is locked (${door.id}). Tell the DM how you deal with it.`, 'Map', { timeOut: 3500 }); return; }
     const others = new Set([
-        ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId).map(g => `${g.x},${g.y}`),
+        ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId).map(g => `${g.x},${g.y}`),
         ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
     ]);
     const path = findPath(place, floorId, lead, target, { blocked: others, toward: dark });
@@ -858,7 +873,10 @@ export async function walkTo(target, redraw = () => { }) {
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') setDoorState(place, d, 'open');
             lead.x = x; lead.y = y;
+            walked++;
             advance();
+            // Anyone after the party keeps after them, a step for each of the player's.
+            const caught = moveHunters(place, floorId, names, 1);
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
@@ -866,6 +884,7 @@ export async function walkTo(target, redraw = () => { }) {
             // Investigation roll) or steps on one: then it springs.
             const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
+            if (caught.length) { redraw(); event = hunterEvent(caught); break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);
@@ -930,9 +949,20 @@ export async function walkTo(target, redraw = () => { }) {
     } finally {
         walking = false;
     }
+    // Inside a turn (walking up to what the player acts on): what happened goes to that turn.
+    if (inTurn) {
+        if (event) trapEvents.push(event);
+        return;
+    }
     if (event) {
+        walked = 0;
         const { runTurn } = await import('./orchestrator.js');
         await runTurn({ force: 'explore', placeEvent: event });
+    } else if (walked >= MOVE_TURN_SQUARES && !handoff && !c.docs.world.combat) {
+        // Walked far enough for the world to take a turn too (fire spreads, people move, the DM's clock ticks).
+        walked = 0;
+        const { runTurn } = await import('./orchestrator.js');
+        await runTurn({ moved: true });
     } else if (newRoom && !handoff) {
         const { companionCuriosity } = await import('./orchestrator.js');
         await companionCuriosity(c, newRoom);
@@ -947,7 +977,172 @@ export function tickPlace(c = campaign()) {
     const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
     const before = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
     tickGuards(place);
+    clearBodies(place, c.meta.turn);
     const now = visibleGuards(place, floorId, look(c, key, place));
     savePlace(key, c);
     return now.filter(g => !before.has(g.name) && g.hostile !== false);
+}
+
+/**
+ * A turn passes for the people with somewhere to be: hunters close in (up to 6 squares, a turn of
+ * movement), followers keep up, the frightened get away. Returns what the DM should hear (someone
+ * reached the party), or ''.
+ */
+export function huntersTurn(c = campaign()) {
+    const cur = currentPlace(c);
+    if (!cur || c.docs.world.combat || !Object.values(cur.place.guards).some(g => g.intent)) return '';
+    const { key, place } = cur;
+    clearEngaged(place);
+    const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
+    const caught = moveHunters(place, floorId, partyOnMap(c), 6);
+    look(c, key, place);
+    savePlace(key, c);
+    return caught.length ? hunterEvent(caught) : '';
+}
+
+/** Which thing someone means by their words, among what they can see on their floor (see core/targets.js). */
+export function targetFor(c, actor, words) {
+    const cur = currentPlace(c);
+    const pos = cur && whereIs(cur.place, actor);
+    if (!pos) return {};
+    const r = resolveTarget(cur.place, pos, words, { last: cur.place.state.lastTarget?.[actor] ?? '', exclude: partyOnMap(c) });
+    const tell = t => ({ ...t, floor: pos.floor, where: whereWords(cur.place, pos.floor, t, pos) });
+    return r.pick ? { pick: tell(r.pick) } : r.choices ? { choices: r.choices.map(tell) } : {};
+}
+
+/** Remember what someone acted on, so "the bookshelf" next time means the same one. */
+export function rememberTarget(c, actor, id) {
+    const cur = currentPlace(c);
+    if (!cur) return;
+    cur.place.state.lastTarget ??= {};
+    cur.place.state.lastTarget[actor] = id;
+}
+
+/**
+ * Put what the story did on the map (checked changes from core/mapsync.js): people appear, walk
+ * over to things, hide, sit, go; doors and things change. Party members walk there (never jump).
+ * Returns plain lines of what changed.
+ */
+export async function applyMapSync(c, ops) {
+    const cur = currentPlace(c);
+    if (!cur || !ops.length) return [];
+    const { key, place } = cur;
+    const log = [];
+    const player = c.meta.persona.name;
+    const lead = place.state.positions[player];
+    const floorId = lead?.floor ?? place.state.floor;
+    const where = id => {
+        if (!id) return null;
+        const p = propById(place, id);
+        if (p) return { floor: p.floor, x: p.prop.x, y: p.prop.y };
+        const d = place.doors[id];
+        if (d) return { floor: d.floor, x: d.x, y: d.y };
+        if (place.rooms[id]) return id;
+        const someone = place.state.positions[id] ?? personByName(place, id);
+        return someone && Number.isFinite(someone.x) ? { floor: someone.floor, x: someone.x, y: someone.y } : null;
+    };
+    const { refreshMap } = await import('../ui/map.js');
+    for (const ch of ops) {
+        if (ch.op === 'spawn') {
+            const at = where(ch.near) ?? (lead ? { floor: floorId, x: lead.x, y: lead.y } : null);
+            const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile } });
+            if (!g) continue;
+            if (ch.intent) setIntent(g, ch.intent, ch.target);
+            log.push(`${g.name} appears${ch.near ? ` by the ${thingLabel(place, ch.near)}` : ''}${g.intent === 'attack' ? `, going for ${g.target || 'the party'}` : ''}`);
+        } else if (ch.op === 'move' || ch.op === 'hide' || ch.op === 'pose') {
+            const isParty = Boolean(place.state.positions[ch.who]);
+            if (!isParty) {
+                const g = personByName(place, ch.who), to = where(ch.to);
+                if (g && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to the ${thingLabel(place, ch.to)}`);
+                continue;
+            }
+            if (lockedReason(c, ch.who)) continue;
+            if (ch.op === 'pose' && ch.how === 'stand') { if (place.state.pose?.[ch.who]) { standUp(place, ch.who); log.push(`${ch.who} gets up`); } continue; }
+            // Hiding with no thing named: the nearest place to hide in their room.
+            let to = ch.op === 'move' ? ch.to : ch.op === 'hide' ? ch.in : ch.on;
+            if (ch.op === 'hide' && !to) to = nearestHide(place, ch.who)?.id ?? '';
+            if (!to) continue;
+            if (ch.who === player) {
+                const spot = where(to);
+                if (!spot || typeof spot === 'string') continue;
+                const pr = propById(place, to)?.prop;
+                await approachSpot(pr ? { x: pr.x, y: pr.y, w: pr.w, h: pr.h } : spot, refreshMap, { inTurn: true });
+                if (ch.op === 'hide') hideAt(c, player, to);
+                else if (ch.op === 'pose') restAt(c, player, to, ch.how);
+                log.push(`${player} ${ch.op === 'hide' ? 'hides' : ch.op === 'pose' ? ch.how + 's' : 'goes'} by the ${thingLabel(place, to)}`);
+                continue;
+            }
+            const went = await companionGoTo(c, ch.who, to, { hide: ch.op === 'hide', pose: ch.op === 'pose' ? ch.how : '' });
+            if (went) log.push(`${ch.who} → ${went}`);
+        } else if (ch.op === 'gone') {
+            const g = personByName(place, ch.who);
+            if (g && g.state !== 'gone') { g.state = 'gone'; log.push(`${g.name} is gone`); }
+        } else if (ch.op === 'intent') {
+            const g = personByName(place, ch.who);
+            if (g && g.intent !== ch.intent) { setIntent(g, ch.intent, ch.target); log.push(`${g.name}: ${ch.intent}${ch.target ? ` ${ch.target}` : ''}`); }
+        } else if (ch.op === 'door') {
+            const d = place.doors[ch.id];
+            if (d && d.state !== ch.state) { setDoorState(place, d, ch.state); log.push(`${d.id} ${ch.state}`); }
+        } else if (ch.op === 'thing') {
+            log.push(...applyPlaceChanges(place, { props: { [ch.id]: ch.state } }, { floor: floorId }));
+        }
+    }
+    look(c, key, place);
+    savePlace(key, c);
+    refreshMap();
+    return log;
+}
+
+/** A thing's, door's, room's or person's name for a log line. */
+function thingLabel(place, id) {
+    const p = propById(place, id)?.prop;
+    if (p) return thingName(p);
+    if (place.doors[id]) return 'door';
+    return place.rooms[id]?.name ?? id;
+}
+
+/** The nearest thing to hide in, under or behind, in someone's room (or close by). */
+function nearestHide(place, name) {
+    const pos = place.state.positions[name];
+    if (!pos) return null;
+    const rm = roomAt(place, pos.floor, pos.x, pos.y);
+    return (floorById(place, pos.floor).map.props || [])
+        .filter(p => HIDE[p.type] && !p.hidden && (rm ? roomAt(place, pos.floor, p.x, p.y)?.id === rm.id : Math.hypot(p.x - pos.x, p.y - pos.y) <= 6))
+        .sort((a, b) => Math.hypot(a.x - pos.x, a.y - pos.y) - Math.hypot(b.x - pos.x, b.y - pos.y))[0] ?? null;
+}
+
+/**
+ * What the map sync model is shown: the party, the others, the things around the party (their
+ * rooms and what they can see) and the floor's rooms, plus the ids and names it may use.
+ */
+export function syncContext(c) {
+    const cur = currentPlace(c);
+    if (!cur) return null;
+    const { place } = cur;
+    const names = partyOnMap(c).filter(n => place.state.positions[n]);
+    const lead = place.state.positions[names[0]];
+    if (!lead) return null;
+    const floorId = lead.floor;
+    const map = floorById(place, floorId).map;
+    const at = (x, y) => `${colName(x)}${y + 1}`;
+    const roomName = (x, y) => roomAt(place, floorId, x, y)?.name ?? '';
+    const party = names.map(n => {
+        const p = place.state.positions[n], h = hiddenNow(place, n), r = poseNow(place, n);
+        return { name: n, at: at(p.x, p.y), room: roomName(p.x, p.y), note: h ? `hiding ${h.mode} ${h.prop}` : r ? `${r.pose} on ${r.prop}` : '' };
+    });
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId);
+    const people = guards.map(g => ({ name: g.name, at: at(g.x, g.y), room: roomName(g.x, g.y), note: [g.state === 'dead' ? 'DEAD' : '', g.description, g.intent].filter(Boolean).join('; ').slice(0, 80) }));
+    // The rooms the party is in, and anything in view.
+    const rooms = new Set(names.map(n => roomAt(place, floorId, place.state.positions[n].x, place.state.positions[n].y)?.id).filter(Boolean));
+    const seen = look(c, cur.key, place) || [];
+    const things = (map.props || []).filter(p => !p.hidden && p.type !== 'trap' && !PROPS[p.type]?.decal && (rooms.has(roomAt(place, floorId, p.x, p.y)?.id) || seen[p.y * map.w + p.x]))
+        .sort((a, b) => Math.hypot(a.x - lead.x, a.y - lead.y) - Math.hypot(b.x - lead.x, b.y - lead.y)).slice(0, 40)
+        .map(p => ({ id: p.id, name: thingName(p), at: at(p.x, p.y), room: roomName(p.x, p.y) }));
+    const doors = Object.values(place.doors).filter(d => d.floor === floorId && d.state !== 'hidden' && d.state !== 'walled' && (d.rooms.some(r => rooms.has(r)) || seen[d.y * map.w + d.x]))
+        .map(d => ({ id: d.id, name: `${d.state} ${d.kind === 'cell' ? 'cell door' : 'door'}`, at: at(d.x, d.y), room: d.rooms.map(r => place.rooms[r]?.name).filter(Boolean).join(' / ') }));
+    const floorRooms = Object.values(place.rooms).filter(r => r.floor === floorId && (place.state.visited.includes(r.id) || rooms.has(r.id))).slice(0, 30).map(r => ({ id: r.id, name: r.name }));
+    return {
+        party, people, things: [...things, ...doors], rooms: floorRooms,
+        known: { party: names, people: guards.map(g => g.name), things: things.map(t => t.id), doors: doors.map(d => d.id), rooms: floorRooms.map(r => r.id) },
+    };
 }

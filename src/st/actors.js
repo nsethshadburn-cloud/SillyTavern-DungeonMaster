@@ -10,11 +10,11 @@ import { campaign, saveDoc } from './campaign.js';
 import { dmType } from './messages.js';
 import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
-import { addNpcs, isAway } from '../core/world.js';
+import { addNpcs, isAway, awareSummary } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
-import { roomBrief } from './atlas.js';
+import { roomBrief, currentPlace } from './atlas.js';
 
 const KEY_NOTE = 'DM_NOTE';
 const LEGACY_KEYS = ['DM_DIRECTION', 'DM_STANDING'];
@@ -51,6 +51,15 @@ function recentRepliesOf(name, max = 8) {
     return out;
 }
 
+/** The fight's enemies, the people on the map (their side, the dead), and who has spotted the party. */
+function mapPeople(c) {
+    const w = c.docs.world;
+    const foes = Object.keys(w.combat?.enemies ?? {});
+    const here = currentPlace(c);
+    const others = here ? Object.values(here.place.guards).filter(g => g.state !== 'gone').map(g => ({ name: g.name, description: g.description, hostile: g.hostile === true || g.intent === 'attack', dead: g.state === 'dead' })) : [];
+    return { foes, others, aware: awareSummary(w) };
+}
+
 /** What is true right now: the scene card, people met, the timeline (companions only), table rules. */
 function stateVars(c, speaker, { npc = false } = {}) {
     const w = c.docs.world;
@@ -59,7 +68,7 @@ function stateVars(c, speaker, { npc = false } = {}) {
         : [];
     return {
         scenecard: renderSceneCard(w.sceneCard, partyConditions(w)),
-        people: renderPeople(c.docs.npcs, { exclude: speaker }),
+        people: renderPeople(c.docs.npcs, { exclude: speaker, ...mapPeople(c) }),
         // NPCs don't get the party's timeline: it can hold things only the party knows.
         timeline: npc ? '' : renderTimeline(c.meta.timeline, { day: w.day, time: w.time }, { skipLatest: Boolean(c.meta.happened) }),
         rules: (c.meta.tableRules || []).join(' '),

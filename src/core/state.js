@@ -142,15 +142,21 @@ function shortRole(text, words = 14) {
  * @param {Array} npcs the campaign's NPC roster
  * @param {{max?: number, exclude?: string}} [o]
  */
-export function renderPeople(npcs, { max = 8, exclude = '' } = {}) {
-    return (npcs || [])
-        .filter(n => n?.name && nameKey(n.name) !== nameKey(exclude))
-        .slice(-max)
+export function renderPeople(npcs, { max = 8, exclude = '', foes = [], others = [], aware = '' } = {}) {
+    // Whose side someone is on, so nobody mistakes an enemy for a friend: the fight's enemies and
+    // anyone hostile are marked plainly.
+    const foe = new Set(foes.map(nameKey));
+    const side = n => foe.has(nameKey(n.name)) || n.attitude === 'hostile' || n.hostile === true ? ' (HOSTILE: an enemy of the party)'
+        : n.attitude === 'wary' ? ' (wary of the party)' : n.attitude === 'friendly' ? ' (friendly)' : '';
+    const known = (npcs || []).filter(n => n?.name && nameKey(n.name) !== nameKey(exclude));
+    const extra = others.filter(o => o?.name && nameKey(o.name) !== nameKey(exclude) && !known.some(n => nameKey(n.name) === nameKey(o.name)));
+    const lines = [...known.slice(-max), ...extra.slice(0, 8)]
         .map(n => {
             const role = n.role || shortRole(n.description);
-            return `- ${n.name}${role ? `: ${role}` : ''}${n.dead ? ' (dead)' : ''}`;
-        })
-        .join('\n');
+            return `- ${n.name}${role ? `: ${role}` : ''}${n.dead ? ' (dead)' : side(n)}`;
+        });
+    if (aware) lines.push(`- Who has spotted the party: ${aware}`);
+    return lines.join('\n');
 }
 
 /** Add and remove table rules (things the player settled out of character). */

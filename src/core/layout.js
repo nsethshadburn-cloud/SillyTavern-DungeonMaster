@@ -21,6 +21,9 @@ const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const K = (x, y) => `${x},${y}`;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/** Things worth guarding with a trap in front of them. */
+const TRAP_GUARDS = new Set(['chest', 'coffin', 'altar', 'throne', 'cabinet', 'desk', 'statue', 'weaponrack', 'armor', 'dresser', 'wardrobe', 'cage', 'lever', 'slab', 'iron_maiden']);
 const propType = t => str(t).toLowerCase().replace(/[\s-]+/g, '_');
 
 const VIA = ['door', 'arch', 'locked', 'secret', 'stairs', 'cell'];
@@ -848,12 +851,33 @@ function tryBuild(plan, seed, shrink) {
         const tiles = shuffle(r, roomTiles(room.rect)).filter(([x, y]) => c[y][x] === '.' && !blockedAt(room.floor, x, y) && !reserved.has(`${room.floor}:${x},${y}`));
         return (avoidEdge ? tiles.filter(([x, y]) => x > room.rect.x && y > room.rect.y && x < room.rect.x + room.rect.w - 1 && y < room.rect.y + room.rect.h - 1) : [])[0] ?? tiles[0] ?? null;
     };
+    // Traps go where someone would set one: just inside a doorway, or right in front of what's worth
+    // guarding (a chest, an altar, a throne); in a hallway, partway along it. Now and then anywhere.
+    const trapped = new Set();
+    const okTrap = (rm, x, y) => x >= rm.rect.x && y >= rm.rect.y && x < rm.rect.x + rm.rect.w && y < rm.rect.y + rm.rect.h
+        && chars[rm.floor][y]?.[x] === '.' && !blockedAt(rm.floor, x, y) && !trapped.has(`${rm.floor}:${x},${y}`);
+    const trapTile = (roomId, kind) => {
+        const rm = place.rooms[roomId];
+        const k = String(kind || '').toLowerCase();
+        const doorways = shuffle(r, Object.values(place.doors).filter(d => d.floor === rm.floor && d.rooms.includes(roomId) && (!d.exit || /door|entr|threshold/.test(k))))
+            .flatMap(d => DIRS.map(([dx, dy]) => [d.x + dx, d.y + dy])).filter(([x, y]) => okTrap(rm, x, y));
+        const guarded = shuffle(r, floorMap(rm.floor).props.filter(p => TRAP_GUARDS.has(p.type) && p.x >= rm.rect.x && p.y >= rm.rect.y && p.x < rm.rect.x + rm.rect.w && p.y < rm.rect.y + rm.rect.h))
+            .flatMap(p => [[p.x, p.y - 1], [p.x, p.y + (p.h || 1)], [p.x - 1, p.y], [p.x + (p.w || 1), p.y]]).filter(([x, y]) => okTrap(rm, x, y));
+        const along = rm.type === 'hallway' ? roomTiles(rm.rect).filter(([x, y]) => okTrap(rm, x, y)).sort(([ax, ay], [bx, by]) => Math.hypot(ax - rm.rect.x - rm.rect.w / 2, ay - rm.rect.y - rm.rect.h / 2) - Math.hypot(bx - rm.rect.x - rm.rect.w / 2, by - rm.rect.y - rm.rect.h / 2)) : [];
+        const anywhere = () => { const t = freeTile(roomId, true); return t && okTrap(rm, t[0], t[1]) ? [t] : []; };
+        const order = /door|threshold|entr|portal|gate|arch|tripwire/.test(k) ? [doorways, along, guarded]
+            : /chest|lock|needle|lid|coffin|sarcoph|altar|treasure|vault|idol|statue|throne|lever|glyph|rune/.test(k) ? [guarded, doorways, along]
+                : (() => { const roll = r(); return roll < 0.45 ? [doorways, along, guarded] : roll < 0.85 ? [guarded, doorways, along] : [anywhere(), doorways, guarded]; })();
+        for (const list of order) if (list.length) return list[0];
+        return anywhere()[0] ?? null;
+    };
     let trapN = 0, itemN = 0;
     for (const room of plan.rooms) {
         const pr = place.rooms[room.id];
         if (!pr) continue;
         for (const t of room.traps) {
-            const at = freeTile(room.id, true);
+            const at = trapTile(room.id, t.kind);
+            if (at) trapped.add(`${pr.floor}:${at[0]},${at[1]}`);
             if (!at) continue;
             const id = `T${++trapN}`;
             place.traps[id] = { id, room: room.id, floor: pr.floor, x: at[0], y: at[1], kind: t.kind, dc: t.dc, save: t.save, effect: t.effect, state: t.hidden ? 'hidden' : 'found' };
@@ -1952,7 +1976,19 @@ export function generateWilds(planIn, seed = 1) {
         if (/ruin/.test(nm)) for (let i = 0; i < 4; i++) { const p = freeIn(cc); if (p) c[p[1]][p[0]] = '^'; }
         for (const type of [...dress, ...cc.sp.props.flatMap(p => Array(p.count || 1).fill(p.type))]) { if (!PROPS[type]) continue; const p = freeIn(cc); if (p) put(p[0], p[1], type); }
         // Traps (hidden until searched or stepped on) and hidden things in this spot.
-        cc.sp.traps.forEach(t => { const p = freeIn(cc); if (!p) return; const id = `T${Object.keys(place.traps).length + 1}`; place.traps[id] = { id, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], kind: t.kind, dc: t.dc, save: t.save, effect: t.effect, state: t.hidden ? 'hidden' : 'found' }; map.props.push({ x: p[0], y: p[1], type: 'trap', hidden: t.hidden, trap: id, label: t.kind }); taken.add(K(...p)); });
+        // Where a trap makes sense out here: on the trail leading in, or in front of what's worth
+        // guarding in the spot (an altar, a grave, a chest); now and then anywhere in it.
+        const wildTrap = () => {
+            const free = (x, y) => c[y]?.[x] && '.:'.includes(c[y][x]) && !taken.has(K(x, y));
+            const onTrail = shuffle(r, [...trail].map(k => k.split(',').map(Number)).filter(([x, y]) => { const d = Math.hypot(x - cc.x, y - cc.y); return d >= cc.rad - 1.5 && d <= cc.rad + 2 && free(x, y); }));
+            const guarded = shuffle(r, map.props.filter(p => TRAP_GUARDS.has(p.type) || ['tombstone', 'campfire', 'tent'].includes(p.type)).filter(p => Math.hypot(p.x - cc.x, p.y - cc.y) < cc.rad))
+                .flatMap(p => DIRS.map(([dx, dy]) => [p.x + dx, p.y + dy])).filter(([x, y]) => free(x, y));
+            const roll = r();
+            const order = roll < 0.45 ? [onTrail, guarded] : roll < 0.85 ? [guarded, onTrail] : [];
+            for (const list of order) if (list.length) return list[0];
+            return freeIn(cc);
+        };
+        cc.sp.traps.forEach(t => { const p = wildTrap(); if (!p) return; const id = `T${Object.keys(place.traps).length + 1}`; place.traps[id] = { id, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], kind: t.kind, dc: t.dc, save: t.save, effect: t.effect, state: t.hidden ? 'hidden' : 'found' }; map.props.push({ x: p[0], y: p[1], type: 'trap', hidden: t.hidden, trap: id, label: t.kind }); taken.add(K(...p)); });
         cc.sp.items.forEach(it => { const p = freeIn(cc); if (!p) return; const id = `I${Object.keys(place.items).length + 1}`; place.items[id] = { id, name: it.name, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], hidden: it.hidden, note: it.note, state: 'here' }; });
     }
     // The land around, grown thick; the clearings and trails stay open.
