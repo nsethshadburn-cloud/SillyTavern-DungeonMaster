@@ -2,6 +2,7 @@
 
 import { abilityModifier, roll } from './dice.js';
 import { nameKey, matchName } from './text.js';
+import { parseCondition, defaultUntil, noteUntil, forgetUntil, hurtWhileDown, clearDeath } from './upkeep.js';
 
 export function createWorldState() {
     return {
@@ -87,11 +88,15 @@ export function applyStateChanges(world, changes, knownNames = [], { turn = null
         for (const [who, conds] of Object.entries(map)) {
             const target = resolveCreature(world, who, names) ?? otherCreature(world, who);
             if (!target) continue;
-            const list = (Array.isArray(conds) ? conds : [conds]).map(String).filter(Boolean);
+            // "poisoned (1 hour)": the condition, and how long it lasts (a sensible default if not said).
+            const parsed = (Array.isArray(conds) ? conds : [conds]).filter(Boolean).map(parseCondition).filter(p => p.name);
+            const list = parsed.map(p => p.name);
             target.ref.conditions = target.ref.conditions || [];
             const changed = [], held = [];
-            for (const c of list) {
+            for (const [i, c] of list.entries()) {
                 const has = target.ref.conditions.some(x => x.toLowerCase() === c.toLowerCase());
+                if (add && (has || turn !== null)) noteUntil(world, target.name, c, parsed[i].until ?? defaultUntil(c, Boolean(world.combat)), { turn: turn ?? 0, round: world.combat?.round ?? null });
+                if (!add && has) forgetUntil(world, target.name, c);
                 if (add === has) continue;
                 // Steady conditions: outside a fight, a lingering one (groggy, poisoned, frightened) taken
                 // off in the last few turns isn't put back by a stale mention; it used to flicker on and off.
@@ -147,13 +152,20 @@ export function applyStateChanges(world, changes, knownNames = [], { turn = null
     return log;
 }
 
-export function changeHp(world, who, delta, names = []) {
+export function changeHp(world, who, delta, names = [], { critical = false } = {}) {
     const target = resolveCreature(world, who, names);
     if (!target) return null;
     const ref = target.ref;
     const before = Number(ref.hp) || 0;
     ref.hp = Math.max(0, Math.min(Number(ref.hp_max) || before + Math.max(0, delta), before + delta));
     let line = `${target.name} HP ${before} → ${ref.hp}${ref.hp_max ? `/${ref.hp_max}` : ''}`;
+    // Dying: a hit while already down is a failed death save; damage past 0 of their whole HP kills.
+    if (!target.isEnemy && delta < 0) {
+        const overflow = before > 0 ? -(before + delta) : -delta;
+        const down = before > 0 ? (overflow >= (Number(ref.hp_max) || 1) ? hurtWhileDown(world, target.name, overflow) : '') : hurtWhileDown(world, target.name, -delta, { critical });
+        if (down) return `${line} · ${down}`;
+    }
+    if (!target.isEnemy && delta > 0 && ref.hp > 0) clearDeath(world, target.name);
     if (ref.hp === 0) line += target.isEnemy ? ' (down)' : ' (unconscious!)';
     if (!target.isEnemy) {
         ref.conditions = ref.conditions || [];

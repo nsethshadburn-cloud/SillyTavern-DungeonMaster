@@ -32,6 +32,8 @@ import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
+import { snapshotTurn, sealTurn } from './undo.js';
+import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
 
 let running = false;
 let rerunRequested = false;
@@ -104,11 +106,14 @@ export async function runTurn(opts = {}) {
     ST.eventSource.on(ST.eventTypes.GENERATION_STOPPED, onStop);
     const status = beginTurn('Dungeon Master');
     const turnStart = ST.chat.length;
+    // The state before this turn, so deleting its narration can undo it (undo.js).
+    const snap = snapshotTurn(c);
     try {
         if (opts.moved) await movedTurn(c, status, controller.signal);
         else await turnBody(c, opts, status, controller.signal);
         // The books and the map: in the background, so the next move never waits on them.
         if (!controller.signal.aborted) { queueBookkeeping(c, turnStart); queueMapSync(c, turnStart); }
+        sealTurn(snap);
         const left = await rotateIdleNpcs();
         if (left.length) status.note(`${left.join(', ')} left the scene`);
         status.finish(`Turn done${c.meta.stats.lastTurnUsd ? ` · ${formatUsd(c.meta.stats.lastTurnUsd)} est.` : ''}`);
@@ -239,6 +244,7 @@ async function turnBody(c, opts, status, signal) {
     if (signal.aborted) throw new Error('aborted');
     // A new player turn: walking starts counting again, hunters may strike again.
     if (!opts.force && !autoRoll) resetWalked();
+    if (!opts.force && !autoRoll) await upkeepTurn(c, status);
     // ---------- What they act on, exactly ----------
     // "Smash the bookshelf", "Judy, open the kennel": which one, on the map. One clear match is it;
     // several in reach and the player picks on the map. Then whoever does it walks up to it first,
@@ -386,6 +392,44 @@ async function turnBody(c, opts, status, signal) {
 }
 
 
+/**
+ * The start of each player turn: conditions that have run out come off, and anyone dying rolls their
+ * death save (outside fights; in a fight it's once a round).
+ */
+async function upkeepTurn(c, status) {
+    const w = c.docs.world;
+    const ended = expireConditions(w, { turn: c.meta.turn });
+    if (ended.length) { saveDoc('world'); await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true }); }
+    if (!w.combat) await deathSaves(c);
+}
+
+/**
+ * Death saving throws for everyone at 0 HP who isn't stable or dead (once a round in a fight, once a
+ * turn outside one). Companions' are rolled in the open by code; the player is asked to roll theirs.
+ */
+async function deathSaves(c) {
+    const w = c.docs.world, meta = c.meta;
+    const tick = `${meta.turn}:${w.combat?.round ?? ''}`;
+    if (w.deathTick === tick) return;
+    w.deathTick = tick;
+    const lines = [];
+    for (const name of dying(w)) {
+        if (name === meta.persona.name) {
+            if (meta.pendingRoll) continue;
+            meta.pendingRoll = { kind: 'save', skill: 'Death saving throw', ability: '', die: 20, dc: 10, advantage: 'none', reason: 'You are dying. 10 or higher is a success, a 20 brings you back with 1 HP, a 1 counts as two failures. Three successes and you are stable; three failures and you die.', damage: '', half: false, bonus: 0, death: true };
+            await postDiceCard(`🎲 **${meta.persona.name}**, you're dying: roll a **d20** for your **death saving throw** and type the number${settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice)' : ''}.`, { request: meta.pendingRoll });
+            meta.pendingRoll.chatIndex = ST.chat.length;
+            continue;
+        }
+        const r = roll('1d20');
+        const res = deathSave(w, name, r?.natural ?? r?.total ?? 10);
+        lines.push(`🎲 **${name}** · death save: **${r?.total}** · ${res.line}`);
+    }
+    saveDoc('world');
+    saveMeta();
+    if (lines.length) { await postDiceCard(lines.join('\n'), { state: true }); refreshMap(); }
+}
+
 let mapSyncing = Promise.resolve();
 
 function queueMapSync(c, fromIndex) {
@@ -414,7 +458,7 @@ async function mapSync(c, fromIndex) {
         ? await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 400, profileId: s.helperProfileId })
         : (await callClaude({ system, user, task: 'map_sync', maxTokens: 500, label: 'Map sync' })).text;
     if (campaign() !== c) return;
-    const ops = parseMapSync(raw, ctx.known);
+    const ops = parseMapSync(raw, ctx.known, { story });
     if (!ops.length) return;
     // Don't walk anyone while the player is mid-walk or a new turn is running: wait for it.
     const log = await applyMapSync(c, ops);
@@ -757,6 +801,15 @@ async function resolvePlayerRoll(c, parsed, status) {
     const meta = c.meta;
     const pr = meta.pendingRoll;
     meta.pendingRoll = null;
+    // A death saving throw: the bare d20, no modifiers.
+    if (pr.death) {
+        const natural = parsed.natural ?? parsed.total ?? 0;
+        const res = deathSave(c.docs.world, meta.persona.name, natural);
+        saveDoc('world');
+        await postDiceCard(`🎲 **${meta.persona.name}** · death saving throw: **${natural}** · ${res.line}`, { roll: { who: meta.persona.name, ...pr, natural, total: natural, success: natural >= 10 } });
+        refreshMap();
+        return `${meta.persona.name} rolled a death saving throw: ${natural}. ${res.line} (The code tracked it; narrate it.)`;
+    }
     const stats = statsForName(meta.persona.name, meta);
     const { mod, source } = pr.kind === 'damage' ? { mod: 0, source: 'damage' } : lookupModifier(stats, pr);
     let natural = parsed.natural;
@@ -1018,6 +1071,30 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // Each DM combat turn is a new round (a roll's result finishes the round it was asked in).
     if (world.combat && !t.start_combat && reasons.includes('combat_round') && !reasons.includes('roll_result')) {
         world.combat.round = (world.combat.round || 1) + 1;
+        const ended = expireConditions(world, { round: world.combat.round });
+        if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
+        await deathSaves(c);
+    }
+    // A fight over: what lasts only the fight ends.
+    if (t.end_combat) {
+        const ended = expireConditions(world, { combatOver: true });
+        if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
+    }
+    // A rest: HP, hit dice, spell slots and abilities in code (the DM only says it happened).
+    if (t.rest) {
+        const rested = takeRest(world, t.rest, [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))], n => statsForName(n, meta), roll);
+        if (rested.length) await postDiceCard(`📜 ${t.rest === 'long' ? 'Long rest' : 'Short rest'}: ${rested.join(' · ')}`, { state: true });
+    }
+    // Spell slots, hit dice and limited abilities spent this turn.
+    if (t.state_changes?.spend && typeof t.state_changes.spend === 'object') {
+        const lines = [];
+        for (const [who, items] of Object.entries(t.state_changes.spend)) {
+            const name = matchName(who, [meta.persona.name, ...meta.party.map(p => p.name)]);
+            if (!name) continue;
+            const r = spend(world, name, items, statsForName(name, meta));
+            lines.push(...r.log, ...r.refused.map(x => `⚠️ ${x}`));
+        }
+        if (lines.length) await postDiceCard(`📜 ${lines.join(' · ')}`, { state: true });
     }
     if (t.end_combat && world.combat?.inPlace) {
         // Back to exploring: the party stays where the fight left them.
@@ -1226,7 +1303,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (extra) dmg = { ...dmg, total: dmg.total + extra.total, detail: `${dmg.detail} + crit ${extra.detail}` };
             }
             if (dmg) {
-                const line = changeHp(world, r.target, -dmg.total, [...meta.party.map(p => p.name), meta.persona.name]);
+                const line = changeHp(world, r.target, -dmg.total, [...meta.party.map(p => p.name), meta.persona.name], { critical: judged.critical });
                 damageText = ` · **${dmg.total}** damage${line ? ` (${line})` : ''}`;
                 const hit = matchName(r.target, [meta.persona.name, ...meta.party.map(p => p.name), ...Object.keys(world.combat?.enemies ?? {})]);
                 if (hit) playAnim(hit, 'hurt');

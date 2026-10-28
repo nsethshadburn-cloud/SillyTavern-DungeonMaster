@@ -71,6 +71,15 @@ export async function loadPlace(key, c = campaign()) {
     return place;
 }
 
+/** Put a place back as it was (undoing a deleted turn): the cached copy changes in place, then it's saved. */
+export function replacePlace(key, data, c = campaign()) {
+    const id = `${c.meta.id}:${key}`;
+    const cached = places.get(id);
+    if (cached) { for (const k of Object.keys(cached)) delete cached[k]; Object.assign(cached, data); }
+    else places.set(id, data);
+    savePlace(key, c);
+}
+
 export function savePlace(key, c = campaign()) {
     const place = places.get(`${c.meta.id}:${key}`);
     if (!place) return;
@@ -1155,6 +1164,18 @@ export async function applyMapSync(c, ops) {
             if (d && d.state !== ch.state) { setDoorState(place, d, ch.state); log.push(`${d.id} ${ch.state}`); }
         } else if (ch.op === 'thing') {
             log.push(...applyPlaceChanges(place, { props: { [ch.id]: ch.state } }, { floor: floorId }));
+        } else if (ch.op === 'take' || ch.op === 'found') {
+            const it = place.items[ch.id];
+            if (!it) continue;
+            if (ch.op === 'found') { if (!it.found) { it.found = true; it.hidden = false; log.push(`${it.name} found`); } continue; }
+            if (it.state !== 'taken') { it.state = 'taken'; it.hidden = false; log.push(`${ch.who} took the ${it.name}`); }
+        } else if (ch.op === 'drop') {
+            const p = place.state.positions[ch.who];
+            if (!p) continue;
+            let n = Object.keys(place.items).length + 1;
+            while (place.items[`I${n}d`]) n++;
+            place.items[`I${n}d`] = { id: `I${n}d`, name: ch.item, room: roomAt(place, p.floor, p.x, p.y)?.id ?? null, floor: p.floor, x: p.x, y: p.y, hidden: false, found: true, note: `left here by ${ch.who}`, state: 'here' };
+            log.push(`${ch.who} left the ${ch.item} here`);
         }
     }
     look(c, key, place);
@@ -1211,8 +1232,12 @@ export function syncContext(c) {
     const doors = Object.values(place.doors).filter(d => d.floor === floorId && d.state !== 'hidden' && d.state !== 'walled' && (d.rooms.some(r => rooms.has(r)) || seen[d.y * map.w + d.x]))
         .map(d => ({ id: d.id, name: `${d.state} ${d.kind === 'cell' ? 'cell door' : 'door'}`, at: at(d.x, d.y), room: d.rooms.map(r => place.rooms[r]?.name).filter(Boolean).join(' / ') }));
     const floorRooms = Object.values(place.rooms).filter(r => r.floor === floorId && (place.state.visited.includes(r.id) || rooms.has(r.id))).slice(0, 30).map(r => ({ id: r.id, name: r.name }));
+    const items = Object.values(place.items || {}).filter(i => i.state !== 'taken' && i.floor === floorId && (rooms.has(i.room) || seen[i.y * map.w + i.x])).slice(0, 20)
+        .map(i => ({ id: i.id, name: i.name, room: place.rooms[i.room]?.name ?? 'here', hidden: i.hidden && !i.found }));
+    const w = c.docs.world;
+    const carried = Object.fromEntries(names.map(n => [n, [...(w.inventory?.[n] ?? []), ...(n === names[0] ? (w.items ?? []) : [])]]).filter(([, l]) => l.length));
     return {
-        party, people, things: [...things, ...doors], rooms: floorRooms,
-        known: { party: names, people: guards.map(g => g.name), things: things.map(t => t.id), doors: doors.map(d => d.id), rooms: floorRooms.map(r => r.id) },
+        party, people, things: [...things, ...doors], rooms: floorRooms, items, carried,
+        known: { party: names, people: guards.map(g => g.name), peopleInfo: Object.fromEntries(guards.map(g => [g.name, g.description || ''])), things: things.map(t => t.id), doors: doors.map(d => d.id), rooms: floorRooms.map(r => r.id), items: items.map(i => i.id), carried },
     };
 }

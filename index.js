@@ -20,6 +20,7 @@ import { roll } from './src/core/dice.js';
 import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
 import { forgetPlaces, loadCurrentPlace, requestBuild, rebuildPlace } from './src/st/atlas.js';
+import { onMessagesDeleted, forgetTurns } from './src/st/undo.js';
 import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
 import { ensureFigures, redoFigure, partyFigures } from './src/st/figures.js';
 import { openFiguresWindow } from './src/ui/figures-window.js';
@@ -280,7 +281,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.25.2-beta';
+export const LOADED_VERSION = '0.26.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows
@@ -362,6 +363,9 @@ jQuery(async () => {
         if (c && !c.meta.paused && msg?.is_user && ttsConfig().rules.narrate_user) voiceLine({ kind: 'party', name: msg.name, text: msg.mes });
     });
     eventSource.on(eventTypes.MESSAGE_SWIPED, () => { if (campaign()) stopVoices(); });
+    // Deleting a DM turn's narration undoes what that turn did to HP, items and the map.
+    if (eventTypes.MESSAGE_DELETED) eventSource.on(eventTypes.MESSAGE_DELETED, () => { if (campaign()) onMessagesDeleted().catch(err => console.warn('[Dungeon Master] undo failed', err)); });
+    eventSource.on(eventTypes.CHAT_CHANGED, forgetTurns);
     eventSource.on(eventTypes.GENERATION_ENDED, () => { if (!isRunning()) clearDirection(); });
     if (eventTypes.CONNECTION_PROFILE_LOADED) eventSource.on(eventTypes.CONNECTION_PROFILE_LOADED, refreshProfileSelects);
     if (eventTypes.SETTINGS_UPDATED) eventSource.on(eventTypes.SETTINGS_UPDATED, () => renderSpend());

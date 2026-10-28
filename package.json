@@ -3,6 +3,6 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "test": "node --test tests/core.test.mjs tests/notes-grid.test.mjs tests/state.test.mjs tests/places.test.mjs tests/sprites.test.mjs tests/restraints.test.mjs tests/fire.test.mjs tests/bookkeeper.test.mjs tests/tracking.test.mjs tests/architect.test.mjs"
+        "test": "node --test tests/core.test.mjs tests/notes-grid.test.mjs tests/state.test.mjs tests/places.test.mjs tests/sprites.test.mjs tests/restraints.test.mjs tests/fire.test.mjs tests/bookkeeper.test.mjs tests/tracking.test.mjs tests/architect.test.mjs tests/upkeep.test.mjs"
     }
 }

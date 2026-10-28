@@ -4,7 +4,7 @@ import { ST } from './st.js';
 import { settings, SURPRISES } from './settings.js';
 import { callClaude, callLocal, resolveDmConnection } from './llm.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
-import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
+import { personaSheet, characterSheet, sheetMarkdown, statsForName } from './sheets.js';
 import { dmType } from './messages.js';
 import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, PLACE_BRIEF_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { placeSummary, placeView, cropText } from '../core/explore.js';
@@ -18,6 +18,7 @@ import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
 import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/state.js';
 import { modelLabel } from '../core/models.js';
+import { untilWords, resourcesLine } from '../core/upkeep.js';
 
 let stableCache = { key: '', text: '' };
 
@@ -187,7 +188,10 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
 
     sections.push('# WHERE THINGS STAND');
     sections.push(`Location: ${w.location || 'unknown'} (${w.setting || 'any'}), time: ${w.time || '?'}, day ${w.day ?? 1}.`);
-    sections.push(`Party HP: ${Object.entries(w.party).map(([n, p]) => `${n} ${p.hp}/${p.hp_max}${p.conditions?.length ? ` [${p.conditions.join(', ')}]` : ''}`).join('; ') || 'unknown'}.`);
+    const lasts = (n, cond) => untilWords(w, n, cond, { turn: c.meta.turn, round: w.combat?.round ?? null });
+    sections.push(`Party HP: ${Object.entries(w.party).map(([n, p]) => `${n} ${p.hp}/${p.hp_max}${p.conditions?.length ? ` [${p.conditions.map(x => (lasts(n, x) ? `${x}, ${lasts(n, x)}` : x)).join('; ')}]` : ''}${p.hp <= 0 && p.death ? ` DYING: ${p.death.s} death-save successes, ${p.death.f} failures (the code rolls them)` : ''}`).join('; ') || 'unknown'}.`);
+    const resources = [c.meta.persona.name, ...c.meta.party.map(p => p.name)].map(n => { const line = resourcesLine(w, n, statsForName(n, c.meta)); return line ? `${n}: ${line}` : ''; }).filter(Boolean);
+    if (resources.length) sections.push(`Resources (tracked by the code): ${resources.join(' | ')}.`);
     const held = Object.entries(w.others || {}).filter(([, o]) => o.conditions?.length);
     if (held.length) sections.push(`Others' conditions: ${held.map(([n, o]) => `${n} [${o.conditions.join(', ')}]`).join('; ')}.`);
     const carried = Object.entries(w.inventory || {}).filter(([, l]) => l.length).map(([n, l]) => `${n}: ${l.join(', ')}`);
