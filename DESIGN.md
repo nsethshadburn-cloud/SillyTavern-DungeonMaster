@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.21.4 (rebuild a map)
+- `/dmrebuild [name]` → `rebuildPlace` (atlas.js): the map the party is on, or the named one, with its whole family (the top place, everything with it as parent, every key--child), is removed from the atlas, the cache and the user files (`deleteFile`), after a confirm; then `requestBuild` plans it again (same name and size, the inside's kind for a building, the scene card's place as where they start if they were on it). Fixed `/dmbuild`, whose pattern had lost a backslash and matched nothing.
+
 ### v0.21.3 (a mansion is always a mansion)
 - The bug: a mansion built as a "small" map came back from Claude as only its yard (the party was arriving to rob it); every room was outdoors, so nothing was split off and the yard was built as a tiny hedge-walled place, with no house and no door.
 - A building is now recognised by its kind or its name ("Ashworth Manor", whatever the kind). `addUsualRooms` gives a building with too few rooms inside (grand kinds: under 6; others: under 2) the usual rooms for its kind (the town interior recipes, plus a library, master bedroom, guest room, servants' quarters, wine cellar and upstairs hall for a manor), on their floors, joined to the entrance hall (stairs between floors), with the front door. Grand kinds (GRAND_KINDS) get the full planning rules and about 12 rooms even as a "small" map. Both planning instructions say a building is always planned inside, in full, even when the party starts outside; the DM rules count robbing a mansion or any heist as a big site.

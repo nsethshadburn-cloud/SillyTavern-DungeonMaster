@@ -6,7 +6,7 @@
 
 import { ST, sleep } from './st.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
-import { readJson, writeLater, flushWrites } from './storage.js';
+import { readJson, writeLater, flushWrites, deleteFile } from './storage.js';
 import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
@@ -678,6 +678,37 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     } finally {
         building = false;
     }
+}
+
+/**
+ * Throw a saved map away and build it again from a fresh plan (with the newest rules): the map
+ * the party is on, or the one named. Its whole family goes: a building's grounds and inside, a
+ * town's buildings. Asks first (what happened on the map is lost). The party lands in the new one
+ * if they were on the old one.
+ */
+export async function rebuildPlace(name = '', { status = null } = {}) {
+    const c = campaign();
+    if (!c) return null;
+    const list = atlas(c).places;
+    const entry = name ? atlasEntry(name, c) : list[c.docs.world.place?.key];
+    if (!entry) throw new Error(name ? `There's no saved map called "${name}".` : 'You\'re not on a map right now. Name the one to rebuild, e.g. /dmrebuild Blackmoor Manor');
+    const top = (entry.parent && list[entry.parent]) || entry;
+    const family = Object.values(list).filter(e => e.key === top.key || e.parent === top.key || e.key.startsWith(`${top.key}--`));
+    const ok = await ST.callGenericPopup(`<h3>Rebuild ${escape(top.name)}?</h3><p>This map is thrown away, with everything that happened on it (opened doors, sprung traps, moved furniture), and Claude plans it again with the newest rules (about $0.05–0.30).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Rebuild', cancelButton: 'Keep it' });
+    if (ok !== ST.POPUP_RESULT.AFFIRMATIVE && ok !== true && ok !== 1) return null;
+    // The kind of place it is: the inside's kind for a building (its grounds are kind "grounds").
+    const kind = top.kind === 'grounds' ? (family.find(e => e.parent === top.key)?.kind ?? '') : top.kind;
+    const wasHere = family.some(e => e.key === c.docs.world.place?.key);
+    const where = c.docs.world.sceneCard?.place || '';
+    if (wasHere) leavePlace(c);
+    for (const e of family) {
+        delete list[e.key];
+        places.delete(`${c.meta.id}:${e.key}`);
+        await deleteFile(e.file).catch(() => false);
+    }
+    saveDoc('atlas');
+    status?.note(`Rebuilding ${top.name}`);
+    return requestBuild({ name: top.name, size: top.size === 'big' ? 'big' : 'small', kind: kind === 'interior' ? '' : kind, why: 'the player asked to rebuild this map', start: wasHere ? where : '' }, { status, confirm: false });
 }
 
 function escape(s) {

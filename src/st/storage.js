@@ -61,6 +61,13 @@ export async function writeJson(name, value) {
     return writeFile(name, JSON.stringify(value, null, 2));
 }
 
+/** Delete a file from the user files folder (gone already is fine). */
+export async function deleteFile(name) {
+    cache.delete(name);
+    const res = await fetch('/api/files/delete', { method: 'POST', headers: ST.getRequestHeaders(), body: JSON.stringify({ path: `user/files/${name}` }) });
+    return res.ok || res.status === 404;
+}
+
 export function forget(name) {
     cache.delete(name);
 }

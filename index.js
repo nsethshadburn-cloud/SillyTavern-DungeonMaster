@@ -19,7 +19,7 @@ import { hideStatus } from './src/ui/status.js';
 import { roll } from './src/core/dice.js';
 import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
-import { forgetPlaces, loadCurrentPlace, requestBuild } from './src/st/atlas.js';
+import { forgetPlaces, loadCurrentPlace, requestBuild, rebuildPlace } from './src/st/atlas.js';
 import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
 import { ensureFigures, redoFigure, partyFigures } from './src/st/figures.js';
 import { openFiguresWindow } from './src/ui/figures-window.js';
@@ -184,7 +184,7 @@ function registerSlashCommands() {
         helpString: 'Build a map for a place, e.g. /dmbuild big Blackmoor Manor, or /dmbuild small Hollowbrook village. A place that already has a map is reopened, never rebuilt.',
         unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'big|small and the place name', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
         callback: async (_args, text) => {
-            const m = String(text || '').trim().match(/^(big|small)s+(.+)$/i);
+            const m = String(text || '').trim().match(/^(big|small)\s+(.+)$/i);
             if (!campaign() || !m) {
                 toastr.warning('Use it like /dmbuild big Blackmoor Manor in a campaign chat.', 'Dungeon Master');
                 return '';
@@ -193,6 +193,23 @@ function registerSlashCommands() {
             const kind = /(town|village|hamlet|city)/i.exec(name)?.[1] ?? '';
             try {
                 await requestBuild({ name, size: m[1].toLowerCase(), kind: kind.toLowerCase(), why: 'the player asked for it' });
+            } catch (error) {
+                toastr.error(String(error?.message || error), 'Dungeon Master');
+            }
+            return '';
+        },
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'dmrebuild',
+        helpString: 'Throw a saved map away and build it again with the newest rules: /dmrebuild for the map you\'re on, or /dmrebuild Blackmoor Manor. Asks first.',
+        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'the place name (optional: the map you\'re on)', typeList: [ARGUMENT_TYPE.STRING], isRequired: false })],
+        callback: async (_args, text) => {
+            if (!campaign()) {
+                toastr.warning('Use it in a campaign chat.', 'Dungeon Master');
+                return '';
+            }
+            try {
+                await rebuildPlace(String(text || '').trim());
             } catch (error) {
                 toastr.error(String(error?.message || error), 'Dungeon Master');
             }
@@ -263,7 +280,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.21.3-beta';
+export const LOADED_VERSION = '0.21.4-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows
