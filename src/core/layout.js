@@ -28,10 +28,15 @@ const KIND_THEME = { mansion: 'mansion', manor: 'mansion', estate: 'mansion', ho
 /** Themes where mansion-style walls and floors (wallpaper, carpet) would look wrong. */
 const ROUGH = new Set(['dungeon', 'cave', 'crypt', 'prison', 'sewer', 'mine']);
 /** Places that are kept up unless the story says otherwise; and words that mean they aren't. */
-const KEPT_KINDS = /mansion|manor|estate|house|home|palace|castle|keep|fortress|citadel|temple|church|cathedral|monastery|abbey|shrine|prison|jail|gaol|stockade|asylum|tavern|inn|library|academy|school|tower|ship|lodge|cabin|guild|bank|museum|hospital|barracks|office|shop|hall/;
+const KEPT_KINDS = /mansion|manor|estate|house|home|palace|castle|keep|fortress|citadel|temple|church|cathedral|monastery|abbey|shrine|prison|jail|gaol|stockade|asylum|tavern|inn|library|academy|school|tower|ship|lodge|cabin|cottage|farmhouse|mill|lighthouse|theater|theatre|bathhouse|observatory|store|guild|bank|museum|hospital|barracks|office|shop|hall/;
 const RUINED_WORDS = /abandon|ruin|derelict|haunted|forgotten|crumbl|collapsed|overgrown|decay|desert(ed)?|lost|ancient|old dungeon|sunken|flooded/;
 /** Mess that a kept-up place doesn't have lying around (furniture stays). */
 const MESS = new Set(['bones', 'skull', 'blood', 'scratches', 'web', 'debris', 'rubble', 'puddle', 'cracks', 'moss', 'rat', 'trash', 'broken_glass']);
+/** Places that are a building: their inside and their outside are separate maps (outside: the grounds). */
+const BUILDING_KINDS = /mansion|manor|estate|house|home|cottage|hut|shack|palace|castle|keep|fortress|citadel|tower|temple|church|cathedral|chapel|monastery|abbey|shrine|prison|jail|gaol|stockade|asylum|tavern|inn|library|academy|school|cabin|lodge|guild|bank|museum|hospital|barracks|office|shop|store|hall|barn|farmhouse|mill|lighthouse|warehouse|theater|theatre|bathhouse|observatory/;
+/** Rooms that are really outside (a garden, a courtyard): on a building's grounds, never inside it. */
+const OUTDOOR_TYPES = new Set(['courtyard', 'graveyard']);
+const OUTDOOR_NAMES = /garden|yard|orchard|lawn|grounds|field|outside|exterior|porch|patio|terrace|veranda|graveyard|cemetery|pasture|paddock|meadow/;
 /** Hazards that come from decay, not from someone setting a trap. */
 const DECAY = /rot|crumbl|collaps|loose|weak|unstable|sagging|cave-?in|falling ceiling/;
 
@@ -136,7 +141,7 @@ export function normalizePlan(raw) {
     if (!rooms.length) rooms.push({ id: 'R1', name: 'Room', type: 'room', floor: floors[0].id, size: '', lit: null, description: '', props: [], marks: [], traps: [], items: [], exit: true });
     const has = id => rooms.some(r => r.id === id);
     // Links may name a room by id ("G1") or by name ("the gatehouse").
-    const roomRef = v => { const t = str(v); if (has(t)) return t; const k = nameKey(t.replace(/^thes+/i, '')); return (rooms.find(r => r.id.toLowerCase() === t.toLowerCase()) ?? rooms.find(r => nameKey(r.name.replace(/^thes+/i, '')) === k))?.id ?? ''; };
+    const roomRef = v => { const t = str(v); if (has(t)) return t; const k = nameKey(t.replace(/^the\s+/i, '')); return (rooms.find(r => r.id.toLowerCase() === t.toLowerCase()) ?? rooms.find(r => nameKey(r.name.replace(/^the\s+/i, '')) === k))?.id ?? ''; };
     const links = [];
     for (const l of arr(d.links).slice(0, 200)) {
         const a = roomRef(l?.a ?? l?.from), b = roomRef(l?.b ?? l?.to);
@@ -159,11 +164,34 @@ export function normalizePlan(raw) {
         sprite: str(g.sprite).slice(0, 30),
     })).filter(g => g.name && (g.room || g.patrol.length));
     for (const g of guards) if (!g.room) g.room = g.patrol[0];
-    const start = roomRef(d.start) || rooms[0].id;
+    let start = roomRef(d.start) || rooms[0].id;
+    // A building: its outdoor rooms (garden, courtyard, yard...) go on its grounds, a separate map
+    // outside; the inside never has outdoors in it. The rooms that opened onto them get the front door.
+    const building = BUILDING_KINDS.test(kind) && !/ruin|dungeon|cave|crypt|mine|sewer/.test(kind);
+    const outside = [], outsideGuards = [];
+    let startOutside = false;
+    if (building) {
+        const isOut = r => OUTDOOR_TYPES.has(r.type) || OUTDOOR_NAMES.test(r.name.toLowerCase());
+        const out = rooms.filter(isOut);
+        if (out.length && out.length < rooms.length) {
+            const outIds = new Set(out.map(r => r.id));
+            for (const l of links) {
+                if (outIds.has(l.a) && !outIds.has(l.b)) rooms.find(r => r.id === l.b).exit = true;
+                if (outIds.has(l.b) && !outIds.has(l.a)) rooms.find(r => r.id === l.a).exit = true;
+            }
+            for (const r of out) outside.push({ id: r.id, name: r.name, type: r.type, description: r.description, props: r.props });
+            rooms.splice(0, rooms.length, ...rooms.filter(r => !outIds.has(r.id)));
+            links.splice(0, links.length, ...links.filter(l => !outIds.has(l.a) && !outIds.has(l.b)));
+            for (const g of guards.filter(g => outIds.has(g.room))) outsideGuards.push({ ...g, room: g.room });
+            guards.splice(0, guards.length, ...guards.filter(g => !outIds.has(g.room)).map(g => ({ ...g, patrol: g.patrol.filter(id => !outIds.has(id)) })));
+            if (outIds.has(start)) { startOutside = true; start = (rooms.find(r => r.exit) ?? rooms[0]).id; }
+        }
+    }
     organizeCells(rooms, floors, links);
     connectRooms(rooms, floors, links, start);
-    // Every big place has a way out: the start's floor gets one if Claude named none.
-    if (!rooms.some(r => r.exit) && kind !== 'interior') {
+    // A building has a front door (onto its grounds), on the floor nearest the ground. Anywhere else a
+    // way out is only there if Claude named one: the DM moves the story on to the next place.
+    if (!rooms.some(r => r.exit) && (building || kind === 'interior')) {
         const ground = floors.slice().sort((a, b) => Math.abs(a.level) - Math.abs(b.level))[0].id;
         (rooms.find(r => r.floor === ground && r.type === 'foyer') ?? rooms.find(r => r.floor === ground) ?? rooms[0]).exit = true;
     }
@@ -180,7 +208,9 @@ export function normalizePlan(raw) {
         name: str(d.name).slice(0, 80) || 'Unnamed place',
         kind,
         theme,
-        fog: typeof d.fog === 'boolean' ? d.fog : true,
+        // A lit, lived-in home has no fog of war: you can see its rooms. Dark or ruined places keep it.
+        fog: building && condition !== 'ruined' && rooms.filter(r => r.lit ?? recipeFor(r.type).lit).length * 2 >= rooms.length ? false : typeof d.fog === 'boolean' ? d.fog : true,
+        building, outside, outsideGuards, startOutside,
         barred: d.barred_windows === true,
         summary: str(d.summary).slice(0, 1200),
         condition,
@@ -734,6 +764,8 @@ function tryBuild(plan, seed, shrink) {
             place.exits.push({ floor: room.floor, x, y, door: d.id });
         }
         const pr = plan.rooms.find(x => x.id === room.id);
+        // Hedges and fences (a garden left inside a ruin) never get windows.
+        if (recipeFor(room.type).wall === 'hedge') continue;
         if (pr?.windows !== 'none' && (pr?.windows === 'barred' || pr?.windows === 'normal' || (!ROUGH.has(plan.theme) && levelOf(room.floor) >= 0 && room.type !== 'vault'))) {
             const bars = pr?.windows === 'barred' || (plan.barred && pr?.windows !== 'normal');
             outside.forEach(([x, y], i) => { if (i % 3 === 1 && c[y][x] === '#' && !doorAt.has(`${room.floor}:${x},${y}`)) c[y][x] = bars ? 'H' : '|'; });
@@ -742,7 +774,7 @@ function tryBuild(plan, seed, shrink) {
     // An exit room walled in by other rooms on this layout isn't a way out here. The place still needs
     // one: if no exit room reached the outside, the lowest room above ground with an outside wall gets the door.
     for (const rm of Object.values(place.rooms)) if (rm.exit && !place.exits.some(e => place.doors[e.door]?.rooms.includes(rm.id))) rm.exit = false;
-    if (!place.exits.length) {
+    if (!place.exits.length && (plan.building || plan.kind === 'interior' || plan.rooms.some(x => x.exit))) {
         const pick = Object.values(place.rooms).filter(rm => outsideOf[rm.id]?.length).sort((a, b) => Math.abs(levelOf(a.floor)) - Math.abs(levelOf(b.floor)))[0];
         if (!pick) { failWhy = 'no room has an outside wall for a way out'; return null; }
         const [x, y] = outsideOf[pick.id][Math.floor(outsideOf[pick.id].length / 2)];
@@ -1148,6 +1180,117 @@ export function generateTown(planIn, seed = 1) {
     map.rows = c.slice().reverse().map(row => row.join(''));
     ensureIds(place);
     place.start = { floor: 'F0', x: 1, y: roadY, room: null };
+    place.state.explored.F0 = '1'.repeat(W * H);
+    return place;
+}
+
+/** What the land around a building looks like, from the words in its plan. */
+function groundsTheme(plan) {
+    const w = `${plan.name} ${plan.kind} ${plan.summary}`.toLowerCase();
+    return /snow|winter|frozen|frost|tundra|ice\b/.test(w) ? 'snow' : /desert|dune|sand\b|oasis/.test(w) ? 'desert' : /swamp|marsh|bog|bayou|fen\b/.test(w) ? 'swamp' : /\bcity\b|\btown\b|village|street|market|square/.test(w) ? 'town' : 'forest';
+}
+
+/** What goes in each outdoor area of the grounds, by its kind. */
+const YARD_PROPS = {
+    graveyard: ['tombstone', 'tombstone', 'tombstone', 'tombstone', 'tombstone', 'statue'],
+    courtyard: ['fountain', 'statue', 'bush', 'flowers', 'flowers'],
+    garden: ['flowers', 'flowers', 'bush', 'bush', 'statue', 'flowers'],
+    stable: ['hay', 'hay', 'trough', 'cart'],
+    orchard: ['bush', 'bush', 'flowers'],
+};
+
+/**
+ * A building's outside, as its own map: the building (walls, a roof, windows on the front, its front
+ * door), a path to it, its gardens and yards from the plan, and the land around it (trees, bushes,
+ * rocks for its setting). Walking through the front door goes inside (the interior is its own place).
+ * No way out at the edges: the DM moves the story on to the next place.
+ * @param {object} plan the building's normalized plan (its "outside" rooms)
+ * @param {object} inside the generated interior (its ground floor sets the building's size)
+ */
+export function generateGrounds(plan, inside, seed = 1) {
+    const r = rng(seed);
+    const theme = groundsTheme(plan);
+    const groundFloor = inside.floors.slice().sort((a, b) => Math.abs(a.level) - Math.abs(b.level))[0];
+    const bw = clamp(Math.round(groundFloor.map.w * 0.55), 7, 22), bd = clamp(Math.round(groundFloor.map.h * 0.45), 5, 14);
+    const yards = plan.outside || [];
+    const yardW = yards.length ? 9 : 0;
+    const W = Math.min(MAX_PLACE_SIZE, bw + 16 + yardW), H = Math.min(MAX_PLACE_SIZE, bd + 14);
+    const c = [...Array(H)].map(() => Array(W).fill('.'));
+    const set = (x, y, ch) => { if (x >= 0 && y >= 0 && x < W && y < H) c[y][x] = ch; };
+    const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
+    const map = { w: W, h: H, rows: [], theme, props: [], areas: [], roofs: [], seed };
+    const place = {
+        version: 1, kind: 'grounds', name: plan.name, theme, fog: false, seed, summary: plan.summary,
+        floors: [{ id: 'F0', name: `Outside ${plan.name}`, level: 0, map }], rooms: {}, doors: {}, stairs: [], traps: {}, items: {}, guards: {}, exits: [], buildings: {},
+        start: null, state: { positions: {}, explored: {}, visited: [], floor: 'F0' },
+    };
+    // The building: a block of wall under a roof, the front door facing the path.
+    const x0 = 7, y0 = 6, frontY = y0;
+    for (let x = x0; x < x0 + bw; x++) for (let y = y0; y < y0 + bd; y++) set(x, y, '#');
+    const dx = x0 + Math.floor(bw / 2);
+    set(dx, frontY, '+');
+    for (let x = x0 + 1; x < x0 + bw - 1; x++) if (x !== dx && Math.abs(x - dx) % 3 === 2) set(x, frontY, '|');
+    const wall = { mansion: 'stoneblock', castle: 'stoneblock', temple: 'stoneblock', prison: 'brick', cabin: 'log', tavern: 'timber', house: 'timber', library: 'stoneblock' }[plan.theme] ?? 'plaster';
+    map.areas.push({ x: x0, y: y0, w: bw, h: bd, wall, building: 'B1' });
+    map.roofs.push({ x: x0, y: y0 + 1, w: bw, h: bd - 1, ridge: bw >= bd ? 'h' : 'v', hue: pickR(r, [8, 16, 24, 200, 210, 30, 350]), style: /castle|temple|prison|library|mansion/.test(plan.theme) ? 'slate' : /cabin|barn|farm/.test(`${plan.theme} ${plan.kind}`) ? 'thatch' : 'shingle' });
+    // A path from the door to the edge of the map, lamps or flowers by the door.
+    for (let y = frontY - 1; y >= 0; y--) set(dx, y, theme === 'town' ? '=' : ':');
+    if (get(dx - 1, frontY - 1) === '.') map.props.push({ x: dx - 1, y: frontY - 1, type: /tavern|inn|shop|store/.test(plan.kind) ? 'barrel' : 'flowers' });
+    if (get(dx + 1, frontY - 1) === '.') map.props.push({ x: dx + 1, y: frontY - 1, type: /castle|mansion|temple|town/.test(`${plan.theme} ${theme}`) ? 'lamppost' : 'flowers' });
+    if (/tavern|inn|shop|store|guild|bank/.test(plan.kind)) {
+        const sx = dx + 1 < x0 + bw - 1 ? dx + 1 : dx - 1;
+        set(sx, frontY, '#');
+        map.props.push({ x: sx, y: frontY, type: 'sign', facing: 's', icon: signIcon(`${plan.kind} ${plan.name}`), label: plan.name });
+    }
+    place.doors.D1 = { id: 'D1', floor: 'F0', x: dx, y: frontY, kind: 'door', state: 'closed', rooms: [null, null], enter: 'B1' };
+    place.buildings.B1 = { id: 'B1', name: plan.name, kind: plan.kind, door: 'D1', rect: { x: x0, y: y0, w: bw, h: bd }, interior: null, enterable: true, description: plan.summary };
+    // Gardens and yards, side by side to the right of the building, each its own named area.
+    let yx = x0 + bw + 2;
+    const yh = Math.max(4, bd);
+    for (const [i, yd] of yards.slice(0, 3).entries()) {
+        const kindOf = /grave|cemetery/.test(`${yd.type} ${yd.name}`.toLowerCase()) ? 'graveyard' : /stable|paddock|pasture|barn/.test(yd.name.toLowerCase()) ? 'stable' : /orchard/.test(yd.name.toLowerCase()) ? 'orchard' : yd.type === 'courtyard' && !/garden/.test(yd.name.toLowerCase()) ? 'courtyard' : 'garden';
+        const ww = Math.max(4, Math.min(8, W - yx - 2)), wy = i === 0 ? y0 : i === 1 ? Math.max(1, y0 - yh - 1) : y0 + yh + 1;
+        const wx = i === 2 ? x0 : yx;
+        if (wx + ww > W - 1 || wy + yh > H - 1 || wy < 1) continue;
+        const rect = { x: wx, y: wy, w: ww, h: Math.min(yh, H - 1 - wy) };
+        const id = yd.id;
+        place.rooms[id] = { id, name: yd.name, type: yd.type, floor: 'F0', rect, lit: true, description: yd.description, exit: false };
+        if (kindOf === 'courtyard') for (let x = rect.x; x < rect.x + rect.w; x++) for (let y = rect.y; y < rect.y + rect.h; y++) set(x, y, '=');
+        if (kindOf === 'orchard') for (let x = rect.x + 1; x < rect.x + rect.w - 1; x += 2) for (let y = rect.y + 1; y < rect.y + rect.h - 1; y += 2) set(x, y, 'T');
+        const want = [...(YARD_PROPS[kindOf] ?? YARD_PROPS.garden), ...(yd.props || []).flatMap(p => Array(p.count || 1).fill(p.type))].filter(t => PROPS[t]);
+        for (const type of want) {
+            for (let tries = 0; tries < 12; tries++) {
+                const x = int(r, rect.x, rect.x + rect.w - 1), y = int(r, rect.y, rect.y + rect.h - 1);
+                if (get(x, y) === 'T' || map.props.some(p => p.x === x && p.y === y)) continue;
+                map.props.push({ x, y, type, ...(type === 'fountain' ? {} : {}) });
+                break;
+            }
+        }
+        if (kindOf === 'graveyard') map.props.push({ x: rect.x, y: rect.y + rect.h - 1, type: 'fence', w: rect.w });
+        if (i === 0) yx += ww + 2;
+    }
+    // The land around it: trees thick at the edges, now and then a bush, a rock or flowers.
+    const keep = (x, y) => (x >= x0 - 1 && x <= x0 + bw && y >= y0 - 1 && y <= y0 + bd) || Math.abs(x - dx) <= 1 && y < frontY || Object.values(place.rooms).some(rm => x >= rm.rect.x - 1 && x <= rm.rect.x + rm.rect.w && y >= rm.rect.y - 1 && y <= rm.rect.y + rm.rect.h);
+    const treeChance = theme === 'forest' ? 0.12 : theme === 'swamp' ? 0.08 : theme === 'town' ? 0.02 : theme === 'snow' ? 0.05 : 0.01;
+    for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
+        if (get(x, y) !== '.' || keep(x, y) || map.props.some(p => p.x === x && p.y === y)) continue;
+        const edge = Math.min(x, y, W - 1 - x, H - 1 - y);
+        if ((edge <= 1 && r() < (theme === 'desert' ? 0.1 : 0.55)) || r() < treeChance) set(x, y, 'T');
+        else if (r() < 0.035) map.props.push({ x, y, type: theme === 'desert' ? 'boulder' : pickR(r, ['bush', 'bush', 'flowers', 'boulder', 'log']) });
+    }
+    if (theme === 'swamp' || r() < 0.3) {
+        const px = int(r, 2, Math.max(2, x0 - 6)), py = int(r, y0 + bd + 2, Math.max(y0 + bd + 2, H - 4));
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 2; j++) if (get(px + i, py + j) === '.' && !keep(px + i, py + j)) set(px + i, py + j, '~');
+    }
+    // Whoever is out in the yard.
+    for (const g of plan.outsideGuards || []) {
+        const rm = place.rooms[g.room] ?? Object.values(place.rooms)[0];
+        const spot = rm ? [int(r, rm.rect.x, rm.rect.x + rm.rect.w - 1), int(r, rm.rect.y, rm.rect.y + rm.rect.h - 1)] : [dx + 2, frontY - 2];
+        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: rm?.id ?? null, patrol: [rm?.id].filter(Boolean), step: 0, floor: 'F0', x: spot[0], y: spot[1], state: 'patrol' };
+    }
+    map.rows = c.slice().reverse().map(row => row.join(''));
+    ensureIds(place);
+    place.start = { floor: 'F0', x: dx, y: Math.max(0, frontY - 3), room: null };
     place.state.explored.F0 = '1'.repeat(W * H);
     return place;
 }

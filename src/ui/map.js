@@ -7,13 +7,13 @@
 // Claude never sees an image: it reads and writes maps as plain text.
 
 import { campaign } from '../st/campaign.js';
-import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, reachable, speedSquares, propAt } from '../core/grid.js';
+import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, unhide, hiding } from '../st/atlas.js';
+import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, unhide, hiding, resting, restAt, getUp } from '../st/atlas.js';
 import { conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions } from '../core/restraints.js';
-import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow } from '../core/explore.js';
+import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
 import { settings, saveSettings } from '../st/settings.js';
 import { drawEffects, effectsActive } from './effects.js';
@@ -366,11 +366,11 @@ function drawFrame(now, full = false) {
     const { canvas, c, b, layer, tile } = live;
     const ctx = canvas.getContext('2d');
     const ambient = settings().mapAmbience !== false;
-    const fx = effectsActive(b.map, ambient);
+    const fx = effectsActive(b.map, ambient) || figureFx(c, b).length > 0;
     if (fx) {
         ctx.drawImage(layer, 0, 0);
         const seen = b.place && b.fog && b.visible ? (x, y) => Boolean(b.visible[y * b.map.w + x]) : () => true;
-        const o = { map: b.map, tile, margin: MARGIN, now, ambient, view: viewRect(canvas), seen };
+        const o = { map: b.map, tile, margin: MARGIN, now, ambient, view: viewRect(canvas), seen, figures: figureFx(c, b) };
         drawEffects(ctx, o, 'under');
         drawTokens(ctx, c, b, tile, now, false);
         drawEffects(ctx, o, 'over');
@@ -380,6 +380,21 @@ function drawFrame(now, full = false) {
         drawTokens(ctx, c, b, tile, now, !(full || live.fx));
     }
     live.fx = fx;
+}
+
+/** Sleepers (Z's) and the badly hurt (a drop of blood now and then), in map squares. */
+function figureFx(c, b) {
+    const out = [];
+    for (const [name, coord] of Object.entries(b.positions)) {
+        const pt = parseCoord(coord, b.map);
+        if (!pt) continue;
+        const rest = b.kind === 'place' ? poseNow(b.place, name) : null;
+        const conds = conditionsOf(c.docs.world, name).join(' ').toLowerCase();
+        const hp = hpOf(c, name);
+        if (rest?.pose === 'sleep' || /asleep|sleeping/.test(conds)) out.push({ kind: 'z', x: pt.x, y: pt.y });
+        else if (hp?.hp_max && hp.hp > 0 && hp.hp / hp.hp_max <= 0.25) out.push({ kind: 'drop', x: pt.x, y: pt.y });
+    }
+    return out;
 }
 
 /** Anything moving on the map right now: figures, or fire, spells and the ambience. */
@@ -435,11 +450,19 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             ctx.beginPath(); ctx.ellipse(cx, py + tile * 0.84, tile * 0.34, tile * 0.12, 0, 0, Math.PI * 2); ctx.stroke();
             const m = motion.get(name) ?? {};
             let anim = 'idle', elapsed = now + nameOffset(name);
-            if (hp && hp.hp_max && hp.hp <= 0) anim = 'down';
+            const rest = b.kind === 'place' ? poseNow(b.place, name) : null;
+            const conds = conditionsOf(c.docs.world, name).join(' ').toLowerCase();
+            const out = (hp && hp.hp_max && hp.hp <= 0) || /unconscious|knocked out/.test(conds);
+            if (out) anim = 'down';
+            else if (rest) anim = rest.pose;
+            else if (/asleep|sleeping/.test(conds)) anim = 'sleep';
             else if (m.anim && now < m.animUntil) { anim = m.anim; elapsed = now - m.animStart; }
             else if (m.walkUntil && now < m.walkUntil) anim = 'walk';
+            else if (held.hurt || (hp?.hp_max && hp.hp / hp.hp_max <= 0.3)) anim = 'injured';
             const look = figureFor(name);
-            drawFigure(ctx, held.bound && !look.beast ? { ...look, bound: held.bound } : look, px, py - tile * 0.06, tile, { anim, elapsed, flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, red: anim === 'hurt' && Math.floor(elapsed / 120) % 2 === 0 });
+            const shown = held.bound && !look.beast ? { ...look, bound: held.bound } : look;
+            if (rest?.type === 'bed' && !out) drawInBed(ctx, shown, b, rest, name, tile, now);
+            else drawFigure(ctx, shown, px, py - tile * (anim === 'sit' ? 0.02 : 0.06), tile, { anim, elapsed, flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, red: anim === 'hurt' && Math.floor(elapsed / 120) % 2 === 0 });
         } else {
             const rad = tile * 0.38;
             ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -470,6 +493,30 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             ctx.fillRect(px + 8, py + tile - 7, (tile - 16) * pct, 5);
         }
     }
+}
+
+/** Someone in a bed, seen from above: head at the headboard, tucked under a blanket. */
+function drawInBed(ctx, look, b, rest, name, tile, now) {
+    const prop = (b.map.props || []).find(p => p.id === rest.prop);
+    if (!prop) return;
+    const w = prop.w || 1, h = prop.h || 1;
+    const cx = MARGIN + (prop.x + w / 2) * tile, cy = (b.map.h - prop.y - h / 2) * tile;
+    const turn = { s: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 }[prop.side] ?? 0;
+    const sideways = prop.side === 'e' || prop.side === 'w';
+    const len = (sideways ? w : h) * tile, wid = (sideways ? h : w) * tile;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(turn);
+    drawFigure(ctx, look, -tile / 2, -len / 2 + tile * 0.02, tile, { anim: rest.pose === 'sleep' ? 'asleep' : 'abed', elapsed: now + nameOffset(name) });
+    const top = -len / 2 + tile * 0.48, bottom = len / 2 - tile * 0.1;
+    ctx.fillStyle = 'hsl(215,28,36)';
+    ctx.fillRect(-wid * 0.42, top, wid * 0.84, bottom - top);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(-wid * 0.42, top, wid * 0.84, tile * 0.08);
+    // Breathing under the blanket.
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(-wid * 0.3, top + tile * 0.2 + Math.sin(now / 900) * tile * 0.02, wid * 0.6, tile * 0.05);
+    ctx.restore();
 }
 
 /**
@@ -664,8 +711,10 @@ function openSelfMenu(ev, c) {
     const options = escapeOptions(me, r).map(([label, icon, text]) => [label, icon, async () => sendAsPlayer(text)]);
     const hid = hiding(c, me);
     if (hid) options.unshift(['Come out', 'fa-person-walking', async () => { unhide(c, me); renderMap(); }]);
+    const rest = resting(c, me);
+    if (rest) options.unshift(['Get up', 'fa-person', async () => { getUp(c, me); renderMap(); }]);
     if (!options.length) return false;
-    showMenu(ev, me, hid ? `hiding ${hid.mode} something` : r.reason || r.look || '', options);
+    showMenu(ev, me, hid ? `hiding ${hid.mode} something` : rest ? `${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what}` : r.reason || r.look || '', options);
     return true;
 }
 
@@ -676,7 +725,7 @@ function thingAt(b, sq) {
     const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
     if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
     const prop = propAt(b.map, sq.x, sq.y);
-    if (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type])) return null;
+    if (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type] && !SEATS[prop.type])) return null;
     return { kind: 'prop', prop, name: prop.label || PROPS[prop.type]?.name || prop.type, spot: { x: prop.x, y: prop.y, w: prop.w, h: prop.h } };
 }
 
@@ -700,7 +749,18 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
         const p = thing.prop;
         const light = isLight(p);
         const how = HIDE[p.type];
+        const seat = SEATS[p.type];
+        const use = (verb, icon, label) => [label, icon, async () => {
+            if (!(await near())) return;
+            const r = restAt(c, player, p.id, verb);
+            if (!r) { toastr.info('Someone is already there.', 'Map', { timeOut: 2000 }); return; }
+            // Going to sleep matters to the story (time passes, a rest); sitting down doesn't need the DM.
+            if (verb === 'sleep') { setMapAction(`${player} lies down on the ${r.what} (${p.id}) to sleep. A short or long rest if it's safe; otherwise someone may come.`); sendAsPlayer(`*${player} lies down on the ${r.what} and goes to sleep.*`); }
+            done();
+        }];
         actions = [
+            ...(seat === 'sit' ? [use('sit', 'fa-chair', 'Sit down')] : []),
+            ...(seat === 'lie' ? [use('lie', 'fa-bed', 'Lie down'), use('sleep', 'fa-moon', 'Sleep'), ...(p.type === 'bed' ? [use('sit', 'fa-chair', 'Sit on it')] : [])] : []),
             ...(how ? [[`Hide ${how === 'in' ? 'in' : how === 'under' ? 'under' : 'behind'} it`, 'fa-user-secret', async () => {
                 if (!(await near())) return;
                 const h = hideAt(c, player, p.id);

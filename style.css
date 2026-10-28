@@ -134,7 +134,10 @@
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
 .dm-map-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--SmartThemeBorderColor); }
-.dm-map-head b { flex: 1; }
+.dm-map-head b { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-map-head .dm-muted { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The buttons never shrink or get pushed off: the title gives way first (the close button stays on a phone). */
+.dm-map-head .dm-map-btn, .dm-map-head .dm-map-floor { flex-shrink: 0; }
 .dm-map-btn { cursor: pointer; opacity: 0.7; padding: 4px 6px; }
 .dm-map-btn:hover { opacity: 1; }
 .dm-map-btn.dm-map-off { opacity: 0.3; }
@@ -199,6 +202,10 @@
     /* Phone: a sheet across the bottom 70% of the screen, still anchored from the top. */
     .dm-map { left: 0; right: 0; top: 30dvh; width: 100vw; max-height: 70dvh; border-radius: 12px 12px 0 0; }
     .dm-map.dm-map-min { top: calc(100dvh - 44px); }
+    .dm-map-head { gap: 2px; padding: 4px 6px; }
+    .dm-map-head .dm-muted { display: none; }
+    .dm-map-head .dm-map-btn { padding: 8px 9px; font-size: 1.1em; }
+    .dm-map-head .dm-map-floor { max-width: 96px; }
 }
 
 /* ---------- Template editors ---------- */

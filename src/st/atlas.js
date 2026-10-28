@@ -10,8 +10,8 @@ import { readJson, writeLater, flushWrites } from './storage.js';
 import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
-import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, clearDoorways, ensureIds } from '../core/layout.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -55,8 +55,12 @@ export async function loadPlace(key, c = campaign()) {
         ensureIds(place);
         // Trap pictures the DM put down before they could be real traps: make them real.
         const traps = adoptTrapProps(place);
+        // A lit, lived-in home built before v0.20 still had fog of war: you can see its rooms.
+        const rooms = Object.values(place.rooms);
+        const homey = place.fog && /house|home|cottage|mansion|manor|estate|tavern|inn|shop|store|cabin|lodge|library|temple|church|guild|bank|hall|interior/.test(place.kind) && rooms.length && rooms.filter(r => r.lit).length * 2 >= rooms.length;
+        if (homey) place.fog = false;
         places.set(id, place);
-        if (moved || traps) savePlace(key, c);
+        if (moved || traps || homey) savePlace(key, c);
     }
     return place;
 }
@@ -191,7 +195,7 @@ export function goTargets(c, name) {
  * room or to a room next door. They walk there and stay (they no longer follow the player).
  * Returns what they went to, or '' if they can't (tied up, no way there).
  */
-export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
+export async function companionGoTo(c, name, targetId, { hide = false, pose = '' } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || lockedReason(c, name)) return '';
     const { key, place } = cur;
@@ -243,10 +247,13 @@ export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
         refreshMap();
         return '';
     }
+    standUp(place, name);
     if (hide && prop && HIDE[prop.type]) hideAt(c, name, prop.id);
+    else if (pose && prop) restOn(place, name, prop.id, pose);
     savePlace(key, c);
     refreshMap();
-    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} the ` : ''}${prop.label || PROPS[prop.type]?.name || prop.type}` : room.name;
+    const restingNow = !hide && pose && prop ? poseNow(place, name) : null;
+    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} the ` : restingNow ? `${restingNow.pose === 'sit' ? 'sit on' : restingNow.pose === 'sleep' ? 'sleep on' : 'lie on'} the ` : ''}${prop.label || PROPS[prop.type]?.name || prop.type}` : room.name;
 }
 
 /**
@@ -290,6 +297,29 @@ export function hideAt(c, name, propId) {
     if (!r) return null;
     savePlace(key, c);
     return { mode: r.mode, name: r.what };
+}
+
+/** How someone is resting right now ({pose, what, type, side, prop}), or null. */
+export function resting(c, name) {
+    const cur = currentPlace(c);
+    return cur ? poseNow(cur.place, name) : null;
+}
+
+/** Sit, lie down or go to sleep on a thing (they must be beside it). Returns {pose, what} or null. */
+export function restAt(c, name, propId, how = '') {
+    const cur = currentPlace(c);
+    if (!cur) return null;
+    const r = restOn(cur.place, name, propId, how);
+    if (r) savePlace(cur.key, c);
+    return r;
+}
+
+/** Get up. */
+export function getUp(c, name) {
+    const cur = currentPlace(c);
+    if (!cur?.place.state.pose?.[name]) return;
+    standUp(cur.place, name);
+    savePlace(cur.key, c);
 }
 
 /** Come out of hiding (walking anywhere does this too). */
@@ -500,7 +530,7 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
     }
     st.floor = lead.floor;
     c.docs.world.place = { key, floor: lead.floor };
-    if (place.kind === 'town' || place.kind === 'interior') c.docs.world.location = place.name;
+    if (place.kind === 'town' || place.kind === 'interior' || place.kind === 'grounds' || place.parent) c.docs.world.location = place.name;
     saveDoc('world');
     look(c, key, place);
     await noteRoom(c, place, { quiet });
@@ -581,17 +611,31 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         anim.step(town ? 'Building the town' : 'Building the floors');
         await sleep(300);
         const seed = Math.floor(Math.random() * 1e9);
-        const place = town ? generateTown(normalizeTownPlan(raw), seed) : generatePlace(normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind }), seed);
+        const plan = town ? null : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
+        const place = town ? generateTown(normalizeTownPlan(raw), seed) : generatePlace(plan, seed);
         anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
         const key = placeKey(place.name || req.name);
-        storePlace(c, key, place, { size: big ? 'big' : 'small' });
+        // A building is two maps: its grounds outside (with the front door) and its inside. The front
+        // door goes between them; the party starts outside when they're arriving (or out in the yard).
+        let enterKey = key, outside = null;
+        if (plan?.building) {
+            anim.step('Laying out the grounds');
+            outside = generateGrounds(plan, place, seed + 1);
+            const insideKey = `${key}--b1`;
+            place.parent = { key, door: outside.buildings.B1.door };
+            outside.buildings.B1.interior = insideKey;
+            storePlace(c, key, outside, { size: big ? 'big' : 'small' });
+            storePlace(c, insideKey, place, { size: big ? 'big' : 'small', parent: key });
+            const startRoom = place.rooms[place.start?.room];
+            if (!plan.startOutside && !(startRoom?.exit && /arriv|approach|outside|walk up|reach|come to|knock/i.test(`${req.why} ${req.start}`))) enterKey = insideKey;
+        } else storePlace(c, key, place, { size: big ? 'big' : 'small' });
         await flushWrites();
         const summary = town
             ? `🗺️ **${place.name}** is ready: ${Object.keys(place.buildings).length} buildings. Their insides are built when you walk in.`
-            : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} rooms.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
+            : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} rooms${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
         await anim.finish(summary);
-        await enterPlace(key);
+        await enterPlace(enterKey);
         return place;
     } catch (error) {
         await anim.fail(String(error?.message || error));
@@ -613,7 +657,7 @@ async function enterBuilding(c, townKey, town, door) {
         toastr.info(`${b.name} is closed.`, 'Map', { timeOut: 2500 });
         return;
     }
-    const key = `${townKey}--${slug(b.id, 12)}`;
+    const key = b.interior ?? `${townKey}--${slug(b.id, 12)}`;
     if (!atlas(c).places[key]) {
         const inside = generateInterior(b, Math.floor(Math.random() * 1e9));
         inside.parent = { key: townKey, door: door.id };
@@ -621,7 +665,11 @@ async function enterBuilding(c, townKey, town, door) {
         b.interior = key;
         savePlace(townKey, c);
     }
-    await enterPlace(key, { at: null });
+    // Arrive just inside the front door (its first way out).
+    const inside = await loadPlace(key, c);
+    const front = inside?.exits?.[0];
+    const at = front ? { floor: front.floor, ...freeNear(inside, front.floor, front.x, front.y) } : null;
+    await enterPlace(key, { at });
 }
 
 // ---------- walking ----------
@@ -665,6 +713,7 @@ export async function walkTo(target, redraw = () => { }) {
     if (!lead) return;
     if (stuck(c)) return;
     if (place.state.hidden?.[names[0]]) delete place.state.hidden[names[0]];
+    standUp(place, names[0]);
     const { isRunning } = await import('./orchestrator.js');
     if (isRunning()) { toastr.info('The DM is busy. Move when the turn is done.', 'Map', { timeOut: 2500 }); return; }
     const floorId = lead.floor;
@@ -724,6 +773,7 @@ export async function walkTo(target, redraw = () => { }) {
                 if (d && d.state === 'closed') setDoorState(place, d, 'open');
                 Object.assign(p, { x, y });
                 if (place.state.hidden?.[n]) delete place.state.hidden[n];
+                standUp(place, n);
                 moved = true;
                 // Their own way, their own traps.
                 const sprung = stepOn(place, n, floorId, x, y);
@@ -790,8 +840,16 @@ export async function walkTo(target, redraw = () => { }) {
                 const outside = td ? freeNear(town, td.floor, td.x, td.y) : null;
                 await enterPlace(place.parent.key, { at: outside ? { floor: td.floor, ...outside } : null, quiet: true });
             } else {
-                event = `The party walked out of ${place.name} through its way out.`;
-                leavePlace(c);
+                // Leaving the map for good: ask first (a stray tap shouldn't end it).
+                const ok = await ST.callGenericPopup(`<h3>Leave ${escape(place.name)}?</h3><p>You'll walk out and this map closes. The DM takes the story from there (it can bring you back here later).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Leave', cancelButton: 'Stay' });
+                if (ok === ST.POPUP_RESULT.AFFIRMATIVE || ok === true || ok === 1) {
+                    event = `The party walked out of ${place.name} through its way out.`;
+                    leavePlace(c);
+                } else {
+                    // Step back off the way out.
+                    const back = freeNear(place, lead.floor, lead.x, lead.y);
+                    Object.assign(lead, back);
+                }
             }
         }
         savePlace(key, c);

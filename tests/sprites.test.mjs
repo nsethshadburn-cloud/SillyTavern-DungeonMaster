@@ -11,7 +11,7 @@ test('every library figure builds every animation, in bounds and not empty', () 
     for (const key of Object.keys(LIBRARY)) {
         for (const v of [0, 1, 4]) {
             const s = buildSprite(libraryLook(key, v));
-            assert.deepEqual(Object.keys(s.anims).sort(), ['attack', 'down', 'hurt', 'idle', 'walk'].sort(), key);
+            assert.deepEqual(Object.keys(s.anims).sort(), ['abed', 'asleep', 'attack', 'down', 'hurt', 'idle', 'injured', 'lie', 'sit', 'sleep', 'walk'].sort(), key);
             assert.equal(s.anims.idle.length, 4);
             assert.equal(s.anims.walk.length, 4);
             assert.equal(s.anims.attack.length, 3);

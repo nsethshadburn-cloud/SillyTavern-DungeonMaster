@@ -325,6 +325,10 @@ const POSES = {
     hurt: [{ lean: -2, blink: true, armsUp: true }],
 };
 
+// Badly hurt: hunched over with a hand pressed to the side, swaying a little.
+const INJURED = [{ bob: 2, lean: 2, armF: -3, armB: 1 }, { bob: 2, lean: 2, armF: -3, armB: 1 }, { bob: 2, lean: 1, armF: -3, armB: 1 }, { bob: 2, lean: 2, armF: -3, armB: 1, blink: true }];
+const BEAST_INJURED = [{ bob: 1, lean: -1 }, { bob: 1 }, { bob: 1, lean: -1, blink: true }];
+
 // Tied up: a slow squirm (lean one way, then the other) instead of breathing; dragged, a little bob.
 const SQUIRM = [{}, { lean: 1 }, { lean: 1, bob: 1 }, { lean: -1, blink: true }];
 const DRAGGED = [{ lean: -1 }, { lean: -1, bob: 1 }, { lean: -1 }, { lean: -1, bob: 1 }];
@@ -595,6 +599,34 @@ function beast(look, pose) {
 
 // ---------- the whole sprite ----------
 
+/**
+ * Sitting: the body drops onto the seat and the legs fold forward (thighs out in front, feet down).
+ * legLen = how long the figure's legs are (by build).
+ */
+function sitting(frame, legLen) {
+    const feet = 22, hip = feet - legLen, drop = legLen - 1;
+    const out = new Uint8Array(SIZE * SIZE);
+    for (let y = 0; y < hip; y++) for (let x = 0; x < SIZE; x++) { const c = frame[y * SIZE + x]; if (c && y + drop < SIZE) out[(y + drop) * SIZE + x] = c; }
+    // The legs: what's at the top of the legs becomes the thighs, reaching forward; the boots end them.
+    const cols = [];
+    for (let x = 0; x < SIZE; x++) if (frame[(hip + 1) * SIZE + x]) cols.push(x);
+    if (!cols.length) return out;
+    const right = Math.max(...cols), boot = frame[feet * SIZE + right] || frame[(feet - 1) * SIZE + right] || frame[(hip + 1) * SIZE + right];
+    for (const x of cols) for (let t = 0; t <= 3; t++) {
+        const c = frame[(hip + 1) * SIZE + x], nx = x + t;
+        if (nx < SIZE) { out[(feet - 1) * SIZE + nx] ||= c; out[(feet - 2) * SIZE + nx] ||= frame[hip * SIZE + x] || c; }
+    }
+    for (let t = 0; t < 2; t++) if (right + 3 - t < SIZE) out[feet * SIZE + right + 3 - t] = boot;
+    return out;
+}
+
+/** A beast settling down: the whole body lower (legs tucked under). */
+function crouched(frame, rows) {
+    const out = new Uint8Array(SIZE * SIZE);
+    for (let y = 0; y < SIZE - rows; y++) for (let x = 0; x < SIZE; x++) { const c = frame[y * SIZE + x]; if (c) out[(y + rows) * SIZE + x] = c; }
+    return out;
+}
+
 /** Lying down at 0 HP: the standing frame turned on its side, resting on the ground. */
 function lyingDown(frame) {
     const out = new Uint8Array(SIZE * SIZE);
@@ -627,12 +659,20 @@ export function buildSprite(lookIn) {
     const anims = {};
     for (const [name, list] of Object.entries(poses)) anims[name] = list.map(p => draw(look, p).d);
     anims.down = [lyingDown(anims.idle[3])];
+    // Badly hurt (low HP), sitting, lying down awake or asleep, and asleep in a bed seen from above.
+    anims.injured = (isBeast ? BEAST_INJURED : INJURED).map(p => draw(look, p).d);
+    const legLen = look.build === 'small' ? 3 : look.build === 'large' ? 5 : 4;
+    anims.sit = isBeast ? [crouched(anims.idle[0], 2), crouched(anims.idle[1], 2)] : [sitting(anims.idle[0], legLen), sitting(anims.idle[1], legLen)];
+    anims.lie = isBeast ? [crouched(anims.idle[0], 4)] : [lyingDown(anims.idle[0])];
+    anims.sleep = isBeast ? [crouched(anims.idle[3], 4)] : [lyingDown(anims.idle[3])];
+    anims.abed = [anims.idle[0]];
+    anims.asleep = [anims.idle[3]];
     const alpha = !isBeast && SPECIES[look.species]?.undead === 'ghost' ? 0.72 : 1;
     return { size: SIZE, palette: paletteFor(isBeast ? { skin: look.fur, hairColor: shade(look.fur, -0.3) } : look), alpha, anims };
 }
 
 /** How fast each animation plays (frames per second) and whether it loops. */
-export const ANIM_TIMING = { idle: { fps: 3, loop: true }, walk: { fps: 10, loop: true }, attack: { fps: 9, loop: false }, hurt: { fps: 4, loop: false }, down: { fps: 1, loop: true } };
+export const ANIM_TIMING = { idle: { fps: 3, loop: true }, walk: { fps: 10, loop: true }, attack: { fps: 9, loop: false }, hurt: { fps: 4, loop: false }, down: { fps: 1, loop: true }, injured: { fps: 2, loop: true }, sit: { fps: 1.5, loop: true }, lie: { fps: 1, loop: true }, sleep: { fps: 1, loop: true }, abed: { fps: 1, loop: true }, asleep: { fps: 1, loop: true } };
 
 /** Instructions for Claude: describe a character for their map figure (sent with their picture). */
 export const SPRITE_INSTRUCTIONS = `You design tiny pixel-art map figures (24x24 pixels) for a tabletop game. Look at the character's picture and card and describe what they ARE, in generic terms, as a small figure: their kind of creature, build and colors, what they wear and carry. Do not try to reproduce a specific copyrighted design; a generic figure of the same kind is the goal (a well-known rabbit police officer becomes "a small female rabbit-folk in light armor").

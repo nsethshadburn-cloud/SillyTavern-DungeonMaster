@@ -141,8 +141,8 @@ export function companionActionPrompt({ name, message, scene, places = [], askAt
         message,
         '',
         askAttempt ? `1. Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
-        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now (on their own or because they were asked to), not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it)?` : '',
-        `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty", "hide": true or false' : ''}}`,
+        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now (on their own or because they were asked to), not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it), or sitting or lying down on it ("sit", "lie", "sleep", or "")?` : '',
+        `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty", "hide": true or false, "pose": "sit, lie, sleep or empty"' : ''}}`,
     ].filter(Boolean).join('\n');
     return { system, user };
 }
@@ -152,5 +152,6 @@ export function parseCompanionAction(text, places = []) {
     const attempt = data.attempt === true || data.attempt === 'true';
     const go = String(data.go ?? '').trim();
     const ok = places.some(p => p.id === go);
-    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '', ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}) };
+    const pose = String(data.pose ?? '').trim().toLowerCase();
+    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '', ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}), ...(ok && ['sit', 'lie', 'sleep'].includes(pose) ? { pose } : {}) };
 }

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { stepOn, adoptTrapProps, hiddenNow, hideIn, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { stepOn, adoptTrapProps, hiddenNow, hideIn, poseNow, restOn, standUp, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
 import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
@@ -35,7 +35,9 @@ test('plans are cleaned up: stairs between floors, room types, a way out', () =>
     assert.equal(plan.rooms.find(r => r.id === 'B').type, 'room');
     assert.equal(plan.rooms.find(r => r.id === 'C').type, 'torture_chamber');
     assert.deepEqual(plan.rooms.find(r => r.id === 'C').props.map(p => p.type), ['rack']);
-    assert.ok(plan.rooms.some(r => r.exit), 'a way out is added');
+    assert.ok(!plan.rooms.some(r => r.exit), 'no way out unless named: the DM moves the story on');
+    const house = normalizePlan({ kind: 'house', rooms: [{ id: 'A', name: 'Kitchen' }, { id: 'B', name: 'Bedroom' }], links: [{ a: 'A', b: 'B' }] });
+    assert.ok(house.rooms.some(r => r.exit), 'a building gets a front door (onto its grounds)');
     assert.equal(roomType('Servants\' quarters'), 'servants_quarters');
     assert.equal(roomType('Dining Hall'), 'dining_room');
 });
@@ -463,7 +465,8 @@ test('crowded, half-linked plans still build: big floors split, cut-off rooms ge
     const messy = generatePlace({ name: 'Gallowmere Keep', kind: 'castle', floors: [{ id: 'G', name: 'Ground', level: 0 }, { id: 'T', name: 'Tower top', level: 2 }],
         rooms: [{ id: 'G1', name: 'Gatehouse', floor: 'G', exit: true }, { id: 'G2', name: 'Courtyard', floor: 'G' }, { id: 'G3', name: 'Great Hall', floor: 'G' }, { id: 'T1', name: 'Lookout', floor: 'T' }, { id: 'T2', name: 'Bell room', floor: 'T' }],
         links: [{ a: 'Gatehouse', b: 'Courtyard' }, { a: 'the courtyard', b: 'G3' }, { a: 'T1', b: 'T2' }] }, 5);
-    assert.equal(reachable(messy).roomsReached.length, 5, 'every room can be reached');
+    assert.equal(reachable(messy).roomsReached.length, 4, 'every room inside can be reached');
+    assert.ok(!Object.values(messy.rooms).some(r => r.name === 'Courtyard'), 'the courtyard is outside, on the grounds');
     assert.ok(messy.stairs.length >= 1, 'the tower got stairs');
 });
 
@@ -613,4 +616,66 @@ test('hiding is tracked live: the DM sees who is hidden where, and walking off e
     assert.equal(hiddenNow(place, 'Amber'), null);
     applyPlaceChanges(place, { hide: { Amber: 'barrel' } });
     assert.equal(hiddenNow(place, 'Amber')?.what, 'barrel', 'by what it is, too');
+});
+
+test('a building is two maps: the grounds outside (its door, gardens, trees) and the inside', async () => {
+    const { generateGrounds } = await import('../src/core/layout.js');
+    const plan = normalizePlan({
+        name: 'Hollow Oak Cottage', kind: 'cottage', summary: 'A cottage at the edge of the woods.',
+        rooms: [{ id: 'A', name: 'Front room', type: 'parlor', lit: true }, { id: 'B', name: 'Kitchen', type: 'kitchen', lit: true }, { id: 'C', name: 'Herb garden', type: 'garden' }, { id: 'D', name: 'Bedroom', type: 'bedroom', lit: true }],
+        links: [{ a: 'A', b: 'B' }, { a: 'B', b: 'C' }, { a: 'A', b: 'D' }],
+        people: [{ name: 'Old Wren', room: 'C', description: 'tending herbs' }], start: 'C',
+    });
+    assert.equal(plan.building, true);
+    assert.deepEqual(plan.outside.map(r => r.name), ['Herb garden'], 'the garden is outside');
+    assert.ok(!plan.rooms.some(r => r.name === 'Herb garden'), '...never on the inside map');
+    assert.ok(plan.rooms.find(r => r.id === 'B').exit, 'the kitchen opened onto the garden: it has the door out');
+    assert.equal(plan.startOutside, true, 'starting in the garden: the party starts outside');
+    assert.equal(plan.fog, false, 'a lit, lived-in home: no fog of war');
+    const inside = generatePlace(plan, 4);
+    assert.ok(inside.exits.length >= 1, 'a front door');
+    const out = generateGrounds(plan, inside, 5);
+    assert.equal(out.kind, 'grounds');
+    assert.equal(out.fog, false);
+    assert.equal(out.exits.length, 0, 'no edge of the map kills it: the DM moves on');
+    const door = out.doors.D1;
+    assert.equal(door.enter, 'B1');
+    assert.equal(terrainAt(out.floors[0].map, door.x, door.y), '+');
+    assert.ok(Object.values(out.rooms).some(r => r.name === 'Herb garden'), 'the garden is an area outside');
+    assert.ok(out.guards['Old Wren'], 'whoever was in the garden is outside');
+    assert.ok(out.floors[0].map.rows.join('').includes('T'), 'trees');
+    assert.ok(out.floors[0].map.roofs.length === 1);
+    assert.ok(findPath(out, 'F0', out.start, { x: door.x, y: door.y - 1 }, { knownOnly: false }), 'a way up to the door');
+    // Never windows in a hedge (an outdoor room inside a ruin).
+    const ruin = generatePlace({ name: 'Old Ruin', kind: 'ruins', rooms: [{ id: 'A', name: 'Hall', type: 'hall' }, { id: 'B', name: 'Overgrown garden', type: 'garden' }], links: [{ a: 'A', b: 'B' }] }, 2);
+    const g = ruin.rooms.B?.rect;
+    if (g) {
+        const m = ruin.floors[0].map;
+        for (let x = g.x - 1; x <= g.x + g.w; x++) for (const y of [g.y - 1, g.y + g.h]) assert.notEqual(terrainAt(m, x, y), '|', 'no window in the garden hedge');
+    }
+});
+
+test('furniture you can use: sit, lie down, sleep; walking off or hiding gets you up; the DM sees it', () => {
+    const place = tinyPlace();
+    const map = floorById(place, 'G').map;
+    const A = place.rooms.A.rect;
+    map.props.push({ id: 'p90', type: 'armchair', x: A.x + 1, y: A.y + 1 }, { id: 'p91', type: 'bed', x: A.x + 3, y: A.y + 1, h: 2 }, { id: 'p92', type: 'barrel', x: A.x, y: A.y + 3 });
+    place.state.positions.Amber = { floor: 'G', x: A.x + 2, y: A.y + 2 };
+    place.state.positions['Judy Hopps'] = { floor: 'G', x: A.x + 2, y: A.y + 1 };
+    assert.equal(restOn(place, 'Amber', 'p92'), null, 'you can\'t sit on a barrel');
+    assert.deepEqual(restOn(place, 'Amber', 'p90'), { pose: 'sit', what: 'armchair' });
+    assert.deepEqual([place.state.positions.Amber.x, place.state.positions.Amber.y], [A.x + 1, A.y + 1], 'in the chair');
+    assert.match(placeView(place, ['Amber']), /Amber .*sitting on the armchair \(p90\)/);
+    assert.equal(restOn(place, 'Judy Hopps', 'p91', 'sleep').pose, 'sleep');
+    assert.equal(restOn(place, 'Amber', 'p91', 'lie').pose, 'lie', 'two in a bed: the other half');
+    assert.notDeepEqual(place.state.positions.Amber, place.state.positions['Judy Hopps']);
+    place.state.positions.Amber.x = A.x;
+    assert.equal(poseNow(place, 'Amber'), null, 'walked off: up again');
+    applyPlaceChanges(place, { pose: { judy: 'stand' } });
+    assert.equal(poseNow(place, 'Judy Hopps'), null);
+    applyPlaceChanges(place, { pose: { 'Judy Hopps': 'sit armchair' } });
+    assert.equal(poseNow(place, 'Judy Hopps')?.pose, 'sit', 'the DM sits her down (by what it is)');
+    hideIn(place, 'Judy Hopps', 'p92');
+    assert.equal(poseNow(place, 'Judy Hopps'), null, 'hiding gets you up');
+    standUp(place, 'Nobody');
 });

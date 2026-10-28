@@ -10,7 +10,7 @@ import { terrainAt, PROPS } from '../core/grid.js';
 
 const MAX = 150;
 /** Most particles of one kind at once (weather stays a sprinkle, not a storm). */
-const CAP = { rain: 55, snow: 40, dust: 14, ash: 24, mist: 6, leaves: 6, fireflies: 10, sand: 18, ember: 50, smoke: 26, glint: 16, spark: 18, bubble: 16 };
+const CAP = { z: 6, drop: 8, rain: 55, snow: 40, dust: 14, ash: 24, mist: 6, leaves: 6, fireflies: 10, sand: 18, ember: 50, smoke: 26, glint: 16, spark: 18, bubble: 16 };
 /** What the air is like by default, by kind of map. Rain only when the DM says it's raining. */
 const DEFAULT_AMBIENCE = {
     snow: 'snow', desert: 'sand', swamp: 'fireflies', forest: 'leaves',
@@ -232,6 +232,13 @@ function step(dt, o, { fire, effects, src, air, at, shown }) {
     }
     parts = parts.filter(p => p.life > 0 && p.y < view.y + view.h + tile && p.y > view.y - tile * 3 && p.x > view.x - tile * 2 && p.x < view.x + view.w + tile * 2);
     const chance = rate => Math.random() < rate * dt;
+    // From figures: Z's float up from sleepers, a drop of blood falls from the badly hurt.
+    for (const f of o.figures || []) {
+        if (!shown(f.x, f.y)) continue;
+        const [cx, cy] = at(f.x, f.y);
+        if (f.kind === 'z' && chance(0.7)) spawn({ kind: 'z', x: cx + tile * 0.12, y: cy - tile * 0.3, vx: tile * 0.18, vy: -tile * 0.32, life: 2, max: 2, size: Math.max(9, tile * 0.28) });
+        if (f.kind === 'drop' && chance(0.3)) spawn({ kind: 'drop', x: cx + rnd(-0.15, 0.15) * tile, y: cy - tile * 0.05, vx: 0, vy: tile * 0.7, life: 0.5, max: 0.5, size: Math.max(1.5, tile / 22) });
+    }
     // How many to make this frame for a rate per second (weather can need several a frame).
     const many = rate => { const n = rate * dt; return Math.floor(n) + (Math.random() < n % 1 ? 1 : 0); };
     // Fire: embers fly up, smoke rises and spreads.
@@ -270,6 +277,8 @@ function step(dt, o, { fire, effects, src, air, at, shown }) {
 function drawPart(ctx, p, tile, now) {
     const fade = Math.max(0, Math.min(1, p.life / p.max));
     switch (p.kind) {
+        case 'z': { const a = Math.sin(fade * Math.PI); ctx.fillStyle = `rgba(225,232,255,${0.85 * a})`; ctx.font = `bold ${Math.round(p.size * (1.3 - fade * 0.5))}px sans-serif`; ctx.fillText('z', p.x, p.y); break; }
+        case 'drop': ctx.fillStyle = `rgba(170,10,10,${0.85 * fade})`; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size, p.size * 1.4, 0, 0, Math.PI * 2); ctx.fill(); break;
         case 'ember': ctx.fillStyle = `rgba(255,${Math.round(120 + 100 * fade)},40,${0.9 * fade})`; ctx.fillRect(p.x, p.y, p.size, p.size); break;
         case 'smoke': { ctx.globalAlpha = 0.15 * fade * Math.min(1, (p.max - p.life) * 2); const s = softDot('120,114,108', 48); ctx.drawImage(s, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); ctx.globalAlpha = 1; break; }
         case 'glint': { ctx.strokeStyle = `rgba(230,245,255,${0.55 * Math.sin(fade * Math.PI)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(p.x - p.size, p.y); ctx.lineTo(p.x + p.size, p.y); ctx.stroke(); break; }

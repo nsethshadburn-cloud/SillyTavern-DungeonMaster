@@ -97,15 +97,30 @@ export function applyStateChanges(world, changes, knownNames = []) {
         world.gold = Math.max(0, (Number(world.gold) || 0) + gold);
         log.push(`Gold ${gold > 0 ? '+' : ''}${gold} (now ${world.gold})`);
     }
-    for (const item of arrayOf(changes.items_add)) {
-        world.items.push(String(item));
-        log.push(`+ ${item}`);
+    const owners = [...new Set([...Object.keys(world.party), ...knownNames])];
+    const packOf = who => {
+        const name = matchName(who, owners);
+        if (!name) return null;
+        world.inventory ??= {};
+        return { name, list: (world.inventory[name] ??= []) };
+    };
+    const byOwner = v => (v && typeof v === 'object' && !Array.isArray(v) ? Object.entries(v) : [[null, v]]);
+    for (const [who, items] of byOwner(changes.items_add)) {
+        const pack = who ? packOf(who) : null;
+        for (const item of arrayOf(items)) {
+            (pack?.list ?? world.items).push(String(item));
+            log.push(`+ ${item}${pack ? ` (${pack.name})` : ''}`);
+        }
     }
-    for (const item of arrayOf(changes.items_remove)) {
-        const idx = world.items.findIndex(x => nameKey(x) === nameKey(item));
-        if (idx !== -1) {
-            world.items.splice(idx, 1);
-            log.push(`− ${item}`);
+    for (const [who, items] of byOwner(changes.items_remove)) {
+        const pack = who ? packOf(who) : null;
+        for (const item of arrayOf(items)) {
+            // From whoever has it: the named person, else the shared pack, else anyone.
+            const lists = [pack?.list, world.items, ...Object.values(world.inventory ?? {})].filter(Boolean);
+            const from = lists.find(l => l.some(x => nameKey(x) === nameKey(item)));
+            if (!from) continue;
+            from.splice(from.findIndex(x => nameKey(x) === nameKey(item)), 1);
+            log.push(`− ${item}${pack ? ` (${pack.name})` : ''}`);
         }
     }
     if (changes.flags && typeof changes.flags === 'object') {
@@ -125,6 +140,12 @@ export function changeHp(world, who, delta, names = []) {
     ref.hp = Math.max(0, Math.min(Number(ref.hp_max) || before + Math.max(0, delta), before + delta));
     let line = `${target.name} HP ${before} → ${ref.hp}${ref.hp_max ? `/${ref.hp_max}` : ''}`;
     if (ref.hp === 0) line += target.isEnemy ? ' (down)' : ' (unconscious!)';
+    if (!target.isEnemy) {
+        ref.conditions = ref.conditions || [];
+        const out = ref.conditions.some(c => /^unconscious$/i.test(c));
+        if (ref.hp === 0 && !out) ref.conditions.push('unconscious');
+        if (ref.hp > 0 && before === 0 && out) { ref.conditions = ref.conditions.filter(c => !/^unconscious$/i.test(c)); line += ' (conscious again)'; }
+    }
     return line;
 }
 

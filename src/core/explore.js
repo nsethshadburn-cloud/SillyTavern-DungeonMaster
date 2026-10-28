@@ -2,9 +2,9 @@
 // has seen), walking paths, guards on patrol, the DM's view of the place, and the DM's changes
 // (doors, traps, items, guards). Pure module.
 
-import { PROPS, TERRAIN, HEAVY, HIDE, terrainAt, propsAt, colName, parseCoord } from './grid.js';
+import { PROPS, TERRAIN, HEAVY, HIDE, SEATS, terrainAt, propsAt, colName, parseCoord } from './grid.js';
 import { doorChar, ensureIds } from './layout.js';
-import { nameKey } from './text.js';
+import { nameKey, matchName } from './text.js';
 
 const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert']);
 /** Squares you can't see through. Windows and open doors are see-through. */
@@ -382,6 +382,49 @@ export function hiddenNow(place, name) {
     return { ...h, what: prop.label || PROPS[prop.type]?.name || prop.type };
 }
 
+// ---------- sitting and lying down ----------
+
+const covers = (p, x, y) => x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1);
+
+/**
+ * How `name` is resting right now ({prop, pose: 'sit'|'lie'|'sleep', what, type, side}), or null.
+ * Only while they're still on the thing (walking off, or being moved, ends it).
+ */
+export function poseNow(place, name) {
+    const s = place.state.pose?.[name];
+    const pos = place.state.positions[name];
+    if (!s || !pos) return null;
+    const prop = (floorById(place, pos.floor).map.props || []).find(p => p.id === s.prop);
+    if (!prop || !covers(prop, pos.x, pos.y)) return null;
+    return { ...s, what: prop.label || PROPS[prop.type]?.name || prop.type, type: prop.type, side: prop.side || 'n' };
+}
+
+/**
+ * `name` sits on, lies down on or goes to sleep on a thing on their floor (onto one of its squares
+ * nobody else is on). how = 'sit' | 'lie' | 'sleep' (a bed can be sat on too). Returns {pose, what} or null.
+ */
+export function restOn(place, name, propId, how = '') {
+    const pos = place.state.positions[name];
+    const prop = pos && (floorById(place, pos.floor).map.props || []).find(p => p.id === propId);
+    const kind = prop && SEATS[prop.type];
+    if (!kind) return null;
+    const pose = how === 'sleep' ? 'sleep' : how === 'sit' || kind === 'sit' ? 'sit' : 'lie';
+    const others = new Set(Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`));
+    let spot = null;
+    for (let y = prop.y; y < prop.y + (prop.h || 1) && !spot; y++) for (let x = prop.x; x < prop.x + (prop.w || 1) && !spot; x++) if (!others.has(`${x},${y}`)) spot = { x, y };
+    if (!spot) return null;
+    Object.assign(pos, spot);
+    if (place.state.hidden?.[name]) delete place.state.hidden[name];
+    place.state.pose ??= {};
+    place.state.pose[name] = { prop: prop.id, pose, at: Date.now() };
+    return { pose, what: prop.label || PROPS[prop.type]?.name || prop.type };
+}
+
+/** Get up (walking anywhere does this too). */
+export function standUp(place, name) {
+    if (place.state.pose?.[name]) delete place.state.pose[name];
+}
+
 /**
  * `name` hides in, under or behind a thing on their floor. Inside or underneath, they move onto its
  * square; behind it, they crouch beside it. Returns {mode, what}, or null if it can't hide anyone.
@@ -396,6 +439,7 @@ export function hideIn(place, name, propId) {
     else if (!(pos.x >= prop.x - 1 && pos.x <= prop.x + w && pos.y >= prop.y - 1 && pos.y <= prop.y + ht)) Object.assign(pos, freeNear(place, pos.floor, prop.x, prop.y));
     place.state.hidden ??= {};
     place.state.hidden[name] = { prop: prop.id, mode, at: Date.now() };
+    if (place.state.pose?.[name]) delete place.state.pose[name];
     return { mode, what: prop.label || PROPS[prop.type]?.name || prop.type };
 }
 
@@ -552,7 +596,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
     }
     // Hiding: {"Amber": "p12"} hides them in/under/behind that thing; "out" brings them out.
     for (const [who, raw] of Object.entries(c.hide || {})) {
-        const name = Object.keys(place.state.positions).find(n => nameKey(n) === nameKey(who));
+        const name = matchName(who, Object.keys(place.state.positions));
         if (!name) continue;
         if (/^(out|none|no|false|leave|left)$/i.test(String(raw).trim())) {
             if (place.state.hidden?.[name]) { delete place.state.hidden[name]; log.push(`${name} out of hiding`); }
@@ -564,6 +608,20 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         const prop = (map.props || []).find(p => String(p.id).toLowerCase() === want) ?? (map.props || []).filter(p => HIDE[p.type] && (p.label || PROPS[p.type]?.name || p.type).toLowerCase().includes(want)).sort((a, b) => Math.hypot(a.x - pos.x, a.y - pos.y) - Math.hypot(b.x - pos.x, b.y - pos.y))[0];
         const r = prop && hideIn(place, name, prop.id);
         if (r) { bump(place, pos.floor); log.push(`${name} hides ${r.mode} the ${r.what}`); }
+    }
+    // Sitting and lying: {"Judy Hopps": "sleep p7" | "sit armchair" | "lie bed" | "stand"}.
+    for (const [who, raw] of Object.entries(c.pose || {})) {
+        const name = matchName(who, Object.keys(place.state.positions));
+        if (!name) continue;
+        const [verb, ...rest] = String(raw).trim().toLowerCase().split(/\s+/);
+        if (/^(stand|up|none|out|get)/.test(verb)) { if (place.state.pose?.[name]) { standUp(place, name); log.push(`${name} stands up`); } continue; }
+        const how = ['sit', 'lie', 'sleep'].includes(verb) ? verb : '';
+        const want = (how ? rest : [verb, ...rest]).join(' ');
+        const pos = place.state.positions[name];
+        const props = floorById(place, pos.floor).map.props || [];
+        const prop = props.find(p => String(p.id).toLowerCase() === want) ?? props.filter(p => SEATS[p.type] && (p.label || PROPS[p.type]?.name || p.type).toLowerCase().includes(want || (how === 'sit' ? 'chair' : 'bed'))).sort((a, b) => Math.hypot(a.x - pos.x, a.y - pos.y) - Math.hypot(b.x - pos.x, b.y - pos.y))[0];
+        const r = prop && restOn(place, name, prop.id, how);
+        if (r) { bump(place, pos.floor); log.push(`${name} ${r.pose === 'sit' ? 'sits on' : r.pose === 'sleep' ? 'sleeps on' : 'lies on'} the ${r.what}`); }
     }
     // Windows: by id, by room, or all of them ("all": "barred").
     for (const [key, raw] of Object.entries(c.windows || {})) {
@@ -853,7 +911,9 @@ export function placeView(place, partyNames) {
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);
         const rm = roomAt(place, p.floor, p.x, p.y);
-        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}`;
+        const rest = poseNow(place, n);
+        const resting = rest ? `, ${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what} (${rest.prop})` : '';
+        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}`;
     });
     if (party.length) lines.push(`Party now (live from the map, the truth whatever earlier messages said): ${party.join('; ')}.`);
     const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);

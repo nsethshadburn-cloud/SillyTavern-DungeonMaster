@@ -86,6 +86,12 @@ export const HIDE = Object.freeze({
     dresser: 'behind', armor: 'behind', piano: 'behind', clock: 'behind', tombstone: 'behind', cauldron: 'behind', fireplace: 'behind', stalagmite: 'behind', fountain: 'behind', well: 'behind', plant: 'behind', anvil: 'behind',
 });
 
+/** Furniture you can use: sit on it, or lie down (and sleep) on it. */
+export const SEATS = Object.freeze({
+    chair: 'sit', armchair: 'sit', sofa: 'sit', throne: 'sit', pew: 'sit', log: 'sit', stocks: 'sit',
+    bed: 'lie', petbed: 'lie', hay: 'lie', bathtub: 'lie', coffin: 'lie', slab: 'lie',
+});
+
 export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence']);
 
 /** Furniture with a back and a front: drawn turned so its back is against the wall it stands by. */

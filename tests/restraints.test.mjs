@@ -50,3 +50,36 @@ test('tied-up and cuffed figures look different, squirm, and carry no weapon', (
     assert.equal(normalizeLook({ bound: 'chains' }).bound, undefined, 'unknown restraints are dropped');
     assert.equal(normalizeLook({ bound: 'rope' }).bound, 'rope');
 });
+
+test('too hurt to walk: locked (carry them), no breaking free; 0 HP knocks you out, healing wakes you', async () => {
+    const { changeHp } = await import('../src/core/world.js');
+    for (const c of ["can't walk", 'incapacitated', 'too injured to walk', 'dying', 'unconscious']) {
+        const r = restraintOf([c]);
+        assert.ok(r.locked && r.hurt, c);
+        assert.deepEqual(escapeOptions('Judy', r), [], `${c}: nothing to struggle against`);
+        assert.match(lockedLine('Judy', r), /carry/);
+    }
+    assert.equal(restraintOf(['tied up']).hurt, false, 'tied up is held, not hurt');
+    const w = createWorldState();
+    w.party['Judy Hopps'] = { hp: 5, hp_max: 20, conditions: [] };
+    assert.match(changeHp(w, 'Judy Hopps', -9, ['Judy Hopps']), /unconscious/);
+    assert.deepEqual(conditionsOf(w, 'Judy Hopps'), ['unconscious'], 'out cold at 0 HP');
+    assert.equal(restraintOf(conditionsOf(w, 'Judy Hopps')).locked, true, 'and the map won\'t let her walk');
+    assert.match(changeHp(w, 'Judy Hopps', 4, ['Judy Hopps']), /conscious again/);
+    assert.deepEqual(conditionsOf(w, 'Judy Hopps'), []);
+});
+
+test('items by who carries them; a plain list is the shared pack', () => {
+    const w = createWorldState();
+    w.party.Amber = { hp: 10, hp_max: 10, conditions: [] };
+    w.party['Judy Hopps'] = { hp: 10, hp_max: 10, conditions: [] };
+    const log = applyStateChanges(w, { items_add: { judy: ['silver key'], Amber: ['lantern'] } }, ['Judy Hopps']);
+    assert.deepEqual(w.inventory, { 'Judy Hopps': ['silver key'], Amber: ['lantern'] });
+    assert.ok(log.some(l => /silver key \(Judy Hopps\)/.test(l)));
+    applyStateChanges(w, { items_add: ['rope'] });
+    assert.deepEqual(w.items, ['rope'], 'shared pack');
+    applyStateChanges(w, { items_remove: ['silver key'] });
+    assert.deepEqual(w.inventory['Judy Hopps'], [], 'taken from whoever had it');
+    applyStateChanges(w, { items_remove: { 'Judy Hopps': ['rope'] } });
+    assert.deepEqual(w.items, [], '...even if she wasn\'t the one carrying it');
+});

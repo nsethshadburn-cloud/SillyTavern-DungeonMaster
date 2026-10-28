@@ -418,8 +418,8 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
             continue;
         }
         if (attempt.go && !signal.aborted) {
-            const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide });
-            if (went) status.note(attempt.hide ? `${name} hides ${went}` : `${name} goes to the ${went} and stays there`);
+            const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide, pose: attempt.pose });
+            if (went) status.note(attempt.hide ? `${name} hides ${went}` : /^(sit|lie|sleep) on /.test(went) ? `${name} goes to ${went}` : `${name} goes to the ${went} and stays there`);
         }
         if (!attempt.attempt || signal.aborted) continue;
         const reasons = ['companion_action'];
@@ -447,10 +447,10 @@ async function companionMovesOnMap(c, name, status, signal) {
     if (!msg?.mes) return;
     try {
         const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false });
-        const { go, hide } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId }), places);
+        const { go, hide, pose } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId }), places);
         if (!go || signal.aborted) return;
-        const went = await companionGoTo(c, name, go, { hide });
-        if (went) status.note(hide ? `${name} hides ${went}` : `${name} goes to the ${went} and stays there`);
+        const went = await companionGoTo(c, name, go, { hide, pose });
+        if (went) status.note(hide ? `${name} hides ${went}` : /^(sit|lie|sleep) on /.test(went) ? `${name} goes to ${went.replace(/ on /, ' on ')}` : `${name} goes to the ${went} and stays there`);
     } catch (error) {
         console.warn('[Dungeon Master] companion move check failed', error);
     }
@@ -779,7 +779,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (member) {
                     const pt = parseCoord(coord, map);
                     const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
-                    if (spot) { place.state.positions[member] = { floor: floorId, ...spot }; if (place.state.hidden?.[member]) delete place.state.hidden[member]; }
+                    if (spot) { place.state.positions[member] = { floor: floorId, ...spot }; if (place.state.hidden?.[member]) delete place.state.hidden[member]; if (place.state.pose?.[member]) delete place.state.pose[member]; }
                     else missed.push(`${name} → ${coord}`);
                     continue;
                 }

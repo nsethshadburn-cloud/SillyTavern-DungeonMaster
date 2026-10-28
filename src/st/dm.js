@@ -8,7 +8,7 @@ import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
 import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { placeSummary, placeView, cropText } from '../core/explore.js';
-import { atlas, currentPlace, partyOnMap } from './atlas.js';
+import { atlas, currentPlace, partyOnMap, loadPlace } from './atlas.js';
 import { activeBoard } from './fire-turn.js';
 import { fireSummary } from '../core/fire.js';
 import { pacingReport } from '../core/pacing.js';
@@ -154,12 +154,22 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const w = c.docs.world;
 
     const here = currentPlace(c);
+    // A building is two maps: whichever side the party is on, the DM also knows the other (its rooms and secrets).
+    let otherSide = '';
+    if (here?.place.kind === 'grounds') {
+        const inside = await Promise.all(Object.values(here.place.buildings).filter(b => b.interior).map(b => loadPlace(b.interior, c)));
+        otherSide = inside.filter(Boolean).map(p => `(INSIDE, through the front door; the party is outside now)\n${placeSummary(p)}`).join('\n\n');
+    } else if (here?.place.parent) {
+        const out = await loadPlace(here.place.parent.key, c);
+        if (out?.kind === 'grounds') otherSide = `(OUTSIDE, through the front door: the grounds; the party is inside now)\n${placeSummary(out)}`;
+    }
     const plotLayer = [
         '# TABLE RULES (settled by the player out of character; always true)', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none yet)',
         '', '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)',
         '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
         '', '# ATLAS (maps already built and kept; never build these again, send the party back with "enter_place")', Object.values(atlas(c).places).filter(e => !e.parent).map(e => `- ${e.name} (${e.kind}${e.size ? `, ${e.size}` : ''})`).join('\n') || '(none yet)',
         ...(here ? ['', placeSummary(here.place)] : []),
+        ...(otherSide ? ['', otherSide] : []),
     ].join('\n');
 
     const memories = await memoryBookEntries();
@@ -179,7 +189,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(`Party HP: ${Object.entries(w.party).map(([n, p]) => `${n} ${p.hp}/${p.hp_max}${p.conditions?.length ? ` [${p.conditions.join(', ')}]` : ''}`).join('; ') || 'unknown'}.`);
     const held = Object.entries(w.others || {}).filter(([, o]) => o.conditions?.length);
     if (held.length) sections.push(`Others' conditions: ${held.map(([n, o]) => `${n} [${o.conditions.join(', ')}]`).join('; ')}.`);
-    sections.push(`Gold: ${w.gold ?? 0}. Items: ${w.items?.length ? w.items.join(', ') : 'none noted'}.`);
+    const carried = Object.entries(w.inventory || {}).filter(([, l]) => l.length).map(([n, l]) => `${n}: ${l.join(', ')}`);
+    sections.push(`Gold: ${w.gold ?? 0}. Shared pack: ${w.items?.length ? w.items.join(', ') : 'nothing noted'}.${carried.length ? ` Carried: ${carried.join('; ')}.` : ''}`);
     if (Object.keys(w.flags || {}).length) sections.push(`Flags: ${JSON.stringify(w.flags)}`);
     sections.push(combatSummary(w));
     if (w.combat?.map && w.combat.inPlace && here) {
