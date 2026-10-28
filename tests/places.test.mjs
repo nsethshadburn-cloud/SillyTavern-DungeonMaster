@@ -136,7 +136,8 @@ test('towns: roofed buildings with doors on the road, shop signs, exits at the r
 test('building insides are generated from the trade, with stairs and a way back out', () => {
     const inn = generateInterior({ id: 'B2', name: 'The Drowsy Goose', kind: 'tavern', description: 'A low, smoky common room.' }, 5);
     assert.equal(inn.kind, 'interior');
-    assert.equal(inn.floors.length, 3, 'cellar, ground floor and guest rooms upstairs');
+    assert.ok(inn.floors.some(f => f.level > 0), 'guest rooms upstairs');
+    assert.ok(Object.values(inn.rooms).filter(r => r.type === 'bedroom').length >= 3, 'rooms to rent');
     assert.equal(reachable(inn).roomsReached.length, Object.keys(inn.rooms).length);
     assert.equal(inn.exits.length, 1);
     const common = Object.values(inn.rooms).find(r => r.type === 'tavern');

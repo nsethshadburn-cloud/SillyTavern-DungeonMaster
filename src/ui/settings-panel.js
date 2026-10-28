@@ -139,6 +139,8 @@ function panelHtml() {
         </select></label>
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
       <label class="checkbox_label"><input id="dm-bookkeeper" type="checkbox" ${s.bookkeeper !== false ? 'checked' : ''}> Bookkeeper: after each turn the helper checks what was said against everyone's conditions and items, and fills in what the DM forgot (shown on a 📜 card)</label>
+      <label class="dm-task-row"><span>Map builder: how new maps are made</span><select id="dm-map-builder" class="text_pole"><option value="algorithm" ${(s.mapBuilder ?? 'algorithm') === 'algorithm' ? 'selected' : ''}>Algorithm from a short brief (seconds, nearly free)</option><option value="claude" ${s.mapBuilder === 'claude' ? 'selected' : ''}>Claude plans every room (slow, about $0.05–0.30)</option></select></label>
+      <label class="dm-task-row"><span>Who writes a map's brief</span><select id="dm-map-brief" class="text_pole"><option value="local" ${(s.mapBrief ?? 'local') === 'local' ? 'selected' : ''}>Local helper (free; Haiku if there is no helper)</option><option value="haiku" ${s.mapBrief === 'haiku' ? 'selected' : ''}>Haiku</option></select></label>
       <label class="dm-task-row"><span>Map sync: after each turn, put on the map what the story did (someone appears, walks over to something, hides, a door is kicked in)</span><select id="dm-map-sync" class="text_pole"><option value="local" ${(s.mapSync ?? 'local') === 'local' ? 'selected' : ''}>Local helper (free; Haiku if there is no helper)</option><option value="claude" ${s.mapSync === 'claude' ? 'selected' : ''}>Haiku</option><option value="off" ${s.mapSync === 'off' ? 'selected' : ''}>Off</option></select></label>
       <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
       <label class="checkbox_label"><input id="dm-map-figures" type="checkbox" ${s.mapFigures !== false ? 'checked' : ''}> Little animated figures on the map (off = round portraits). Your party's are drawn once by Claude from their card and picture (about 1-2 cents each); type <code>/dmfigure Judy</code> to redraw one.</label>
@@ -385,6 +387,8 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindCheck('dm-use-helper', 'useHelper');
     bindCheck('dm-bookkeeper', 'bookkeeper');
     bindSelect('dm-map-sync', 'mapSync');
+    bindSelect('dm-map-builder', 'mapBuilder');
+    bindSelect('dm-map-brief', 'mapBrief');
     bindCheck('dm-auto-dice', 'autoReadDice');
     bindCheck('dm-map-figures', 'mapFigures');
     bindCheck('dm-map-ambience', 'mapAmbience');

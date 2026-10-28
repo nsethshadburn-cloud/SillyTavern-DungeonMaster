@@ -2,11 +2,11 @@
 
 import { ST } from './st.js';
 import { settings, SURPRISES } from './settings.js';
-import { callClaude, resolveDmConnection } from './llm.js';
+import { callClaude, callLocal, resolveDmConnection } from './llm.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
-import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
+import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, PLACE_BRIEF_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { placeSummary, placeView, cropText } from '../core/explore.js';
 import { atlas, currentPlace, partyOnMap, loadPlace } from './atlas.js';
 import { activeBoard } from './fire-turn.js';
@@ -326,6 +326,34 @@ export async function askPlacePlan(req, { signal = null } = {}) {
     const json = extractJson(reply.text);
     if (!json) throw new Error('Claude did not return a usable plan. Ask the DM to try again.');
     return json;
+}
+
+/**
+ * Ask for a place's BRIEF (a few lines: what it is, how big, where the party starts, the story's
+ * rooms, people, locks and secrets); the architect (core/architect.js) builds the rest by algorithm.
+ * The local helper writes it when there is one (free), else Haiku (a fraction of a cent).
+ * Returns the parsed JSON, or {} when the reply was unusable (the request alone still builds a place).
+ */
+export async function askPlaceBrief(req, { signal = null } = {}) {
+    const c = campaign();
+    const s = settings();
+    const local = (s.mapBrief ?? 'local') === 'local' && s.useHelper;
+    const context = [
+        '# THE STORY', c.docs.story ? trimToTokens(c.docs.story, local ? 600 : 1200, true) : '(just begun)',
+        '', '# DM NOTES (secrets)', c.docs.notes ? trimToTokens(c.docs.notes, local ? 500 : 1500, true) : '(none)',
+        '', '# PEOPLE MET', c.docs.npcs?.length ? trimToTokens(rosterSummary(c.docs.npcs), local ? 300 : 800, true) : '(none yet)',
+        '', '# RECENT CHAT (oldest first)', transcript(local ? 8 : 16) || '(empty)',
+        '', '# WHERE THE PARTY IS RIGHT NOW', renderSceneCard(c.docs.world.sceneCard) || '(not set)',
+        '', '# THE PLACE TO BUILD', `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nSize asked: ${req.size || 'small'}\nWhy: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}`,
+        '', PLACE_BRIEF_INSTRUCTIONS,
+    ].join('\n');
+    if (local) {
+        const raw = await callLocal({ system: 'You plan places for a tabletop roleplaying game. Reply with ONE JSON object and nothing else.', messages: [{ role: 'user', content: context }], maxTokens: 700, profileId: s.helperProfileId });
+        return extractJson(raw) ?? {};
+    }
+    const reply = await callClaude({ system: 'You plan places for a tabletop roleplaying game. Reply with ONE JSON object and nothing else.', user: context, task: 'map_brief', label: `brief for ${req.name}`, maxTokens: 900, signal });
+    logCost(`brief for ${req.name} · ${modelLabel(reply.model)}`, reply.usd);
+    return extractJson(reply.text) ?? {};
 }
 
 /** Keep the DM's notes compact (one cheap call when they get long). */

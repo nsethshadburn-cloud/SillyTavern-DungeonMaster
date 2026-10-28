@@ -5,7 +5,7 @@
 // that exist, only sensible states) before anything moves. Pure module.
 
 import { extractJson, nameKey, matchName } from './text.js';
-import { INTENTS } from './explore.js';
+import { INTENTS, looksLikeThing } from './explore.js';
 
 /**
  * The prompt. party/people: [{name, at, room, note}]; things: [{id, name, at, room}];
@@ -25,7 +25,7 @@ export function mapSyncPrompt({ party, people, things, rooms, story }) {
         story,
         '',
         'List only what the story says happened that the map does NOT show yet. Each change is one of:',
-        '{"op":"spawn","name":"short name","what":"one line: who or what it is","near":"a thing id, room id or someone\'s name: where they showed up","hostile":true or false,"intent":"attack|follow|flee|stay|wander","target":"who they go after (attack/follow), or empty"} = someone or some creature appeared who isn\'t on the map (never the party).',
+        '{"op":"spawn","name":"short name","what":"one line: who or what it is","near":"a thing id, room id or someone\'s name: where they showed up","hostile":true or false,"intent":"attack|follow|flee|stay|wander","target":"who they go after (attack/follow), or empty"} = a PERSON or CREATURE appeared who isn\'t on the map (never the party, and never an object or item: a lamp, a key or a tin of oil is not someone).',
         '{"op":"move","who":"exact name","to":"a thing id, room id or someone\'s name"} = someone went somewhere (walked over to it, went into that room).',
         '{"op":"hide","who":"exact name","in":"the thing id they hide in, under or behind, or empty"} = someone hid.',
         '{"op":"pose","who":"exact name","on":"thing id","how":"sit|lie|sleep|stand"} = someone sat or lay down on something, or got up.',
@@ -69,7 +69,7 @@ export function parseMapSync(text, known) {
         let ch = null;
         if (op === 'spawn') {
             const name = String(raw.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-            if (!name || party.some(p => nameKey(p) === nameKey(name))) continue;
+            if (!name || party.some(p => nameKey(p) === nameKey(name)) || looksLikeThing(name)) continue;
             const already = people.find(p => nameKey(p) === nameKey(name));
             const intent = INTENTS.includes(String(raw.intent).toLowerCase()) ? String(raw.intent).toLowerCase() : '';
             const target = matchName(String(raw.target ?? ''), everyone) ?? '';

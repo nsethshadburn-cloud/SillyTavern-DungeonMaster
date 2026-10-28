@@ -33,6 +33,8 @@ export const DEFAULTS = Object.freeze({
     useHelper: true,
     mapTier: 'some',            // 'off' (no maps, all in the chat) | 'some' (where needed or asked) | 'always' (every new location)
     bookkeeper: true,
+    mapBuilder: 'algorithm',   // new maps: 'algorithm' (a short brief, the code builds it: fast, nearly free) or 'claude' (Claude plans every room)
+    mapBrief: 'local',          // who writes the brief: 'local' (the helper; Haiku if there's none) or 'haiku'
     mapSync: 'local',           // after each turn the map is put in step with the story: 'local' (the helper; Haiku without one), 'claude' (Haiku), 'off'           // after each turn the helper checks the story against HP, conditions and items
 
     // Budget (USD) and Claude prices (USD per million tokens)

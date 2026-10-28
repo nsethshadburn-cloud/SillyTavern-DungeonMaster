@@ -540,7 +540,7 @@ async function bookkeep(c, fromIndex) {
         allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
     });
     if (!changes) return;
-    const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name));
+    const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name), { turn: c.meta.turn });
     if (!log.length) return;
     saveDoc('world');
     await postDiceCard(`📜 Bookkeeping: ${log.join(' · ')}`, { state: true });
@@ -938,7 +938,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
 
     // State, combat, pacing, plot.
-    const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name));
+    const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     let initiativeCard = '';
     let mapChanged = false;
     // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.
@@ -1088,7 +1088,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 }
                 const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
                 const info = { description: npc ? [npc.role, npc.description].filter(Boolean).join('. ') : '', hostile: npc?.attitude === 'hostile', gender: npc?.gender };
-                if (!placePerson(place, npc?.name ?? name, coord, { floor: floorId, info })) missed.push(`${name} → ${coord}`);
+                if (!placePerson(place, npc?.name ?? name, coord, { floor: floorId, info, arrive: !personByName(place, npc?.name ?? name) })) missed.push(`${name} → ${coord}`);
             }
             if (missed.length) status.note(`Couldn't place on the map: ${missed.join(', ')}`);
         }

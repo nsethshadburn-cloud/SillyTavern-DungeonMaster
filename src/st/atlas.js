@@ -16,8 +16,10 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
+import { looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
+import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
+import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
 import { trimToTokens, extractJson } from '../core/text.js';
@@ -56,12 +58,15 @@ export async function loadPlace(key, c = campaign()) {
         ensureIds(place);
         // Trap pictures the DM put down before they could be real traps: make them real.
         const traps = adoptTrapProps(place);
+        // Items that were put on the map as if they were people ("Tin of lamp oil"): gone.
+        let things = 0;
+        for (const [k, g] of Object.entries(place.guards || {})) if (looksLikeThing(g.name)) { delete place.guards[k]; things++; }
         // A lit, lived-in home built before v0.20 still had fog of war: you can see its rooms.
         const rooms = Object.values(place.rooms);
         const homey = place.fog && /house|home|cottage|mansion|manor|estate|tavern|inn|shop|store|cabin|lodge|library|temple|church|guild|bank|hall|interior/.test(place.kind) && rooms.length && rooms.filter(r => r.lit).length * 2 >= rooms.length;
         if (homey) place.fog = false;
         places.set(id, place);
-        if (moved || traps || homey) savePlace(key, c);
+        if (moved || traps || homey || things) savePlace(key, c);
     }
     return place;
 }
@@ -609,7 +614,24 @@ async function noteRoom(c, place, { quiet = false } = {}) {
     if (!room || place.state.visited.includes(room.id)) { place.state.lastRoom = room?.id ?? null; return; }
     place.state.visited.push(room.id);
     place.state.lastRoom = room.id;
-    if (!quiet && room.description) await postNarration(`**${room.name}.** ${room.description}`);
+    if (quiet) return;
+    // Written the first time anyone walks in (and kept): by the local model from the room's facts, or from pieces.
+    if (!room.description) room.description = await writeDescription(place, room);
+    if (room.description) await postNarration(`**${room.name}.** ${room.description}`);
+}
+
+/** A room's description from its facts: the local model if there is one, else put together in code. */
+async function writeDescription(place, room) {
+    const facts = { things: thingsIn(place, room).map(t => t.name), condition: place.condition || 'kept', placeName: place.name, kind: place.kind };
+    const s = settings();
+    if (s.useHelper) {
+        try {
+            const { system, user } = describePrompt(room, facts);
+            const text = cleanDescription(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 120, profileId: s.helperProfileId }));
+            if (text) return text;
+        } catch (error) { console.warn('[Dungeon Master] room description failed', error); }
+    }
+    return describeRoom(room, facts);
 }
 
 // ---------- building ----------
@@ -632,9 +654,10 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     if (building) return null;
     const big = req.size === 'big';
     const town = /town|village|hamlet|city|outpost|settlement/.test(String(req.kind || '').toLowerCase());
+    const byClaude = settings().mapBuilder === 'claude';
     if (big && confirm) {
         const ok = await ST.callGenericPopup(
-            `<h3>Build ${escape(req.name)}?</h3><p>Claude wants to build <b>${escape(req.name)}</b> as a full map${req.why ? `: ${escape(req.why)}` : ''}.</p><p>Every room on every floor is planned once and kept for the rest of the campaign (about $0.15–0.30, a minute or so).</p>`,
+            `<h3>Build ${escape(req.name)}?</h3><p>Claude wants to build <b>${escape(req.name)}</b> as a full map${req.why ? `: ${escape(req.why)}` : ''}.</p><p>Every room on every floor is made once and kept for the rest of the campaign (${byClaude ? 'Claude plans it: about $0.15–0.30, a minute or so' : 'built by the map algorithm from a short brief: a few seconds, nearly free'}).</p>`,
             ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Build it', cancelButton: 'Not now' });
         if (ok !== ST.POPUP_RESULT.AFFIRMATIVE && ok !== true && ok !== 1) {
             await postNote(`🗺️ *${escape(req.name)} wasn't built. Ask the DM again any time.*`);
@@ -645,12 +668,20 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     const { startBuildAnimation } = await import('../ui/building.js');
     const anim = await startBuildAnimation(req.name, { big });
     try {
-        const { askPlacePlan } = await import('./dm.js');
-        anim.cycle(big ? ['Drawing floor plans', 'Deciding what lives where', 'Hiding traps and secret doors', 'Placing keys and locks', 'Writing room descriptions'] : town ? ['Laying out the streets', 'Raising buildings', 'Painting shop signs'] : ['Sketching the place', 'Furnishing it']);
-        const raw = plan ?? await askPlacePlan({ ...req, town }, { signal });
+        const { askPlacePlan, askPlaceBrief } = await import('./dm.js');
+        anim.cycle(big ? ['Drawing floor plans', 'Deciding what lives where', 'Hiding traps and secret doors', 'Placing keys and locks'] : town ? ['Laying out the streets', 'Raising buildings', 'Painting shop signs'] : ['Sketching the place', 'Furnishing it']);
+        const seed = Math.floor(Math.random() * 1e9);
+        // A short brief (the local helper or Haiku), then the architect builds every room from it by algorithm.
+        // Claude plans every room itself only when the settings say so.
+        let raw = plan;
+        if (!raw && byClaude) raw = await askPlacePlan({ ...req, town }, { signal });
+        if (!raw) {
+            const brief = normalizeBrief(await askPlaceBrief({ ...req, town }, { signal }).catch(error => { console.warn('[Dungeon Master] brief failed, building from the request', error); return {}; }), req);
+            if (town) brief.kind = brief.kind && /town|village|city|hamlet/.test(brief.kind) ? brief.kind : 'town';
+            raw = town ? townFromBrief(brief, seed) : WILD_KINDS.test(`${brief.kind} ${brief.name}`.toLowerCase()) && !blueprintFor(brief.kind).building ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
+        }
         anim.step(town ? 'Building the town' : 'Building the floors');
         await sleep(300);
-        const seed = Math.floor(Math.random() * 1e9);
         // (Not 'plan': that's the ready plan this was called with, read above.)
         const placePlan = town ? null : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
         // A wild place (a jungle, a forest, a swamp, a camp) is land: clearings joined by trails, not rooms.
@@ -1045,7 +1076,7 @@ export async function applyMapSync(c, ops) {
     for (const ch of ops) {
         if (ch.op === 'spawn') {
             const at = where(ch.near) ?? (lead ? { floor: floorId, x: lead.x, y: lead.y } : null);
-            const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile } });
+            const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile }, arrive: !ch.near });
             if (!g) continue;
             if (ch.intent) setIntent(g, ch.intent, ch.target);
             log.push(`${g.name} appears${ch.near ? ` by the ${thingLabel(place, ch.near)}` : ''}${g.intent === 'attack' ? `, going for ${g.target || 'the party'}` : ''}`);

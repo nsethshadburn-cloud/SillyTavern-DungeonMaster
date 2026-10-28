@@ -6,6 +6,8 @@
 import { PROPS, THEMES, MAX_PLACE_SIZE, signIcon, ORIENTED } from './grid.js';
 import { ROOM_SIZES, recipeFor, roomType, WALLPAPER_HUES, CARPET_HUES } from './rooms.js';
 import { nameKey } from './text.js';
+import { applyRules, checkPlace } from './rules.js';
+import { interiorPlan } from './architect.js';
 
 // ---------- small helpers ----------
 function rng(seed) {
@@ -141,7 +143,7 @@ function connectRooms(rooms, floors, links, start) {
         const joined = rooms.filter(r => find(r.id) === main);
         let best = null;
         for (const a of group) for (const b of joined) {
-            const cost = a.floor === b.floor ? 0 : 1 + Math.abs(level(a.id) - level(b.id));
+            const cost = (a.floor === b.floor ? 0 : 1 + Math.abs(level(a.id) - level(b.id))) + (a.type === 'cell' || b.type === 'cell' ? 50 : 0);
             if (!best || cost < best.cost) best = { a, b, cost };
         }
         links.push({ a: best.b.id, b: best.a.id, via: best.a.floor === best.b.floor ? 'door' : 'stairs', key: '', dc: 15 });
@@ -174,6 +176,7 @@ export function normalizePlan(raw) {
             size: ROOM_SIZES[size] ? size : '',
             lit: typeof r?.lit === 'boolean' ? r.lit : null,
             description: str(r?.description).slice(0, 700),
+            hint: str(r?.hint).slice(0, 300),
             props: arr(r?.props).map(p => (typeof p === 'string' ? { type: p } : obj(p))).map(p => ({ type: propType(p.type), count: clamp(Math.round(Number(p.count)) || 1, 1, 8), label: str(p.label).slice(0, 40) })).filter(p => PROPS[p.type] && p.type !== 'sign').slice(0, 16),
             marks: arr(r?.marks ?? r?.decor).map(propType).filter(t => PROPS[t]?.decal).slice(0, 8),
             traps: arr(r?.traps).slice(0, 3).map(t => obj(t)).map(t => ({ kind: str(t.kind || t.name).slice(0, 60) || 'trap', dc: clamp(Math.round(Number(t.dc)) || 13, 8, 25), save: str(t.save).slice(0, 24), effect: str(t.effect).slice(0, 240), hidden: t.hidden !== false })),
@@ -236,8 +239,20 @@ export function normalizePlan(raw) {
             if (outIds.has(start)) { startOutside = true; start = (rooms.find(r => r.exit) ?? rooms[0]).id; }
         }
     }
-    organizeCells(rooms, floors, links);
-    connectRooms(rooms, floors, links, start);
+    // Kept up (orderly, tidy), worn (lived in, a bit run down) or ruined (a maze, mess, decay).
+    const condIn = str(d.condition).toLowerCase();
+    const words = `${str(d.name)} ${kind} ${str(d.summary)} ${str(d.why)}`.toLowerCase();
+    const condition = ['kept', 'worn', 'ruined'].includes(condIn) ? condIn : RUINED_WORDS.test(words) ? 'ruined' : KEPT_KINDS.test(kind) ? 'kept' : 'ruined';
+    // The common-sense rules (core/rules.js), then every room joined up, until nothing needs fixing.
+    const ruled = { kind, building, condition, floors, rooms, links, guards, start };
+    const fixes = [];
+    for (let pass = 0; pass < 4; pass++) {
+        const fixed = applyRules(ruled);
+        fixes.push(...fixed);
+        connectRooms(rooms, floors, links, ruled.start);
+        if (!fixed.length) break;
+    }
+    start = ruled.start;
     // A building has a front door (onto its grounds), on the floor nearest the ground. Anywhere else a
     // way out is only there if Claude named one: the DM moves the story on to the next place.
     if (!rooms.some(r => r.exit) && (building || kind === 'interior')) {
@@ -246,10 +261,6 @@ export function normalizePlan(raw) {
     }
     const themeIn = str(d.theme).toLowerCase();
     const theme = THEMES.includes(themeIn) ? themeIn : KIND_THEME[kind] ?? 'dungeon';
-    // Kept up (orderly, tidy), worn (lived in, a bit run down) or ruined (a maze, mess, decay).
-    const condIn = str(d.condition).toLowerCase();
-    const words = `${str(d.name)} ${kind} ${str(d.summary)} ${str(d.why)}`.toLowerCase();
-    const condition = ['kept', 'worn', 'ruined'].includes(condIn) ? condIn : RUINED_WORDS.test(words) ? 'ruined' : KEPT_KINDS.test(kind) ? 'kept' : 'ruined';
     // A kept-up place has no decay hazards: anything like that becomes a trap someone set on purpose.
     if (condition === 'kept') for (const r of rooms) for (const t of r.traps) if (DECAY.test(t.kind.toLowerCase())) t.kind = 'pressure plate (darts)';
     return {
@@ -265,6 +276,7 @@ export function normalizePlan(raw) {
         summary: str(d.summary).slice(0, 1200),
         condition,
         floors, rooms, links, guards, start,
+        fixes,
     };
 }
 
@@ -602,6 +614,8 @@ function furnish(r, room, rect, ctx, theme, condition = 'ruined') {
     const rough = ROUGH.has(theme);
     for (const [type, where, [lo, hi], opt = {}] of recipe.items) {
         if (rough && ['painting', 'mirror', 'chandelier'].includes(type) && !['crypt', 'chapel'].includes(room.type)) continue;
+        // No carpet runners, potted plants or suits of armor down a jail's cell block, a dungeon passage or a tunnel.
+        if (rough && room.type === 'hallway' && ['rug', 'plant', 'armor'].includes(type)) continue;
         if (condition === 'kept' && MESS.has(type)) continue;
         let n = int(r, lo, hi);
         if (area < 16) n = Math.min(n, Math.max(lo, 1));
@@ -715,7 +729,7 @@ function tryBuild(plan, seed, shrink) {
         grids[floor.id] = grid;
     }
     const place = {
-        version: 1, kind: plan.kind, name: plan.name, theme: plan.theme, fog: plan.fog, seed, summary: plan.summary,
+        version: 1, kind: plan.kind, name: plan.name, theme: plan.theme, fog: plan.fog, seed, summary: plan.summary, condition: plan.condition,
         floors: [], rooms: {}, doors: {}, stairs: [], traps: {}, items: {}, guards: {}, exits: [], buildings: {},
         start: null, state: { positions: {}, explored: {}, visited: [], floor: null },
     };
@@ -743,7 +757,7 @@ function tryBuild(plan, seed, shrink) {
         const [ox, oy] = offsets[room.floor];
         const rect = { x: rc.x + ox, y: rc.y + oy, w: rc.w, h: rc.h };
         const lit = room.lit ?? recipeFor(room.type).lit ?? false;
-        place.rooms[room.id] = { id: room.id, name: room.name, type: room.type, floor: room.floor, rect, lit, description: room.description, exit: room.exit };
+        place.rooms[room.id] = { id: room.id, name: room.name, type: room.type, floor: room.floor, rect, lit, description: room.description, ...(room.hint ? { hint: room.hint } : {}), exit: room.exit };
         const style = areaStyle(r, room, plan.theme, levelOf(room.floor));
         // Grime: a kept-up place is clean; a ruin is filthier than usual.
         if (plan.condition === 'kept') delete style.grime; else if (plan.condition === 'ruined' && style.grime) style.grime = Math.min(1, style.grime * 1.3);
@@ -767,7 +781,7 @@ function tryBuild(plan, seed, shrink) {
         if (doorAt.has(`${d.floor}:${x},${y}`)) continue;
         // A locked or secret corridor is locked (or hidden) at its far end only.
         const kind = d.corridor && ['locked', 'secret'].includes(d.link.via) && d.rooms[0] === d.link.a ? 'door' : d.link.via;
-        addDoor(d.floor, x, y, kind, d.rooms, d.link.key ? { key: d.link.key, dc: d.link.dc } : { dc: d.link.dc });
+        addDoor(d.floor, x, y, kind, d.rooms, { ...(d.link.key ? { key: d.link.key, dc: d.link.dc } : { dc: d.link.dc }), ...(d.link.state && kind === d.link.via ? { state: d.link.state } : {}) });
     }
     // The fronts of the cells: iron bars either side of the cell door.
     for (const d of Object.values(place.doors)) {
@@ -907,7 +921,7 @@ function tryBuild(plan, seed, shrink) {
         if (!room) continue;
         const at = freeTile(room.id);
         if (!at) continue;
-        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: 0, floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
+        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: Math.max(0, g.patrol.indexOf(room.id)), floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
     }
     // Rows (top row first) and the start.
     for (const f of place.floors) {
@@ -923,7 +937,10 @@ function tryBuild(plan, seed, shrink) {
     ensureIds(place);
     // A layout where some room can never be reached is thrown away (the next attempt uses another seed).
     // Repairs may add doors: keep furniture out of those doorways too.
-    if (solvePlace(place, r)) { clearDoorways(place); return place; }
+    // Cells keep one door; anything that only a cell's extra door reached gets its own way in.
+    let solved = solvePlace(place, r);
+    for (let i = 0; solved && i < 3 && sealCells(place); i++) solved = solvePlace(place, r);
+    if (solved) { clearDoorways(place); return place; }
     failWhy = `some rooms can't be reached (${Object.values(place.rooms).filter(rm => !new Set(reachable(place).roomsReached).has(rm.id)).map(rm => rm.name).slice(0, 4).join(', ')})`;
     return null;
 }
@@ -974,6 +991,44 @@ export function doorChar(door) {
     if (door.kind === 'cell') return door.state === 'locked' ? 'J' : door.state === 'open' ? '/' : 'j';
     if (door.state === 'locked') return 'D';
     return door.state === 'open' ? '/' : '+';
+}
+
+/**
+ * After the build: every cell has exactly one way in, its cell door. Any other door the layout or
+ * the repairs left in a cell's walls is walled up (a hidden way out may stay); a plain door that is
+ * a cell's only door becomes a cell door. The cell block is reachable either way (the solver checked).
+ */
+function sealCells(place) {
+    let walled = 0;
+    for (const rm of Object.values(place.rooms).filter(x => x.type === 'cell')) {
+        // Every door in the cell's walls (by where it is: a corridor's end door may not name the cell).
+        const { x: rx, y: ry, w, h } = rm.rect;
+        const inWall = d => d.floor === rm.floor && ((d.x >= rx && d.x < rx + w && (d.y === ry - 1 || d.y === ry + h)) || (d.y >= ry && d.y < ry + h && (d.x === rx - 1 || d.x === rx + w)));
+        const doors = Object.values(place.doors).filter(d => (d.rooms.includes(rm.id) || inWall(d)) && d.kind !== 'secret');
+        if (!doors.length) continue;
+        const keep = doors.find(d => d.kind === 'cell' && d.rooms.includes(rm.id)) ?? doors.find(d => d.kind === 'cell') ?? doors[0];
+        for (const d of doors) {
+            const map = place.floors.find(f => f.id === d.floor).map;
+            const rows = map.rows.map(s => s.split(''));
+            if (d === keep) {
+                if (d.kind !== 'cell') { d.kind = 'cell'; d.state = 'locked'; delete d.key; }
+                rows[map.h - 1 - d.y][d.x] = doorChar(d);
+            } else {
+                rows[map.h - 1 - d.y][d.x] = '#';
+                delete place.doors[d.id];
+                walled++;
+            }
+            map.rows = rows.map(s => s.join(''));
+        }
+    }
+    return walled;
+}
+
+/** A door id nothing else has (doors walled up earlier leave gaps in the numbering). */
+function freshDoorId(place, tag) {
+    let n = Object.keys(place.doors).length + 1;
+    while (place.doors[`D${n}${tag}`]) n++;
+    return `D${n}${tag}`;
 }
 
 // ---------- solvable? ----------
@@ -1049,7 +1104,10 @@ function tunnel(place, cut, seen) {
             if (prev.has(k)) continue;
             const ch = at(nx, ny);
             // A wall with reachable floor right behind it: the far end.
-            if (ch === '#' && i > 0 && DIRS.some(([ex, ey]) => seen.has(`${cut.floor}:${nx + ex},${ny + ey}`))) { prev.set(k, K(x, y)); end = [nx, ny]; break; }
+            const cellBehind = ([ex, ey]) => Object.values(place.rooms).some(rm => rm.type === 'cell' && rm.floor === cut.floor && nx + ex >= rm.rect.x && nx + ex < rm.rect.x + rm.rect.w && ny + ey >= rm.rect.y && ny + ey < rm.rect.y + rm.rect.h);
+            // Never out through the cut-off room's own wall (that would just be a second door into it).
+            const ownWall = DIRS.some(([ex, ey]) => inRoom(nx + ex, ny + ey));
+            if (ch === '#' && i > 0 && !ownWall && DIRS.some(([ex, ey]) => seen.has(`${cut.floor}:${nx + ex},${ny + ey}`) && !cellBehind([ex, ey]))) { prev.set(k, K(x, y)); end = [nx, ny]; break; }
             if (ch !== '%') continue;
             prev.set(k, K(x, y));
             queue.push([nx, ny]);
@@ -1061,8 +1119,12 @@ function tunnel(place, cut, seen) {
     path.forEach(([x, y], i) => set(x, y, i === 0 || i === path.length - 1 ? '+' : '.'));
     for (const [x, y] of path.slice(1, -1)) for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) if (at(x + dx, y + dy) === '%') set(x + dx, y + dy, '#');
     for (const [x, y] of [path[0], path[path.length - 1]]) {
-        const id = `D${Object.keys(place.doors).length + 1}t`;
-        place.doors[id] = { id, floor: cut.floor, x, y, kind: 'door', state: 'closed', rooms: [inRoom(...DIRS.map(([dx, dy]) => [x + dx, y + dy]).find(([a, b]) => inRoom(a, b)) ?? [-1, -1]) ? cut.id : null, null] };
+        const id = freshDoorId(place, 't');
+        const own = inRoom(...DIRS.map(([dx, dy]) => [x + dx, y + dy]).find(([a, b]) => inRoom(a, b)) ?? [-1, -1]);
+        // A cell's only door is a cell door; the tunnel's far end is a plain one.
+        const cellDoor = own && cut.type === 'cell';
+        place.doors[id] = { id, floor: cut.floor, x, y, kind: cellDoor ? 'cell' : 'door', state: cellDoor ? 'locked' : 'closed', rooms: [own ? cut.id : null, null] };
+        set(x, y, doorChar(place.doors[id]));
     }
     map.rows = rows.map(row => row.join(''));
     return true;
@@ -1086,7 +1148,8 @@ export function solvePlace(place, r = Math.random) {
             stuck.key = '';
             continue;
         }
-        const cut = Object.values(place.rooms).find(rm => !reached.has(rm.id));
+        // Rooms other than cells first: a cell is reached through its cell block, so join the block.
+        const cut = Object.values(place.rooms).find(rm => !reached.has(rm.id) && rm.type !== 'cell') ?? Object.values(place.rooms).find(rm => !reached.has(rm.id));
         if (!cut) return true;
         // Punch a door from the cut-off room into anything reachable next to it.
         const map = place.floors.find(f => f.id === cut.floor).map;
@@ -1098,10 +1161,13 @@ export function solvePlace(place, r = Math.random) {
             const inside = DIRS.map(([dx, dy]) => [x + dx, y + dy]).find(([ix, iy]) => ix >= cut.rect.x && ix < cut.rect.x + cut.rect.w && iy >= cut.rect.y && iy < cut.rect.y + cut.rect.h);
             const opposite = inside && [2 * x - inside[0], 2 * y - inside[1]];
             if (!opposite || !seen.has(`${cut.floor}:${opposite[0]},${opposite[1]}`)) continue;
-            const id = `D${Object.keys(place.doors).length + 1}x`;
+            const beyond = Object.values(place.rooms).find(rm => rm.floor === cut.floor && opposite[0] >= rm.rect.x && opposite[0] < rm.rect.x + rm.rect.w && opposite[1] >= rm.rect.y && opposite[1] < rm.rect.y + rm.rect.h);
+            if (beyond?.type === 'cell' && cut.type !== 'cell') continue;
+            const id = freshDoorId(place, 'x');
             const other = Object.values(place.rooms).find(rm => rm.floor === cut.floor && opposite[0] >= rm.rect.x && opposite[0] < rm.rect.x + rm.rect.w && opposite[1] >= rm.rect.y && opposite[1] < rm.rect.y + rm.rect.h);
-            place.doors[id] = { id, floor: cut.floor, x, y, kind: 'door', state: 'closed', rooms: [cut.id, other?.id ?? null] };
-            rows[map.h - 1 - y][x] = '+';
+            const cellDoor = cut.type === 'cell' || other?.type === 'cell';
+            place.doors[id] = { id, floor: cut.floor, x, y, kind: cellDoor ? 'cell' : 'door', state: cellDoor ? 'locked' : 'closed', rooms: [cut.id, other?.id ?? null] };
+            rows[map.h - 1 - y][x] = doorChar(place.doors[id]);
             map.rows = rows.map(rw => rw.join(''));
             done = true;
             break;
@@ -2028,6 +2094,14 @@ const INTERIORS = [
 
 /** A building's inside, generated the first time the party walks in. */
 export function generateInterior(building, seed = 1) {
+    // The architect plans it like any place of its kind (a small one), the keeper inside.
+    const planned = generatePlace(normalizePlan(interiorPlan(building, seed)), seed);
+    if (planned) {
+        planned.kind = 'interior';
+        planned.fog = false;
+        for (const f of planned.floors) planned.state.explored[f.id] = '1'.repeat(f.map.w * f.map.h);
+        return planned;
+    }
     const recipe = INTERIORS.find(([re]) => re.test(`${building.kind} ${building.name}`))[1](building);
     const levels = [...new Set(recipe.rooms.map(rm => rm[3] ?? 0))].sort((a, b) => a - b);
     const floors = levels.map(l => ({ id: `F${l < 0 ? 'm' + -l : l}`, name: l < 0 ? 'Cellar' : l === 0 ? 'Ground floor' : 'Upstairs', level: l }));

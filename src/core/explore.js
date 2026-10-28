@@ -562,7 +562,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         if (raw && typeof raw === 'object') {
             const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : null);
             const info = { description: raw.description, hostile: raw.hostile === true };
-            g = where ? placePerson(place, name, where, { floor, info }) : null;
+            g = where ? placePerson(place, name, where, { floor, info, arrive: true }) : null;
             if (!g) { log.push(`couldn't place ${name} (no square or room given)`); continue; }
             if (raw.description) g.description = String(raw.description).slice(0, 240);
             if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
@@ -582,7 +582,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         else if (/^(calm|patrol|patrolling|stay|staying)$/i.test(v)) { if (g) { g.state = 'patrol'; setIntent(g, /^stay/i.test(v) ? 'stay' : ''); } }
         else {
             // A square or a room: move them there (someone new appears there).
-            g = placePerson(place, name, v, { floor });
+            g = placePerson(place, name, v, { floor, arrive: true });
             if (!g) { log.push(`couldn't place ${name} at ${v}`); continue; }
         }
         if (g) log.push(`${g.name}: ${v}`);
@@ -799,6 +799,20 @@ export function findRoom(place, ref) {
     return place.rooms[s] ?? Object.values(place.rooms).find(r => r.id.toLowerCase() === s.toLowerCase() || nameKey(r.name || '') === nameKey(s.replace(/^the\s+/i, ''))) ?? null;
 }
 
+/** Words that name a thing, not a someone: items, furniture, food, light. */
+const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p => p.name), ...Object.keys(PROPS)].flatMap(n => String(n).toLowerCase().split(/[^a-z]+/)).filter(w => w.length > 2 && !['the', 'and', 'wall', 'known', 'great', 'old', 'fallen'].includes(w))), 'tin', 'oil', 'lamp', 'lantern', 'key', 'keys', 'bottle', 'flask', 'vial', 'potion', 'scroll', 'book', 'books', 'coin', 'coins', 'gold', 'sword', 'dagger', 'bow', 'arrow', 'arrows', 'shield', 'bag', 'pouch', 'box', 'ring', 'amulet', 'necklace', 'letter', 'note', 'notes', 'map', 'rope', 'torch', 'candle', 'bread', 'food', 'meat', 'cheese', 'apple', 'wine', 'ale', 'water', 'gem', 'gems', 'jewel', 'jewels', 'ledger', 'journal', 'diary', 'lockpick', 'lockpicks', 'tools', 'kit', 'cloak', 'boots', 'gloves', 'hat', 'coat', 'armor', 'armour', 'helmet', 'blanket', 'pillow', 'plate', 'cup', 'mug', 'bucket', 'shovel', 'pick', 'hammer', 'nails', 'chain', 'chains', 'lock', 'door', 'window', 'floor', 'stairs', 'wall', 'item', 'items', 'thing', 'things', 'supplies', 'rations', 'tinderbox', 'matches', 'crowbar', 'mirror'].join('|')})\\b`, 'i');
+/** Creature words that win over a thing word ("guard dog", "rat in a barrel"). */
+const BEING_WORDS = /\b(man|woman|men|women|boy|girl|child|guard|guards|soldier|knight|captain|warden|jailer|butler|maid|servant|cook|priest|monk|nun|thief|bandit|cultist|merchant|keeper|lord|lady|king|queen|prince|princess|old|young|dog|hound|wolf|rat|rats|cat|bear|spider|snake|bat|bats|goblin|orc|troll|ogre|skeleton|zombie|ghoul|ghost|wraith|vampire|demon|devil|dragon|beast|creature|monster|golem|elemental|slime|ooze|horse|crow|raven|boar|guardian|sentry|watchman|prisoner|stranger|figure|master|mistress|sergeant|brother|sister|father|mother|smith|innkeeper|owner|hunter|farmer|apprentice|scholar|wizard|witch|mage|sorcerer|cleric|paladin|ranger|rogue|bard|druid|healer|doctor|nurse|steward|chamberlain|noble|baron|duke|count|countess|page|squire|executioner|torturer|inquisitor|assassin|spy|mercenary|pirate|sailor|baby|twin|handler|turnkey|gaoler|dwarf|elf|halfling|gnome|human|hag|imp|kobold|gnoll|minotaur|harpy|wyvern|basilisk|mimic|specter|spectre|lich|mummy|banshee|shade|mastiff|stray|mutt|puppy|kitten|owl|hawk|eagle|toad|frog|crocodile|shark)\b/i;
+
+/** Does a name look like an object (a tin of lamp oil, a ledger) rather than a person or creature? */
+export function looksLikeThing(name) {
+    const s = String(name || '').trim();
+    if (!s) return true;
+    if (BEING_WORDS.test(s)) return false;
+    // A name with a thing word in it and no creature word: an object (a proper name like "Graves" has neither).
+    return THING_WORDS.test(s);
+}
+
 /** Find someone among a place's people by name. */
 export function personByName(place, name) {
     return place.guards[name] ?? Object.values(place.guards).find(g => nameKey(g.name) === nameKey(name)) ?? null;
@@ -810,9 +824,11 @@ export function personByName(place, name) {
  * the place's people (drawn on the map, listed for the DM) with `info` ({description, hostile}).
  * @returns the person, or null if `where` isn't a square or room of this place
  */
-export function placePerson(place, name, where, { floor = place.state?.floor, info = {}, taken = null } = {}) {
+export function placePerson(place, name, where, { floor = place.state?.floor, info = {}, taken = null, arrive = false } = {}) {
     const clean = String(name || '').trim().slice(0, 60);
     if (!clean) return null;
+    // Only people and creatures stand on the map: an item named here ("Tin of lamp oil") is not someone.
+    if (!personByName(place, clean) && looksLikeThing(clean)) return null;
     // Squares other people already stand on (party and the place's people), unless told otherwise.
     const busy = f => taken ?? new Set([...Object.entries(place.state?.positions || {}).map(([, p]) => p), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && nameKey(g.name) !== nameKey(clean))].filter(p => p && p.floor === f).map(p => `${p.x},${p.y}`));
     let spot = null, floorId = floor ?? place.floors[0].id;
@@ -832,15 +848,51 @@ export function placePerson(place, name, where, { floor = place.state?.floor, in
         }
     }
     if (!spot) return null;
-    const room = roomAt(place, floorId, spot.x, spot.y)?.id ?? null;
     let g = personByName(place, clean);
+    // Someone new never pops up in plain sight of the party: they come in through the nearest door,
+    // stairs or way in the party can't see, and walk to where they were meant to be.
+    let goal = null;
+    if (arrive && (!g || g.state === 'gone')) {
+        const door = arrivalSpot(place, floorId, spot, busy(floorId));
+        if (door) { goal = spot; spot = door; }
+    }
+    const room = roomAt(place, floorId, spot.x, spot.y)?.id ?? null;
     if (!g) {
         g = place.guards[clean] = { name: clean, description: String(info.description || '').slice(0, 240), hostile: info.hostile === true, room, patrol: room ? [room] : [], step: 0, floor: floorId, x: spot.x, y: spot.y, state: 'patrol' };
         if (info.gender === 'male' || info.gender === 'female') g.gender = info.gender;
     }
     Object.assign(g, { floor: floorId, x: spot.x, y: spot.y, room: room ?? g.room ?? null });
+    if (goal) { g.goal = { x: goal.x, y: goal.y }; if (!g.intent) g.intent = 'goto'; }
     if (g.state === 'gone') g.state = 'patrol';
     return g;
+}
+
+/**
+ * Where someone new comes in from, if where they're meant to be is in sight of the party (or right
+ * next to them): the nearest door, staircase or way out on that floor that nobody in the party can
+ * see, preferring one they can walk from to the spot. Null when the spot is already out of sight.
+ */
+export function arrivalSpot(place, floorId, spot, taken = new Set()) {
+    const viewers = Object.values(place.state?.positions || {}).filter(p => p && p.floor === floorId);
+    if (!viewers.length) return null;
+    const map = floorById(place, floorId).map;
+    const seen = computeVisible(place, floorId, viewers);
+    const inSight = (x, y) => seen[y * map.w + x] || viewers.some(v => Math.max(Math.abs(v.x - x), Math.abs(v.y - y)) <= 4);
+    if (!inSight(spot.x, spot.y)) return null;
+    const all = [
+        ...Object.values(place.doors || {}).filter(d => d.floor === floorId && d.state !== 'hidden' && d.state !== 'walled').map(d => ({ x: d.x, y: d.y })),
+        ...(place.stairs || []).flatMap(s => [s.a, s.b]).filter(e => e.floor === floorId),
+        ...(place.exits || []).filter(e => e.floor === floorId),
+    ];
+    const dist = w => Math.abs(w.x - spot.x) + Math.abs(w.y - spot.y);
+    for (const w of all.filter(w => !inSight(w.x, w.y)).sort((a, b) => dist(a) - dist(b))) {
+        const at = openSquareNear(place, floorId, w.x, w.y, taken, 2);
+        if (at && !inSight(at.x, at.y)) return at;
+    }
+    // Every way in is in plain sight (one lit hall): they walk in through the one farthest from the party.
+    const gap = w => Math.min(...viewers.map(v => Math.max(Math.abs(v.x - w.x), Math.abs(v.y - w.y))));
+    const far = all.filter(w => gap(w) > 3).sort((a, b) => gap(b) - gap(a))[0];
+    return far ? openSquareNear(place, floorId, far.x, far.y, taken, 2) : null;
 }
 
 /**
@@ -906,7 +958,16 @@ export function moveHunters(place, floorId, partyNames, steps = 1) {
     ]);
     const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     for (const g of Object.values(place.guards)) {
-        if (g.state === 'gone' || g.state === 'dead' || g.floor !== floorId || !['attack', 'follow', 'flee'].includes(g.intent)) continue;
+        if (g.state === 'gone' || g.state === 'dead' || g.floor !== floorId) continue;
+        // On their way in to where they were meant to be (they came in through a door out of sight).
+        if (g.intent === 'goto' && g.goal) {
+            const path = findPath(place, floorId, g, g.goal, { knownOnly: false, blocked: busy(g.name), isGoal: (x, y) => Math.max(Math.abs(x - g.goal.x), Math.abs(y - g.goal.y)) <= 1 });
+            for (const [x, y] of (path || []).slice(0, steps)) { const d = doorAt(place, floorId, x, y); if (d && d.state === 'closed') setDoorState(place, d, 'open'); Object.assign(g, { x, y }); }
+            if (!path || Math.max(Math.abs(g.x - g.goal.x), Math.abs(g.y - g.goal.y)) <= 1) { delete g.goal; delete g.intent; }
+            g.room = roomAt(place, floorId, g.x, g.y)?.id ?? g.room;
+            continue;
+        }
+        if (!['attack', 'follow', 'flee'].includes(g.intent)) continue;
         const named = g.target && party.find(n => nameKey(n) === nameKey(g.target));
         const quarry = named ?? [...party].sort((a, b) => dist(g, place.state.positions[a]) - dist(g, place.state.positions[b]))[0];
         const q = place.state.positions[quarry];
@@ -988,7 +1049,7 @@ export function placeSummary(place) {
             const stairs = place.stairs.filter(s => s.a.room === rm.id || s.b.room === rm.id).map(s => { const o = s.a.room === rm.id ? s.b : s.a; return `stairs ${s.id}→${o.room} (${floorById(place, o.floor).name})`; });
             const traps = Object.values(place.traps).filter(t => t.room === rm.id).map(t => `${t.id} ${t.kind} at ${coord(t.x, t.y)} DC ${t.dc}${t.save ? ` ${t.save}` : ''}: ${t.effect}`);
             const items = Object.values(place.items).filter(i => i.room === rm.id).map(i => `${i.id} ${i.name}${i.hidden ? ' (hidden)' : ''}${i.note ? ` ${i.note}` : ''}`);
-            lines.push(`- ${rm.id} ${rm.name} [${rm.type}${rm.lit ? ', lit' : ', dark'}${rm.exit ? ', has the way out' : ''}]${rm.description ? `: ${rm.description}` : ''}`);
+            lines.push(`- ${rm.id} ${rm.name} [${rm.type}${rm.lit ? ', lit' : ', dark'}${rm.exit ? ', has the way out' : ''}]${rm.description ? `: ${rm.description}` : rm.hint ? ` (notes: ${rm.hint})` : ''}`);
             lines.push(`  exits: ${[...doors, ...stairs].join('; ') || 'none'}${traps.length ? ` | traps: ${traps.join('; ')}` : ''}${items.length ? ` | items: ${items.join('; ')}` : ''}`);
         }
     }
@@ -1040,7 +1101,7 @@ export function placeView(place, partyNames) {
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
     const bodies = Object.values(place.guards).filter(g => g.state === 'dead').map(g => `${g.name} at ${coord(g.x, g.y)}`);
     if (bodies.length) lines.push(`Bodies on the floor (dead; cleared away after a few turns): ${bodies.join('; ')}.`);
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put' }[g.intent]}${g.target && g.intent !== 'flee' && g.intent !== 'stay' ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);

@@ -60,10 +60,15 @@ export function ensureParty(world, members) {
     }
 }
 
+/** Turns a lingering condition stays off after it ends (outside fights), so a stale mention can't bring it back. */
+export const CONDITION_SETTLE = 6;
+/** Conditions that really can come and go quickly (tied up again, knocked down again): never held. */
+const QUICK_CONDITIONS = /restrain|tied|bound|grappl|cuff|shackl|cage|prone|unconscious|asleep|sleep|hidden|invisible/i;
+
 /**
  * Apply the DM's state_changes. Returns a list of human-readable change lines.
  */
-export function applyStateChanges(world, changes, knownNames = []) {
+export function applyStateChanges(world, changes, knownNames = [], { turn = null } = {}) {
     const log = [];
     if (!changes || typeof changes !== 'object') return log;
     const names = [...new Set([...Object.keys(world.party), ...Object.keys(world.combat?.enemies ?? {}), ...knownNames])];
@@ -84,12 +89,22 @@ export function applyStateChanges(world, changes, knownNames = []) {
             if (!target) continue;
             const list = (Array.isArray(conds) ? conds : [conds]).map(String).filter(Boolean);
             target.ref.conditions = target.ref.conditions || [];
+            const changed = [], held = [];
             for (const c of list) {
                 const has = target.ref.conditions.some(x => x.toLowerCase() === c.toLowerCase());
-                if (add && !has) target.ref.conditions.push(c);
-                if (!add && has) target.ref.conditions = target.ref.conditions.filter(x => x.toLowerCase() !== c.toLowerCase());
+                if (add === has) continue;
+                // Steady conditions: outside a fight, a lingering one (groggy, poisoned, frightened) taken
+                // off in the last few turns isn't put back by a stale mention; it used to flicker on and off.
+                const k = `${target.name.toLowerCase()}|${c.toLowerCase()}`;
+                const last = world.condTurns?.[k];
+                if (turn !== null && !world.combat && add && last && !last.add && turn - last.turn < CONDITION_SETTLE && !QUICK_CONDITIONS.test(c)) { held.push(c); continue; }
+                if (add) target.ref.conditions.push(c);
+                else target.ref.conditions = target.ref.conditions.filter(x => x.toLowerCase() !== c.toLowerCase());
+                if (turn !== null) { world.condTurns ??= {}; world.condTurns[k] = { turn, add }; }
+                changed.push(c);
             }
-            log.push(`${target.name}: ${add ? '+' : '−'}${list.join(', ')}`);
+            if (changed.length) log.push(`${target.name}: ${add ? '+' : '−'}${changed.join(', ')}`);
+            if (held.length) log.push(`${target.name}: not ${held.join(', ')} again (it only just wore off)`);
         }
     }
     const gold = Number(changes.gold);
