@@ -15,7 +15,7 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
-import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson } from '../core/explore.js';
+import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
@@ -871,8 +871,11 @@ async function resolvePlayerRoll(c, parsed, status) {
     const judged = pr.kind === 'damage' ? { success: null } : judge(total, pr.dc, natural, pr.kind);
     // A roll that decides whether someone is seen: the code keeps who has noticed whom.
     if (pr.spot && judged.success !== null) {
-        noteSeen(c.docs.world, pr.spot.seer, pr.spot.seen, matchName(meta.persona.name, [pr.spot.seer]) ? judged.success : !judged.success);
+        const noticed = matchName(meta.persona.name, [pr.spot.seer]) ? judged.success : !judged.success;
+        noteSeen(c.docs.world, pr.spot.seer, pr.spot.seen, noticed);
         saveDoc('world');
+        const here = currentPlace(c);
+        if (here && markNoticed(here.place, pr.spot.seer, pr.spot.seen, noticed)) savePlace(here.key, c);
     }
     const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
     const flair = natural === 20 ? ' — **natural 20!**' : natural === 1 ? ' — natural 1…' : '';
@@ -1323,7 +1326,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (t.player_roll?.kind !== 'initiative') t.player_roll = { kind: 'initiative', skill: 'Initiative', ability: 'DEX', die: 20, dc: null, advantage: 'none', reason: 'The fight is on: roll initiative. Nobody acts until you have.', damage: '', half: false, bonus: null, spot: null };
     }
     // Who has noticed whom, when the DM says so outright.
-    if (t.noticed) { const seen = applyNoticed(world, t.noticed); if (seen.length) status.note(seen.join('; ')); }
+    if (t.noticed) {
+        const seen = applyNoticed(world, t.noticed);
+        if (seen.length) status.note(seen.join('; '));
+        const here = currentPlace(c);
+        if (here) { for (const [seer, list] of Object.entries(t.noticed)) for (const n of [].concat(list ?? [])) markNoticed(here.place, seer, String(n), true); savePlace(here.key, c); }
+    }
     if (initiativeCard) await postDiceCard(initiativeCard, { combat: true });
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
 
@@ -1358,7 +1366,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // Rolls that decide whether someone is seen: the code keeps who has noticed whom.
         if (r.spot && judged.success !== null) {
             const watcherRolled = nameKey(r.who) === nameKey(r.spot.seer) || matchName(r.who, [r.spot.seer]);
-            noteSeen(world, r.spot.seer, r.spot.seen, watcherRolled ? judged.success : !judged.success);
+            const noticed = watcherRolled ? judged.success : !judged.success;
+            noteSeen(world, r.spot.seer, r.spot.seen, noticed);
+            const here = currentPlace(c);
+            if (here && markNoticed(here.place, r.spot.seer, r.spot.seen, noticed)) savePlace(here.key, c);
         }
         // A save with damage (a trap, a Fireball): taken by the one who rolled, all on a failure, half on a success if it says so.
         // (Dice written only in the failure text, "takes 2d4 piercing damage", count too.)
@@ -1404,7 +1415,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.leave_place) leavePlace(c);
     if (t.enter_place && !t.build_place) {
         const entry = atlasEntry(t.enter_place, c);
-        if (entry) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
+        // Already there (the DM named it again): nobody moves, the map stays as it is.
+        const here = currentPlace(c);
+        const already = here && (here.key === entry?.key || here.place.parent?.key === entry?.key);
+        if (entry && !already) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
     }
 
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.

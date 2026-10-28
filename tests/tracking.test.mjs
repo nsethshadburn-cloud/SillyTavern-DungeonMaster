@@ -189,3 +189,27 @@ test('traps go where someone would set them: by doorways and in front of what is
     console.log(`traps placed sensibly: ${sensible}/${placed}`);
     assert.ok(sensible / placed >= 0.75, `most traps sit by a door or a guarded thing (${sensible}/${placed})`);
 });
+
+test('the DM knows how far people are and what the party can sense; a guard who missed you doesn\'t come for you', async () => {
+    const { markNoticed } = await import('../src/core/explore.js');
+    const place = testPlace();
+    const party = ['Amber', 'Judy Hopps'];
+    const near = placePerson(place, 'Cook', { floor: 'F0', x: 6, y: 4 }, { info: {} });
+    const far = placePerson(place, 'Guard Captain', { floor: 'F0', x: 19, y: 9 }, { info: { hostile: true } });
+    place.doors.D1.state = 'closed';
+    const view = placeView(place, party);
+    assert.match(view, /Cook in R1 at g5 \(1 squares away, IN SIGHT\)/);
+    assert.match(view, /Guard Captain in R2 at t10 \(14 squares away, FAR: the party can't see, hear or smell them\)/);
+    // He rolled and missed Amber: set on attacking, he still doesn't come for her.
+    far.intent = 'attack';
+    far.target = 'Amber';
+    markNoticed(place, 'Guard Captain', 'Amber', false);
+    assert.match(placeView(place, party), /hasn't noticed Amber/);
+    const before = { x: far.x, y: far.y };
+    moveHunters(place, 'F0', party, 3);
+    assert.deepEqual({ x: far.x, y: far.y }, before, 'he stays put');
+    markNoticed(place, 'Guard Captain', 'Amber', true);
+    moveHunters(place, 'F0', party, 3);
+    assert.notDeepEqual({ x: far.x, y: far.y }, before, 'once he notices her, he comes');
+    assert.ok(near);
+});

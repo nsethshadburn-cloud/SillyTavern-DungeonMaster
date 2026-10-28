@@ -34,7 +34,7 @@ export function mapSyncPrompt({ party, people, things, rooms, items = [], carrie
         '{"op":"door","id":"door id","state":"open|closed|locked|broken"}',
         '{"op":"thing","id":"thing id","state":"smashed|gone"} = something was smashed to pieces or taken away whole.',
         '{"op":"gone","who":"exact name"} = someone left the area, died or was put away.',
-        `{"op":"intent","who":"exact name","intent":"${INTENTS.join('|')}","target":"who, or empty"} = someone already on the map now goes after someone, follows them, runs away, holds still or wanders off.`,
+        `{"op":"intent","who":"exact name","intent":"${INTENTS.join('|')}","target":"who, or empty"} = someone already on the map now goes after someone, follows them, runs away, holds still or wanders off (never "attack" or "follow" toward someone they haven\'t noticed).`,
         '{"op":"take","who":"exact name","item":"item id"} = someone picked up an item lying here.',
         '{"op":"found","item":"item id"} = a hidden item was found (it is now known, still lying there).',
         '{"op":"drop","who":"exact name","item":"what they carried"} = someone put down or left an item they carried, here.',

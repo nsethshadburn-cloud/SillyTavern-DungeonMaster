@@ -932,6 +932,22 @@ export function visibleGuards(place, floorId, visible) {
 /** What people on the map can be set on doing, besides standing about or walking their rounds. */
 export const INTENTS = ['attack', 'follow', 'flee', 'stay', 'wander'];
 
+/** How far (squares) talking or a loud noise carries on one floor; beyond it the party can't hear someone. */
+export const EARSHOT = 10;
+
+/**
+ * A roll decided whether someone on the map noticed a party member: remember a miss on the person
+ * themselves (they won't come after someone they never saw), and forget it once they do notice.
+ */
+export function markNoticed(place, seer, seen, noticed) {
+    const g = personByName(place, seer);
+    if (!g) return false;
+    const rest = (g.unaware ?? []).filter(n => nameKey(n) !== nameKey(seen));
+    if (noticed) { if (rest.length) g.unaware = rest; else delete g.unaware; }
+    else g.unaware = [...rest, seen];
+    return true;
+}
+
 /** Set what someone is set on doing (and who at); "" or junk clears it. */
 export function setIntent(g, intent, target = '') {
     const want = String(intent ?? '').toLowerCase().trim();
@@ -968,8 +984,12 @@ export function moveHunters(place, floorId, partyNames, steps = 1) {
             continue;
         }
         if (!['attack', 'follow', 'flee'].includes(g.intent)) continue;
-        const named = g.target && party.find(n => nameKey(n) === nameKey(g.target));
-        const quarry = named ?? [...party].sort((a, b) => dist(g, place.state.positions[a]) - dist(g, place.state.positions[b]))[0];
+        // Only after someone they've noticed: a guard who looked and missed you doesn't come for you.
+        const known = g.intent === 'flee' ? party : party.filter(n => !(g.unaware ?? []).some(u => nameKey(u) === nameKey(n)));
+        if (!known.length) continue;
+        const named = g.target && known.find(n => nameKey(n) === nameKey(g.target));
+        if (g.target && !named && party.some(n => nameKey(n) === nameKey(g.target))) continue;
+        const quarry = named ?? [...known].sort((a, b) => dist(g, place.state.positions[a]) - dist(g, place.state.positions[b]))[0];
         const q = place.state.positions[quarry];
         if (g.intent === 'flee') {
             for (let i = 0; i < steps; i++) {
@@ -1136,8 +1156,18 @@ export function placeView(place, partyNames) {
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
     const bodies = Object.values(place.guards).filter(g => g.state === 'dead').map(g => `${g.name} at ${coord(g.x, g.y)}`);
     if (bodies.length) lines.push(`Bodies on the floor (dead; cleared away after a few turns): ${bodies.join('; ')}.`);
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''}${g.state === 'alert' ? ' (ALERT)' : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
-    lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
+    // How far each one is from the party and what the party could possibly sense of them, so nobody
+    // hears footsteps or smells lamp oil from across the map.
+    const viewers = partyNames.map(n => st.positions[n]).filter(p => p && p.floor === floor.id);
+    const seen = viewers.length ? computeVisible(place, floor.id, viewers) : null;
+    const sense = g => {
+        if (g.floor !== floor.id || !viewers.length) return 'on another floor: the party can\'t see, hear or smell them';
+        const d = Math.min(...viewers.map(v => Math.max(Math.abs(v.x - g.x), Math.abs(v.y - g.y))));
+        const inSight = seen?.[g.y * floor.map.w + g.x];
+        return `${d} squares away, ${inSight ? 'IN SIGHT' : d <= EARSHOT ? 'out of sight but within earshot (only loud noise or talking carries)' : 'FAR: the party can\'t see, hear or smell them'}`;
+    };
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.state === 'alert' ? ' (ALERT)' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
+    lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it; describe only what the party can sense of each, as noted): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);
         const rm = roomAt(place, p.floor, p.x, p.y);

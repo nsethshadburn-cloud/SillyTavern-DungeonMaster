@@ -698,6 +698,8 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     if (!c || !req?.name) return null;
     const existing = atlasEntry(req.name, c);
     if (existing) {
+        // Already there (the DM named it again): nothing to do.
+        if (currentPlace(c)?.key === existing.key || currentPlace(c)?.place.parent?.key === existing.key) return currentPlace(c).place;
         status?.note(`Back to ${existing.name}`);
         return enterPlace(existing.key);
     }
@@ -1253,7 +1255,7 @@ export function syncContext(c) {
         return { name: n, at: at(p.x, p.y), room: roomName(p.x, p.y), note: h ? `hiding ${h.mode} ${h.prop}` : r ? `${r.pose} on ${r.prop}` : '' };
     });
     const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId);
-    const people = guards.map(g => ({ name: g.name, at: at(g.x, g.y), room: roomName(g.x, g.y), note: [g.state === 'dead' ? 'DEAD' : '', g.description, g.intent].filter(Boolean).join('; ').slice(0, 80) }));
+    const people = guards.map(g => ({ name: g.name, at: at(g.x, g.y), room: roomName(g.x, g.y), note: [g.state === 'dead' ? 'DEAD' : '', g.description, g.intent, g.unaware?.length ? `hasn't noticed ${g.unaware.join(', ')}` : ''].filter(Boolean).join('; ').slice(0, 110) }));
     // The rooms the party is in, and anything in view.
     const rooms = new Set(names.map(n => roomAt(place, floorId, place.state.positions[n].x, place.state.positions[n].y)?.id).filter(Boolean));
     const seen = look(c, cur.key, place) || [];

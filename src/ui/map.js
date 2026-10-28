@@ -31,6 +31,7 @@ let follow = true;          // the camera follows the player until they scroll t
 let autoAt = null;          // where our own scrolling put the view (anything else is the player scrolling)
 let choosing = null;        // {title, choices, done}: the player is picking which thing they meant
 let lastViewKey = '';       // the map and floor the view was last showing (a redraw of the same one keeps the scroll)
+let savedScroll = null;     // {key, left, top}: where the player last scrolled the view to
 
 /** How far the player can move this combat round, in squares. */
 function playerSpeed(c) {
@@ -65,7 +66,10 @@ export function openMap() {
         toastr.info('No map right now. It appears in fights, in places where exact squares matter, and in places the DM has built.', 'Dungeon Master');
         return;
     }
+    const wasOpen = panel && document.body.contains(panel) && !panel.classList.contains('dm-hidden');
     ensurePanel().classList.remove('dm-hidden', 'dm-map-min');
+    // Already open (the story moved on inside the same place): just bring it up to date, view where it was.
+    if (wasOpen) { renderMap(); return; }
     selection = { move: '', target: '' };
     viewFloor = null;
     renderMap(true);
@@ -220,7 +224,8 @@ function renderMap(center = false) {
     // Where the player was looking: a redraw of the same map and floor keeps the view right there.
     const oldView = panel.querySelector('.dm-map-view');
     const viewKey = `${b.kind}:${b.key ?? b.title}:${b.floor?.id ?? ''}`;
-    const kept = oldView?.isConnected && lastViewKey === viewKey ? { left: oldView.scrollLeft, top: oldView.scrollTop, body: panel.querySelector('.dm-map-body')?.scrollTop ?? 0 } : null;
+    const kept = savedScroll?.key === viewKey ? { ...savedScroll, body: panel.querySelector('.dm-map-body')?.scrollTop ?? 0 }
+        : oldView?.isConnected && oldView.clientWidth && lastViewKey === viewKey ? { left: oldView.scrollLeft, top: oldView.scrollTop, body: panel.querySelector('.dm-map-body')?.scrollTop ?? 0 } : null;
     lastViewKey = viewKey;
     panel.classList.toggle('dm-map-wide', exploring || map.w > 16);
     panel.innerHTML = `
@@ -253,8 +258,8 @@ function renderMap(center = false) {
     drawBoard(canvas, c, b);
     sizeCanvas(canvas, b);
     if (center) follow = true;
-    if (follow) centerOnParty(view, canvas, b);
-    else if (kept) {
+    if (follow || !kept) centerOnParty(view, canvas, b);
+    else {
         view.scrollLeft = kept.left;
         view.scrollTop = kept.top;
         autoAt = { left: view.scrollLeft, top: view.scrollTop };
@@ -262,7 +267,9 @@ function renderMap(center = false) {
     if (kept?.body) panel.querySelector('.dm-map-body').scrollTop = kept.body;
     view.addEventListener('scroll', () => {
         // A view replaced by a newer render can still fire one last scroll: not the player.
-        if (!follow || !view.isConnected) return;
+        if (!view.isConnected || !view.clientWidth) return;
+        savedScroll = { key: viewKey, left: view.scrollLeft, top: view.scrollTop };
+        if (!follow) return;
         if (autoAt && Math.abs(view.scrollLeft - autoAt.left) < 4 && Math.abs(view.scrollTop - autoAt.top) < 4) return;
         follow = false;
         panel.querySelector('[data-act="center"]')?.classList.remove('dm-hidden');
@@ -309,7 +316,14 @@ function renderMap(center = false) {
     panel.querySelector('[data-act="out"]')?.addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
     panel.querySelector('[data-act="ambience"]')?.addEventListener('click', () => { settings().mapAmbience = settings().mapAmbience === false; saveSettings(); renderMap(); });
-    panel.querySelector('[data-act="min"]').addEventListener('click', () => { panel.classList.toggle('dm-map-min'); ensureLoop(); });
+    panel.querySelector('[data-act="min"]').addEventListener('click', () => {
+        panel.classList.toggle('dm-map-min');
+        ensureLoop();
+        if (panel.classList.contains('dm-map-min')) return;
+        const v = panel.querySelector('.dm-map-view'), cv = panel.querySelector('.dm-map-canvas');
+        if (follow || savedScroll?.key !== viewKey) centerOnParty(v, cv, board(c) ?? b);
+        else { v.scrollLeft = savedScroll.left; v.scrollTop = savedScroll.top; autoAt = { left: v.scrollLeft, top: v.scrollTop }; }
+    });
     panel.querySelector('[data-act="clear"]')?.addEventListener('click', () => { selection = { move: '', target: '' }; renderMap(); });
     panel.querySelector('[data-act="add"]')?.addEventListener('click', addToMessage);
     panel.querySelectorAll('[data-pick]').forEach(el => el.addEventListener('click', () => { const i = Number(el.dataset.pick); choosing?.done(i >= 0 ? choosing.choices[i] : null); }));
