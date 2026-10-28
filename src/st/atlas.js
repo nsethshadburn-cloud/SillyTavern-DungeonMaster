@@ -5,13 +5,13 @@
 // around inside them: click-to-move, fog of war, doors, stairs, traps, guards coming into view.
 
 import { ST, sleep } from './st.js';
-import { campaign, saveDoc } from './campaign.js';
+import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { readJson, writeLater, flushWrites } from './storage.js';
 import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -89,6 +89,8 @@ export function forgetPlaces() {
 
 /** The place the party is in right now (loaded), or null. */
 export function currentPlace(c = campaign()) {
+    // Maps off: no place is in play (it comes back if maps are turned on again).
+    if (settings().mapTier === 'off') return null;
     const at = c?.docs.world.place;
     if (!at?.key) return null;
     const place = places.get(`${c.meta.id}:${at.key}`);
@@ -114,6 +116,9 @@ export function partyOnMap(c = campaign()) {
 
 /** Why someone can't move themselves right now (tied up, caged, held...), or null. Others can still move them. */
 export function lockedReason(c, name) {
+    const cur = currentPlace(c);
+    const trapped = cur && caughtNow(cur.place, name);
+    if (trapped) return `${name} is caught in the ${trapped.kind}! Their saving throw decides whether they get loose.`;
     const r = restraintOf(conditionsOf(c.docs.world, name));
     return r.locked ? lockedLine(name, r) : null;
 }
@@ -195,7 +200,7 @@ export function goTargets(c, name) {
  * room or to a room next door. They walk there and stay (they no longer follow the player).
  * Returns what they went to, or '' if they can't (tied up, no way there).
  */
-export async function companionGoTo(c, name, targetId, { hide = false, pose = '' } = {}) {
+export async function companionGoTo(c, name, targetId, { hide = false, pose = '', stay = true } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || lockedReason(c, name)) return '';
     const { key, place } = cur;
@@ -239,7 +244,7 @@ export async function companionGoTo(c, name, targetId, { hide = false, pose = ''
         if (sprung) break;
     }
     place.state.waiting ??= {};
-    place.state.waiting[name] = true;
+    if (stay) place.state.waiting[name] = true;
     if (place.state.hidden?.[name]) delete place.state.hidden[name];
     if (sprung) {
         trapEvents.push(sprung);
@@ -299,6 +304,20 @@ export function hideAt(c, name, propId) {
     return { mode: r.mode, name: r.what };
 }
 
+/** Who's caught in a trap ({trap, look, at, kind}), or null. */
+export function trappedIn(c, name) {
+    const cur = currentPlace(c);
+    return cur ? caughtNow(cur.place, name) : null;
+}
+
+/** A save went their way: they get loose. Returns true if they were caught. */
+export function freeFromTrap(c, name) {
+    const cur = currentPlace(c);
+    if (!cur || !release(cur.place, name)) return false;
+    savePlace(cur.key, c);
+    return true;
+}
+
 /** How someone is resting right now ({pose, what, type, side, prop}), or null. */
 export function resting(c, name) {
     const cur = currentPlace(c);
@@ -355,6 +374,22 @@ export async function setWaiting(name, wait, { why = '', quiet = false } = {}) {
     }
     saveDoc('world');
     savePlace(key, c);
+}
+
+/**
+ * What a companion agreed to in the chat: "close" (stays right by the player's side: never wanders
+ * off), "follow" (comes along), "stay" (stays behind). Set from their own reply, never from a menu.
+ */
+export async function setStance(c, name, stance, status = null) {
+    if (!['close', 'follow', 'stay'].includes(stance)) return;
+    c.meta.stance ??= {};
+    const before = c.meta.stance[name];
+    c.meta.stance[name] = stance;
+    saveMeta();
+    const waiting = currentPlace(c)?.place.state.waiting?.[name];
+    if (stance === 'stay' && !waiting) await setWaiting(name, true, { why: 'their choice' });
+    else if (stance !== 'stay' && waiting) await setWaiting(name, false);
+    else if (before !== stance) status?.note(stance === 'close' ? `${name} sticks by your side` : `${name} follows you`);
 }
 
 /**
@@ -747,7 +782,7 @@ export async function walkTo(target, redraw = () => { }) {
     const fromRoom = roomAt(place, floorId, lead.x, lead.y), toRoom = roomAt(place, floorId, target.x, target.y);
     const onFloor = followers(c, place).filter(n => place.state.positions[n]?.floor === floorId);
     const leaving = fromRoom?.id !== toRoom?.id || !fromRoom;
-    const deciding = leaving ? onFloor.filter(n => { const p = place.state.positions[n]; return roomAt(place, floorId, p.x, p.y)?.id === fromRoom?.id; }) : [];
+    const deciding = leaving ? onFloor.filter(n => { const p = place.state.positions[n]; return roomAt(place, floorId, p.x, p.y)?.id === fromRoom?.id && !['close', 'follow'].includes(c.meta.stance?.[n]); }) : [];
     const active = new Set(onFloor.filter(n => !deciding.includes(n)));
     const refused = new Set();
     const pending = deciding.map(n => decideFollow(c, n, fromRoom?.name, toRoom?.name).then(d => {
@@ -783,7 +818,7 @@ export async function walkTo(target, redraw = () => { }) {
         return moved;
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
-    let event = null, handoff = null;
+    let event = null, handoff = null, newRoom = null;
     try {
         for (const [x, y] of path) {
             const d = doorAt(place, floorId, x, y);
@@ -815,7 +850,10 @@ export async function walkTo(target, redraw = () => { }) {
         }
         if (!event && trapped.length) event = trapped.join(' ');
         // Rooms entered on the way; a companion who stayed behind rejoins when you reach them.
+        const seenBefore = new Set(place.state.visited);
         await noteRoom(c, place);
+        const nowIn = roomAt(place, lead.floor, lead.x, lead.y);
+        if (nowIn && !seenBefore.has(nowIn.id)) newRoom = nowIn.id;
         const here = roomAt(place, lead.floor, lead.x, lead.y);
         // Coming back into their room (or right up to them in a corridor) brings them along again;
         // never on the same walk they decided to stay.
@@ -861,6 +899,9 @@ export async function walkTo(target, redraw = () => { }) {
     if (event) {
         const { runTurn } = await import('./orchestrator.js');
         await runTurn({ force: 'explore', placeEvent: event });
+    } else if (newRoom && !handoff) {
+        const { companionCuriosity } = await import('./orchestrator.js');
+        await companionCuriosity(c, newRoom);
     }
 }
 

@@ -6,7 +6,7 @@ import { callClaude, resolveDmConnection } from './llm.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown } from './sheets.js';
 import { dmType } from './messages.js';
-import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
+import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { placeSummary, placeView, cropText } from '../core/explore.js';
 import { atlas, currentPlace, partyOnMap, loadPlace } from './atlas.js';
 import { activeBoard } from './fire-turn.js';
@@ -28,10 +28,10 @@ export async function stableSystem() {
         ...c.meta.party.map(p => characterSheet(p.avatar)?.file),
     ]);
     const surprises = surprisesText();
-    const key = `${c.meta.id}|${c.docs.bible.length}|${sheetsKey}|${surprises}`;
+    const key = `${c.meta.id}|${c.docs.bible.length}|${sheetsKey}|${surprises}|${settings().mapTier}`;
     if (stableCache.key === key) return stableCache.text;
 
-    const parts = [DM_RULES, '', '# SURPRISES YOU MAY ADD', surprises, '', '# CAMPAIGN BIBLE', c.docs.bible || '(none yet)'];
+    const parts = [dmRules(settings().mapTier), '', '# SURPRISES YOU MAY ADD', surprises, '', '# CAMPAIGN BIBLE', c.docs.bible || '(none yet)'];
     parts.push('', '# THE PLAYER CHARACTER');
     parts.push(`Name: ${c.meta.persona.name}`);
     const pSheet = personaSheet(c.meta.persona.avatar);

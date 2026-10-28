@@ -526,3 +526,23 @@ test('v0.19.1: damage from a save: all on a failure, half on a success when it s
     assert.equal(t.npc_rolls[0].damage, '2d4 piercing');
     assert.equal(t.player_roll.half, true);
 });
+
+test('v0.21: companions agree in chat to follow, stick close or stay; map tiers shape the rules', async () => {
+    const { companionActionPrompt, parseCompanionAction } = await import('../src/core/triage.js');
+    const { dmRules, DM_RULES } = await import('../src/core/protocol.js');
+    const { user } = companionActionPrompt({ name: 'Judy Hopps', message: '"Right behind you, partner."', scene: 'x', places: [], askAttempt: false, player: 'Amber', askStance: true });
+    assert.match(user, /stay right by Amber's side/);
+    assert.match(user, /"stance"/);
+    assert.equal(parseCompanionAction('{"stance": "follow"}').stance, 'follow');
+    assert.equal(parseCompanionAction('{"stance": "close"}').stance, 'close');
+    assert.equal(parseCompanionAction('{"stance": "maybe"}').stance, undefined);
+    assert.equal(parseCompanionAction('{"go": "p1", "stance": "stay"}', [{ id: 'p1', name: 'x' }]).go, 'p1');
+    assert.equal(dmRules('some'), DM_RULES);
+    assert.match(dmRules('always'), /MAP MODE ALWAYS/);
+    const off = dmRules('off');
+    assert.doesNotMatch(off, /## Places and maps/);
+    assert.doesNotMatch(off, /^ {2}"(scene_map|build_place|place_changes|map_effects|positions)":/m);
+    assert.doesNotMatch(off, /^- Maps: a grid/m);
+    assert.match(off, /NO MAPS/);
+    assert.match(off, /## Combat/, 'combat itself stays');
+});

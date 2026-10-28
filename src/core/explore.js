@@ -278,6 +278,40 @@ export function learnTraps(traps, name) {
     for (const t of traps) if (!knowsTrap(t, name)) (t.knownBy ??= []).push(name);
 }
 
+/** How a trap shows when it catches someone, from its name. */
+export function trapLook(kind) {
+    const k = String(kind || '').toLowerCase();
+    return /\bnet\b/.test(k) ? 'net'
+        : /pit|hole|trapdoor|chasm|shaft/.test(k) ? 'pit'
+            : /bear|jaw|clamp|leg.?hold/.test(k) ? 'jaws'
+                : /gas|poison|cloud|spore|fume/.test(k) ? 'gas'
+                    : /fire|flame|burn|glyph|rune|explo|lightning|spark/.test(k) ? 'fire'
+                        : /block|boulder|ceiling|crush|stone|rock|collapse/.test(k) ? 'crush'
+                            : /alarm|bell|chime|gong/.test(k) ? 'alarm'
+                                : /blade|scythe|spike|spear|saw|axe|stake/.test(k) ? 'blades'
+                                    : /dart|arrow|needle|bolt|plate/.test(k) ? 'darts'
+                                        : 'snare';
+}
+
+/**
+ * Who a trap is holding right now ({trap, look, at}), or null: only while they're still on its
+ * square (moved off it, by the DM or someone pulling them out, they're free).
+ */
+export function caughtNow(place, name) {
+    const c = place.state.caught?.[name];
+    const pos = place.state.positions[name];
+    const trap = c && place.traps[c.trap];
+    if (!c || !pos || !trap || trap.floor !== pos.floor || trap.x !== pos.x || trap.y !== pos.y) return null;
+    return { ...c, kind: trap.kind };
+}
+
+/** Let someone go (their save worked, or the DM frees them). */
+export function release(place, name) {
+    if (!place.state.caught?.[name]) return false;
+    delete place.state.caught[name];
+    return true;
+}
+
 /**
  * Someone steps onto (x, y). A hidden trap springs (and shows); a known one goes off unless they
  * cross it carefully; an open pit swallows them. Returns what the DM needs to rule on, or ''.
@@ -286,10 +320,15 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
     const trap = Object.values(place.traps).find(t => t.floor === floorId && t.x === x && t.y === y
         && (t.state === 'hidden' || t.state === 'found' || (t.state === 'sprung' && OPEN_TRAP.test(t.kind))));
     if (!trap) return '';
+    // Caught: held right there (and shown) until their save frees them or the DM does.
+    place.state.caught ??= {};
+    place.state.caught[name] = { trap: trap.id, look: trapLook(trap.kind), at: Date.now() };
+    if (place.state.hidden?.[name]) delete place.state.hidden[name];
+    if (place.state.pose?.[name]) delete place.state.pose[name];
     const room = place.rooms[trap.room]?.name ?? 'a passage';
     const dc = `DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}.`;
     const dmg = `kind "save"${trap.save ? ` (${trap.save})` : ''}, dc ${trap.dc}, with the trap's damage dice in "damage" (and "half": true if a success still takes half) so the code applies it`;
-    const roll = player ? `Ask for the save (player_roll, ${dmg})` : `Roll ${name}'s save (npc_rolls, ${dmg})`;
+    const roll = (player ? `Ask for the save (player_roll, ${dmg})` : `Roll ${name}'s save (npc_rolls, ${dmg})`) + `. ${name} is CAUGHT in it (the map shows it and they can't move): a successful save frees them by itself; on a failure you decide what happens next and set place_changes.free ["${name}"] when they get loose`;
     if (trap.state === 'hidden') {
         trap.state = 'sprung';
         const map = floorById(place, floorId).map;
@@ -609,6 +648,11 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         const r = prop && hideIn(place, name, prop.id);
         if (r) { bump(place, pos.floor); log.push(`${name} hides ${r.mode} the ${r.what}`); }
     }
+    // Free from a trap: ["Amber"] or "all".
+    for (const who of c.free === 'all' ? Object.keys(place.state.caught || {}) : Array.isArray(c.free) ? c.free : c.free ? [c.free] : []) {
+        const name = matchName(String(who), Object.keys(place.state.caught || {}));
+        if (name && release(place, name)) log.push(`${name} is free of the trap`);
+    }
     // Sitting and lying: {"Judy Hopps": "sleep p7" | "sit armchair" | "lie bed" | "stand"}.
     for (const [who, raw] of Object.entries(c.pose || {})) {
         const name = matchName(who, Object.keys(place.state.positions));
@@ -911,9 +955,10 @@ export function placeView(place, partyNames) {
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);
         const rm = roomAt(place, p.floor, p.x, p.y);
+        const trapped = caughtNow(place, n);
         const rest = poseNow(place, n);
         const resting = rest ? `, ${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what} (${rest.prop})` : '';
-        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}`;
+        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}${trapped ? `, CAUGHT in the ${trapped.kind} (${trapped.trap}): held until their save succeeds or you free them (place_changes.free)` : ''}`;
     });
     if (party.length) lines.push(`Party now (live from the map, the truth whatever earlier messages said): ${party.join('; ')}.`);
     const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);

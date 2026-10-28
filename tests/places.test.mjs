@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { stepOn, adoptTrapProps, hiddenNow, hideIn, poseNow, restOn, standUp, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { stepOn, adoptTrapProps, hiddenNow, hideIn, poseNow, restOn, standUp, trapLook, caughtNow, release, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
 import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
@@ -678,4 +678,36 @@ test('furniture you can use: sit, lie down, sleep; walking off or hiding gets yo
     hideIn(place, 'Judy Hopps', 'p92');
     assert.equal(poseNow(place, 'Judy Hopps'), null, 'hiding gets you up');
     standUp(place, 'Nobody');
+});
+
+test('caught in a trap: the look fits the trap, held on its square until freed', () => {
+    assert.equal(trapLook('snare'), 'snare');
+    assert.equal(trapLook('tripwire'), 'snare');
+    assert.equal(trapLook('weighted net'), 'net');
+    assert.equal(trapLook('covered pit'), 'pit');
+    assert.equal(trapLook('pressure plate (darts)'), 'darts');
+    assert.equal(trapLook('scything blade'), 'blades');
+    assert.equal(trapLook('poison gas vent'), 'gas');
+    assert.equal(trapLook('fire glyph'), 'fire');
+    assert.equal(trapLook('falling block'), 'crush');
+    assert.equal(trapLook('bear trap'), 'jaws');
+    assert.equal(trapLook('alarm bell'), 'alarm');
+    const place = generatePlace(MANOR_PLAN, 4);
+    const trap = Object.values(place.traps)[0];
+    place.state.positions['Judy Hopps'] = { floor: trap.floor, x: trap.x, y: trap.y };
+    const ev = stepOn(place, 'Judy Hopps', trap.floor, trap.x, trap.y);
+    assert.match(ev, /CAUGHT/);
+    assert.match(ev, /place_changes\.free/);
+    const caught = caughtNow(place, 'Judy Hopps');
+    assert.equal(caught.trap, trap.id);
+    assert.equal(caught.look, trapLook(trap.kind));
+    assert.match(placeView(place, ['Judy Hopps']), /CAUGHT in the/);
+    // The DM frees her (or her save does, which calls release).
+    assert.deepEqual(applyPlaceChanges(place, { free: ['judy'] }), ['Judy Hopps is free of the trap']);
+    assert.equal(caughtNow(place, 'Judy Hopps'), null);
+    // Pulled off the square: free too.
+    stepOn(place, 'Judy Hopps', trap.floor, trap.x, trap.y);
+    place.state.positions['Judy Hopps'].x += 1;
+    assert.equal(caughtNow(place, 'Judy Hopps'), null);
+    assert.equal(release(place, 'Nobody'), false);
 });

@@ -131,6 +131,12 @@ function panelHtml() {
         <select id="dm-actor-profile" class="text_pole">${profileOptions(s.actorProfileId, { emptyLabel: 'Current connection (whatever is selected)', filter: p => p.mode === 'tc' || p.api !== 'claude' })}</select></label>
       <label>Helper (quick decisions)
         <select id="dm-helper-profile" class="text_pole">${profileOptions(s.helperProfileId, { emptyLabel: 'Same as actors (current connection)', filter: p => p.api !== 'claude' })}</select></label>
+      <label>Maps
+        <select id="dm-map-tier" class="text_pole">
+          <option value="off" ${s.mapTier === 'off' ? 'selected' : ''}>Off: no maps, the whole campaign stays in the chat</option>
+          <option value="some" ${!s.mapTier || s.mapTier === 'some' ? 'selected' : ''}>Sometimes: maps where they're needed, or when you ask</option>
+          <option value="always" ${s.mapTier === 'always' ? 'selected' : ''}>Always: a map for every new place (small for a short stop, big only for big story places)</option>
+        </select></label>
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
       <label class="checkbox_label"><input id="dm-bookkeeper" type="checkbox" ${s.bookkeeper !== false ? 'checked' : ''}> Bookkeeper: after each turn the helper checks what was said against everyone's conditions and items, and fills in what the DM forgot (shown on a 📜 card)</label>
       <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
@@ -372,6 +378,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
         saveSettings();
     });
     bindSelect('dm-effort', 'dmEffort');
+    bindSelect('dm-map-tier', 'mapTier');
     bindSelect('dm-actor-profile', 'actorProfileId');
     bindSelect('dm-helper-profile', 'helperProfileId');
     bindCheck('dm-use-helper', 'useHelper');

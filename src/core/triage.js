@@ -133,17 +133,31 @@ function parseTask(t) {
 }
 
 /** Ask the helper whether a companion's own reply attempts something that needs a roll. */
-export function companionActionPrompt({ name, message, scene, places = [], askAttempt = true }) {
+/**
+ * Ask the helper about a companion's reply: do they attempt something risky (askAttempt), go
+ * somewhere on the map (places), and are they coming along with the player, sticking by their side,
+ * or staying behind (askStance: the player asks in chat, the companion answers in character)?
+ */
+export function companionActionPrompt({ name, message, scene, places = [], askAttempt = true, player = 'the player', askStance = false }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
+    const questions = [
+        askAttempt ? `Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
+        places.length ? `Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now (on their own or because they were asked to), not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it), or sitting or lying down on it ("sit", "lie", "sleep", or "")?` : '',
+        askStance ? `Going by this reply, is ${name} now coming along with ${player}? "close" if they agree to stay right by ${player}'s side; "follow" if they agree to follow or come along; "stay" if they say they'll stay, wait here, or refuse to come; "" if the reply doesn't say.` : '',
+    ].filter(Boolean);
+    const fields = [
+        askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : '',
+        places.length ? '"go": "the id they go to, or empty", "hide": true or false, "pose": "sit, lie, sleep or empty"' : '',
+        askStance ? '"stance": "close, follow, stay or empty"' : '',
+    ].filter(Boolean);
     const user = [
         `Scene: ${scene || 'unknown'}`,
         `${name} (a companion in the party) just wrote:`,
         message,
         '',
-        askAttempt ? `1. Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
-        places.length ? `${askAttempt ? '2' : '1'}. Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now (on their own or because they were asked to), not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it), or sitting or lying down on it ("sit", "lie", "sleep", or "")?` : '',
-        `JSON: {${askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : ''}${askAttempt && places.length ? ', ' : ''}${places.length ? '"go": "the id they go to, or empty", "hide": true or false, "pose": "sit, lie, sleep or empty"' : ''}}`,
-    ].filter(Boolean).join('\n');
+        ...questions.map((q, i) => `${i + 1}. ${q}`),
+        `JSON: {${fields.join(', ')}}`,
+    ].join('\n');
     return { system, user };
 }
 
@@ -153,5 +167,11 @@ export function parseCompanionAction(text, places = []) {
     const go = String(data.go ?? '').trim();
     const ok = places.some(p => p.id === go);
     const pose = String(data.pose ?? '').trim().toLowerCase();
-    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '', ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}), ...(ok && ['sit', 'lie', 'sleep'].includes(pose) ? { pose } : {}) };
+    const stance = String(data.stance ?? '').trim().toLowerCase();
+    return {
+        attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '',
+        ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}),
+        ...(ok && ['sit', 'lie', 'sleep'].includes(pose) ? { pose } : {}),
+        ...(['close', 'follow', 'stay'].includes(stance) ? { stance } : {}),
+    };
 }

@@ -10,13 +10,14 @@ import { campaign } from '../st/campaign.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approach, setWaiting, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, unhide, hiding, resting, restAt, getUp } from '../st/atlas.js';
+import { currentPlace, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt } from '../st/atlas.js';
 import { conditionsOf } from '../core/world.js';
-import { restraintOf, escapeOptions } from '../core/restraints.js';
-import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow } from '../core/explore.js';
+import { restraintOf } from '../core/restraints.js';
+import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
-import { settings, saveSettings } from '../st/settings.js';
+import { settings, saveSettings, mapsOn } from '../st/settings.js';
 import { drawEffects, effectsActive } from './effects.js';
+import { drawCaught } from './trap-art.js';
 import { fireAt } from '../core/fire.js';
 import { drawFigure } from './sprite-render.js';
 import { figureFor } from '../st/figures.js';
@@ -54,6 +55,10 @@ function ensurePanel() {
 
 export function openMap() {
     const c = campaign();
+    if (!mapsOn()) {
+        toastr.info('Maps are off (Dungeon Master settings). The whole campaign stays in the chat.', 'Dungeon Master');
+        return;
+    }
     if (!c || !board(c)) {
         toastr.info('No map right now. It appears in fights, in places where exact squares matter, and in places the DM has built.', 'Dungeon Master');
         return;
@@ -221,10 +226,11 @@ function renderMap(center = false) {
         closeMenu();
         const sq = squareFromEvent(ev, canvas, map);
         if (!sq) return;
-        if (whoAt(b.positions, map, sq) === c.meta.persona.name && openSelfMenu(ev, c)) return;
+        // Anyone (you included): a little card with their name, health and what they're doing. What
+        // people do goes through the chat, so the story and the characters decide it.
         const who = exploring ? whoAt(b.positions, map, sq) : null;
-        if (who && who !== c.meta.persona.name) {
-            openMenu(ev, c, b, who, view, canvas);
+        if (who) {
+            showPerson(ev, c, b, who);
             return;
         }
         // Furniture and windows: smash, shove, search, break, climb out.
@@ -461,7 +467,9 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             else if (held.hurt || (hp?.hp_max && hp.hp / hp.hp_max <= 0.3)) anim = 'injured';
             const look = figureFor(name);
             const shown = held.bound && !look.beast ? { ...look, bound: held.bound } : look;
-            if (rest?.type === 'bed' && !out) drawInBed(ctx, shown, b, rest, name, tile, now);
+            const trapped = b.kind === 'place' ? caughtNow(b.place, name) : null;
+            if (trapped && !out) drawCaught(ctx, shown, trapped, px, py, tile, { flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, offset: nameOffset(name) });
+            else if (rest?.type === 'bed' && !out) drawInBed(ctx, shown, b, rest, name, tile, now);
             else drawFigure(ctx, shown, px, py - tile * (anim === 'sit' ? 0.02 : 0.06), tile, { anim, elapsed, flip: (m.facing ?? (friends.has(name) ? 1 : -1)) < 0, red: anim === 'hurt' && Math.floor(elapsed / 120) % 2 === 0 });
         } else {
             const rad = tile * 0.38;
@@ -680,42 +688,23 @@ function sendAsPlayer(text, { send = true } = {}) {
     if (window.matchMedia('(max-width: 700px)').matches) panel.classList.add('dm-map-min');
 }
 
-function openMenu(ev, c, b, who, view, canvas) {
-    const player = c.meta.persona.name;
-    const companion = c.meta.party.some(p => p.name === who);
-    const person = b.place.guards[who];
-    const waiting = b.place.state.waiting?.[who];
-    const redraw = () => { const nb = board(c); if (nb?.kind === 'place') { drawBoard(canvas, c, nb); if (follow) centerOnParty(view, canvas, nb); } };
-    const done = () => renderMap();
-    const actions = companion
-        ? [
-            ['Talk', 'fa-comment', async () => { sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }],
-            waiting
-                ? ['Ask to follow', 'fa-person-walking-arrow-right', async () => { await setWaiting(who, false); done(); }]
-                : ['Ask to wait here', 'fa-hand', async () => { await setWaiting(who, true, { why: `${player} asked` }); done(); }],
-        ]
-        : [
-            ['Talk', 'fa-comment', async () => { await approach(who, redraw); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); done(); }],
-            ['Look', 'fa-eye', async () => { toastr.info(person?.description || 'Someone you don\'t know yet.', who, { timeOut: 6000 }); }],
-            ['Attack', 'fa-hand-fist', async () => { await approach(who, redraw); sendAsPlayer(`*${player} attacks ${who}!*`); done(); }],
-            ['Sneak past', 'fa-user-ninja', async () => { sendAsPlayer(`*${player} tries to sneak past ${who} without being noticed.*`); }],
-            ['Steal', 'fa-sack-dollar', async () => { await approach(who, redraw); sendAsPlayer(`*${player} tries to pick ${who}'s pocket.*`); done(); }],
-        ];
-    showMenu(ev, who, person?.description || '', actions);
-}
-
-/** Tapping yourself while tied up, cuffed or caged: ways to try to get free. False if there's nothing to offer. */
-function openSelfMenu(ev, c) {
-    const me = c.meta.persona.name;
-    const r = restraintOf(conditionsOf(c.docs.world, me));
-    const options = escapeOptions(me, r).map(([label, icon, text]) => [label, icon, async () => sendAsPlayer(text)]);
-    const hid = hiding(c, me);
-    if (hid) options.unshift(['Come out', 'fa-person-walking', async () => { unhide(c, me); renderMap(); }]);
-    const rest = resting(c, me);
-    if (rest) options.unshift(['Get up', 'fa-person', async () => { getUp(c, me); renderMap(); }]);
-    if (!options.length) return false;
-    showMenu(ev, me, hid ? `hiding ${hid.mode} something` : rest ? `${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what}` : r.reason || r.look || '', options);
-    return true;
+/** Tapping someone: who they are, their health, and what they're doing. No actions. */
+function showPerson(ev, c, b, who) {
+    const hp = hpOf(c, who);
+    const place = b.place;
+    const conds = conditionsOf(c.docs.world, who);
+    const hid = place ? hiddenNow(place, who) : null;
+    const rest = place ? poseNow(place, who) : null;
+    const lines = [
+        hp?.hp_max ? `HP ${hp.hp}/${hp.hp_max}${hp.hp <= 0 ? ' (down)' : hp.hp / hp.hp_max <= 0.3 ? ' (badly hurt)' : ''}` : '',
+        conds.length ? conds.join(', ') : '',
+        hid ? `hiding ${hid.mode} the ${hid.what}` : '',
+        rest ? `${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what}` : '',
+        place && caughtNow(place, who) ? `caught in the ${caughtNow(place, who).kind}` : '',
+        place?.state.waiting?.[who] ? 'staying here' : '',
+        place?.guards[who]?.description || '',
+    ].filter(Boolean);
+    showMenu(ev, who, lines.join(' · ') || (c.meta.party.some(p => p.name === who) || who === c.meta.persona.name ? 'fine' : ''), []);
 }
 
 // ---------- the tap menu for things: furniture and windows ----------

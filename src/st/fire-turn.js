@@ -3,6 +3,7 @@
 // burns, effects run down, and anyone standing in fire takes fire damage.
 
 import { campaign, saveDoc } from './campaign.js';
+import { mapsOn } from './settings.js';
 import { currentPlace, savePlace } from './atlas.js';
 import { floorById, roomAt, setDoorState } from '../core/explore.js';
 import { parseCoord, toCoord } from '../core/grid.js';
@@ -18,7 +19,7 @@ import { refreshMap, playAnim } from '../ui/map.js';
  */
 export function activeBoard(c = campaign()) {
     const w = c?.docs.world;
-    if (!w) return null;
+    if (!w || !mapsOn()) return null;
     const cur = currentPlace(c);
     const roomName = (place, floorId) => (x, y) => roomAt(place, floorId, x, y)?.name ?? '';
     if (w.combat?.map) {

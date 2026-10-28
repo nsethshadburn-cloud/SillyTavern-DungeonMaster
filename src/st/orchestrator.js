@@ -3,7 +3,7 @@
 // 4) DM (Claude) only if needed  5) actors reply  6) bookkeeping.
 
 import { ST } from './st.js';
-import { settings, currentSpend, modelFor } from './settings.js';
+import { settings, currentSpend, modelFor, mapsOn } from './settings.js';
 import { campaign, saveMeta, saveDoc } from './campaign.js';
 import { callLocal, BudgetError } from './llm.js';
 import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
@@ -28,7 +28,7 @@ import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf } from '../core/world.js';
 import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
-import { matchName, nameKey, trimToTokens } from '../core/text.js';
+import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 
 let running = false;
@@ -386,6 +386,75 @@ async function bookkeep(c, fromIndex) {
     refreshMap();
 }
 
+/**
+ * Walking into a new room, a companion may go and look at something there on their own (about one
+ * room in three): only if they haven't agreed to stick by the player's side, aren't hurt, held or
+ * staying behind, and something there would catch their eye. They walk over, roll their own
+ * Investigation (it can turn up a trap or something hidden in the room), and say what they found.
+ * All local: the helper decides, the dice are code, the actor speaks. No Claude call.
+ */
+export async function companionCuriosity(c, roomId) {
+    const s = settings();
+    const cur = currentPlace(c);
+    if (running || !cur || !s.useHelper || c.docs.world.combat || random01() > 1 / 3) return;
+    const { key, place } = cur;
+    const lead = place.state.positions[c.meta.persona.name];
+    const room = place.rooms[roomId];
+    if (!lead || !room) return;
+    const free = c.meta.party.map(p => p.name).filter(n => {
+        const p = place.state.positions[n];
+        return p && p.floor === lead.floor && roomAt(place, p.floor, p.x, p.y)?.id === roomId && !place.state.waiting?.[n] && c.meta.stance?.[n] !== 'close' && !lockedReason(c, n);
+    });
+    if (!free.length) return;
+    const name = free[Math.floor(random01() * free.length)];
+    const things = goTargets(c, name).filter(t => !/next door/.test(t.name));
+    if (!things.length) return;
+    running = true;
+    const status = beginTurn(`${name} looks around`);
+    try {
+        const member = c.meta.party.find(p => p.name === name);
+        const system = 'You decide one thing about a character in a roleplay. Reply with JSON only.';
+        const user = [
+            `${name}: ${trimToTokens(member?.summary || '', 200)}`,
+            c.meta.standing ? `Right now: ${c.meta.standing}` : '',
+            `${name} just walked into ${room.name} with ${c.meta.persona.name}.${room.description ? ` ${trimToTokens(room.description, 120)}` : ''}`,
+            `Things here: ${things.map(t => `${t.id} = ${t.name}`).join('; ')}`,
+            `Would ${name}, being who they are, go and look at one of these on their own right now (curious, suspicious, drawn to it)? Most of the time they just stay with the group: only if one would really catch their eye.`,
+            'JSON: {"go": "the id, or empty", "why": "a few words"}',
+        ].filter(Boolean).join('\n');
+        const pick = extractJson(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId })) || {};
+        const thing = things.find(t => t.id === String(pick.go ?? '').trim());
+        if (!thing) { status.finish(`${name} stays with you`); return; }
+        const went = await companionGoTo(c, name, thing.id, { stay: false });
+        if (!went) { status.finish(`${name} stays with you`); return; }
+        // Their own check.
+        const stats = statsForName(name, c.meta);
+        const { mod } = lookupModifier(stats, { kind: 'check', skill: 'Investigation', ability: 'INT' });
+        const die = roll('1d20');
+        const total = (die?.total ?? 10) + mod;
+        await postDiceCard(`🎲 **${name}** · Investigation (looking at the ${went} on their own): d20 (${die?.natural ?? '?'}) ${formatModifier(mod)} = **${total}**`);
+        c.docs.rolls_log.push({ at: new Date().toISOString(), who: name, what: 'Investigation (on their own)', kind: 'check', natural: die?.natural ?? null, mod, total, dc: null, success: null });
+        saveDoc('rolls_log');
+        const search = searchForTraps(c, name, total);
+        // Something hidden in this room turns up for a good look.
+        const items = total >= 12 ? Object.values(place.items).filter(i => i.room === roomId && i.state !== 'taken' && !i.found) : [];
+        for (const i of items) i.found = true;
+        if (items.length) savePlace(key, c);
+        if (search?.found.length) { await postNote(`⚠️ ${name} spots: ${search.found.join(', ')}.`); refreshMap(); }
+        const found = [...items.map(i => i.name), ...(search?.found ?? [])];
+        const brief = `You went over to look at the ${went} on your own (${String(pick.why || 'it caught your eye').slice(0, 80)}). Your Investigation roll was ${total}. ${found.length ? `You found: ${found.join(', ')}. ` : 'You found nothing special. '}Say it to ${c.meta.persona.name} in a line or two, in character.`;
+        const step = status.step(`${name} is responding`);
+        await makeSpeak(name, brief, { signal: new AbortController().signal, length: 'short' });
+        step.done();
+        status.finish(`${name} looked at the ${went}`);
+    } catch (error) {
+        console.warn('[Dungeon Master] companion curiosity failed', error);
+        status.finish('');
+    } finally {
+        running = false;
+    }
+}
+
 /** Rewrite a companion's sheet for a new level and keep their HP in step. */
 export async function levelUp(c, member, level, status = null) {
     const step = status?.step(`Rewriting ${member.name}'s sheet for level ${level}`);
@@ -459,11 +528,13 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
         // Already walked where the player told them: don't move them again.
         const places = c.docs.world.combat || moved.includes(name) ? [] : goTargets(c, name);
         try {
-            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}`, places });
+            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}`, places, player: c.meta.persona.name, askStance: Boolean(currentPlace(c)) && !c.docs.world.combat });
             attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }), places);
         } catch {
             continue;
         }
+        // Coming along, sticking close, or staying behind: what they said in their reply.
+        if (attempt.stance && !attempt.go) await setStance(c, name, attempt.stance, status);
         if (attempt.go && !signal.aborted) {
             const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide, pose: attempt.pose });
             if (went) status.note(attempt.hide ? `${name} hides ${went}` : /^(sit|lie|sleep) on /.test(went) ? `${name} goes to ${went}` : `${name} goes to the ${went} and stays there`);
@@ -489,12 +560,13 @@ async function companionMovesOnMap(c, name, status, signal) {
     const s = settings();
     if (!s.useHelper || c.docs.world.combat || !c.meta.party.some(p => p.name === name)) return;
     const places = goTargets(c, name);
-    if (!places.length) return;
+    if (!currentPlace(c)) return;
     const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
     if (!msg?.mes) return;
     try {
-        const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false });
-        const { go, hide, pose } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId }), places);
+        const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false, player: c.meta.persona.name, askStance: true });
+        const { go, hide, pose, stance } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }), places);
+        if (stance && !go) await setStance(c, name, stance, status);
         if (!go || signal.aborted) return;
         const went = await companionGoTo(c, name, go, { hide, pose });
         if (went) status.note(hide ? `${name} hides ${went}` : /^(sit|lie|sleep) on /.test(went) ? `${name} goes to ${went.replace(/ on /, ' on ')}` : `${name} goes to the ${went} and stays there`);
@@ -552,8 +624,14 @@ async function resolvePlayerRoll(c, parsed, status) {
         saveDoc('world');
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
-    // A save with damage: the code takes the HP off (all on a failure, half on a success if it says so).
+    // Caught in a trap: a save that works gets you loose.
     let saveHurt = '';
+    if (pr.kind === 'save' && judged.success === true && freeFromTrap(c, meta.persona.name)) {
+        await postNote(`🪤 ${meta.persona.name} gets loose!`);
+        saveHurt += ` ${meta.persona.name} got loose from the trap.`;
+        refreshMap();
+    }
+    // A save with damage: the code takes the HP off (all on a failure, half on a success if it says so).
     if (pr.kind === 'save' && pr.damage) {
         const hurt = saveDamage(pr.damage, judged.success === false, pr.half);
         if (hurt) {
@@ -655,6 +733,11 @@ export function combatFromAttacks(c, t) {
 export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [] } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
+    // Maps off: anything about maps in the DM's answer is ignored (the story stays in the chat).
+    if (!mapsOn()) {
+        Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {} });
+        if (t.start_combat) t.start_combat.map = null;
+    }
 
     // New NPCs (with voices).
     if (t.new_npcs.length) {
@@ -720,7 +803,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (g.state === 'gone' || g.floor !== floorId) continue;
                 if (foeKeys.has(nameKey(g.name)) || seen[g.y * combat.map.w + g.x]) combat.positions[g.name] = toCoord(g.x, g.y);
             }
-        } else {
+        } else if (mapsOn()) {
             combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
             combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
         }
@@ -958,6 +1041,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 playAnim(r.who, 'hurt');
             }
         }
+        // Caught in a trap: a save that works gets them loose.
+        const caughtWho = r.kind === 'save' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
+        if (caughtWho && judged.success === true && trappedIn(c, caughtWho) && freeFromTrap(c, caughtWho)) damageText += ' · gets loose!';
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
         const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';
         const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';

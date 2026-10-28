@@ -31,6 +31,7 @@ export const DEFAULTS = Object.freeze({
     helperProfileId: '',        // '' = same as actors (current connection)
     helperMaxTokens: 160,
     useHelper: true,
+    mapTier: 'some',            // 'off' (no maps, all in the chat) | 'some' (where needed or asked) | 'always' (every new location)
     bookkeeper: true,           // after each turn the helper checks the story against HP, conditions and items
 
     // Budget (USD) and Claude prices (USD per million tokens)
@@ -150,6 +151,11 @@ export function modelFor(tasks, { criticalRoll = false } = {}) {
         criticalRoll,
         rank: m => pricesFor(m).input,
     });
+}
+
+/** Maps on at all? (tier "off" turns every map system off) */
+export function mapsOn() {
+    return settings().mapTier !== 'off';
 }
 
 export function saveSettings() {
