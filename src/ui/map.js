@@ -30,6 +30,7 @@ let lastPlaceKey = '';
 let follow = true;          // the camera follows the player until they scroll the map themselves
 let autoAt = null;          // where our own scrolling put the view (anything else is the player scrolling)
 let choosing = null;        // {title, choices, done}: the player is picking which thing they meant
+let lastViewKey = '';       // the map and floor the view was last showing (a redraw of the same one keeps the scroll)
 
 /** How far the player can move this combat round, in squares. */
 function playerSpeed(c) {
@@ -216,6 +217,11 @@ function renderMap(center = false) {
     const pending = [selection.move ? `move to ${selection.move}` : '', selection.target ? `target ${selection.target}` : ''].filter(Boolean).join(', ');
     const floors = exploring ? b.place.floors.filter(f => (b.place.state.explored[f.id] || '').includes('1')).sort((x, y) => y.level - x.level) : [];
 
+    // Where the player was looking: a redraw of the same map and floor keeps the view right there.
+    const oldView = panel.querySelector('.dm-map-view');
+    const viewKey = `${b.kind}:${b.key ?? b.title}:${b.floor?.id ?? ''}`;
+    const kept = oldView?.isConnected && lastViewKey === viewKey ? { left: oldView.scrollLeft, top: oldView.scrollTop, body: panel.querySelector('.dm-map-body')?.scrollTop ?? 0 } : null;
+    lastViewKey = viewKey;
     panel.classList.toggle('dm-map-wide', exploring || map.w > 16);
     panel.innerHTML = `
 <div class="dm-map-head">
@@ -248,6 +254,12 @@ function renderMap(center = false) {
     sizeCanvas(canvas, b);
     if (center) follow = true;
     if (follow) centerOnParty(view, canvas, b);
+    else if (kept) {
+        view.scrollLeft = kept.left;
+        view.scrollTop = kept.top;
+        autoAt = { left: view.scrollLeft, top: view.scrollTop };
+    }
+    if (kept?.body) panel.querySelector('.dm-map-body').scrollTop = kept.body;
     view.addEventListener('scroll', () => {
         // A view replaced by a newer render can still fire one last scroll: not the player.
         if (!follow || !view.isConnected) return;
