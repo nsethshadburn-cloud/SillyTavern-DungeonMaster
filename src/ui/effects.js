@@ -297,7 +297,7 @@ function drawPart(ctx, p, tile, now) {
 
 /** Fog, smoke, darkness and poison: soft clouds drifting slowly over the area. */
 function drawCloud(ctx, e, at, tile, now) {
-    const color = { fog: '200,205,210', smoke: '90,88,85', poison: '120,170,60', darkness: '0,0,0' }[e.type];
+    const color = { fog: '200,205,210', smoke: '140,136,130', poison: '120,170,60', darkness: '0,0,0' }[e.type];
     if (!color) return;
     const [cx, cy] = at(e.x, e.y), rad = (e.radius + 0.5) * tile;
     if (e.type === 'darkness') {
@@ -306,7 +306,7 @@ function drawCloud(ctx, e, at, tile, now) {
         ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
     }
     const puff = softDot(color, 64), n = Math.min(26, 4 + e.radius * 4);
-    ctx.globalAlpha = e.type === 'darkness' ? 0.5 : e.type === 'poison' ? 0.26 : 0.32;
+    ctx.globalAlpha = e.type === 'darkness' ? 0.5 : e.type === 'poison' ? 0.26 : e.type === 'smoke' ? 0.42 : 0.32;
     for (let i = 0; i < n; i++) {
         const a = i * 2.39996 + now / 9000 * (i % 2 ? 1 : -1), d = rad * 0.85 * Math.sqrt((i + 0.5) / n);
         const size = tile * (1.4 + (i % 3) * 0.5);
