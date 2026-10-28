@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.18.3 (traps catch everyone)
+- `stepOn(place, name, floor, x, y)` (explore.js) is the one rule for stepping on a trap square: hidden springs and shows, found goes off unless crossed carefully, a sprung pit/hole/trapdoor stays open. The player's walk and a companion's own walk (companionGoTo) both use it; the companion stops on the trap. A trap set off during a turn is queued (takeTrapEvents): a companion task's walk finishes before the DM is asked, so the trap goes into that call instead of the search; one set off after the DM ruled starts an explore turn right after. `knownTraps` makes walks route around known traps unless one is the target.
+
 ### v0.18.2 (companion tasks go through the DM)
 - The helper triage also gets the companions with the player and the things and rooms around them (goTargets) and returns `task: {who, what, go, dm}` when the player tells a companion to do something. `go`: the companion walks there right away (companionGoTo, in the background while the DM thinks; the reply waits for the walk). `dm`: the result is not known yet, so a new reason `companion_task` calls the DM, who rolls for them (npc_rolls) and briefs them with what they actually find. The free-reply companion check skips moving someone who already walked.
 

@@ -16,7 +16,7 @@ import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear } from '../core/explore.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
@@ -120,7 +120,10 @@ export async function runTurn(opts = {}) {
         ST.eventSource.removeListener(ST.eventTypes.GENERATION_STOPPED, onStop);
         saveMeta();
         running = false;
-        if (rerunRequested) {
+        // A companion set off a trap while walking somewhere after the DM had already ruled: rule on it now.
+        const sprung = takeTrapEvents();
+        if (sprung.length) setTimeout(() => runTurn({ force: 'explore', placeEvent: sprung.join(' ') }), 50);
+        else if (rerunRequested) {
             rerunRequested = false;
             setTimeout(() => runTurn(), 50);
         }
@@ -213,7 +216,7 @@ async function turnBody(c, opts, status, signal) {
         }
     }
     if (signal.aborted) throw new Error('aborted');
-    let placeEvent = opts.placeEvent || '';
+    let placeEvent = [opts.placeEvent, ...takeTrapEvents()].filter(Boolean).join(' ');
     // The player picked something on the map (smash the bookshelf, pry the bars): the DM rules on it.
     const picked = !autoRoll ? takeMapAction() : '';
     if (picked) placeEvent = [picked, placeEvent].filter(Boolean).join(' ');
@@ -244,6 +247,13 @@ async function turnBody(c, opts, status, signal) {
     let events = [];
     if (!pacing.inCombat && b.level !== 'blocked' && opts.force !== 'opening') {
         events = await maybeDrawEvents(c, status, b.level === 'tight');
+    }
+
+    // The companion's walk finishes before the DM rules: if they set off a trap on the way, that comes first.
+    if (taskWalk) {
+        await taskWalk;
+        const sprung = takeTrapEvents();
+        if (sprung.length) { placeEvent = [placeEvent, ...sprung].filter(Boolean).join(' '); if (triage.task) triage.task.dm = false; }
     }
 
     // ---------- 4. Does the DM step in? ----------

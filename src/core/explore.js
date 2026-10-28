@@ -243,6 +243,36 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
     return toward ? pathTo(best) : null;
 }
 
+/** An open pit (or hole) stays dangerous after it's sprung; darts and the like are spent. */
+const OPEN_TRAP = /pit|hole|trapdoor|chasm|shaft/i;
+
+/** Squares with traps everyone knows about (found, or an open pit): walks go around them unless that's where you're going. */
+export function knownTraps(place, floorId, except = null) {
+    return Object.values(place.traps).filter(t => t.floor === floorId && (t.state === 'found' || (t.state === 'sprung' && OPEN_TRAP.test(t.kind))) && !(except && t.x === except.x && t.y === except.y)).map(t => `${t.x},${t.y}`);
+}
+
+/**
+ * Someone steps onto (x, y). A hidden trap springs (and shows); a known one goes off unless they
+ * cross it carefully; an open pit swallows them. Returns what the DM needs to rule on, or ''.
+ */
+export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
+    const trap = Object.values(place.traps).find(t => t.floor === floorId && t.x === x && t.y === y
+        && (t.state === 'hidden' || t.state === 'found' || (t.state === 'sprung' && OPEN_TRAP.test(t.kind))));
+    if (!trap) return '';
+    const room = place.rooms[trap.room]?.name ?? 'a passage';
+    const dc = `DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}.`;
+    const roll = player ? 'Ask for the roll (player_roll)' : `Roll for ${name} (npc_rolls)`;
+    if (trap.state === 'hidden') {
+        trap.state = 'sprung';
+        const map = floorById(place, floorId).map;
+        const prop = map.props.find(p => p.trap === trap.id);
+        if (prop) { prop.hidden = false; map.version = (map.version || 0) + 1; }
+        return `${name} stepped on a hidden ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate it.`;
+    }
+    if (trap.state === 'found') return `${name} stepped onto the ${trap.kind} (${trap.id}) in ${room} that the party already knew about: ${dc} It goes off unless they cross it carefully: ${roll.toLowerCase()} and narrate it; mark it "sprung" or "disarmed" in place_changes if that's what happens.`;
+    return `${name} walked into the open ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate the fall.`;
+}
+
 /** A free square next to (x, y) for a companion to stand on. */
 export function freeNear(place, floorId, x, y, taken = new Set()) {
     for (let d = 1; d <= 3; d++) {

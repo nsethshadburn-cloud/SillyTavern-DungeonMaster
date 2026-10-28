@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, knownTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -196,7 +196,7 @@ export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
     const pos = place.state.positions[name];
     if (!pos) return '';
     const map = floorById(place, pos.floor).map;
-    const others = new Set([...Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === pos.floor).map(g => `${g.x},${g.y}`)]);
+    const others = new Set([...Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === pos.floor).map(g => `${g.x},${g.y}`), ...knownTraps(place, pos.floor)]);
     const prop = (map.props || []).find(p => p.id === targetId);
     const room = place.rooms[targetId];
     let goals = [];
@@ -216,16 +216,25 @@ export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
     }
     if (!path) return '';
     const { refreshMap } = await import('../ui/map.js');
+    let sprung = '';
     for (const [x, y] of path) {
         const d = doorAt(place, pos.floor, x, y);
         if (d && d.state === 'closed') setDoorState(place, d, 'open');
         Object.assign(pos, { x, y });
+        sprung = stepOn(place, name, pos.floor, x, y);
         refreshMap();
         await sleep(110);
+        if (sprung) break;
     }
     place.state.waiting ??= {};
     place.state.waiting[name] = true;
     if (place.state.hidden?.[name]) delete place.state.hidden[name];
+    if (sprung) {
+        trapEvents.push(sprung);
+        savePlace(key, c);
+        refreshMap();
+        return '';
+    }
     if (hide && prop && HIDE[prop.type]) hideAt(c, name, prop.id);
     savePlace(key, c);
     refreshMap();
@@ -615,6 +624,11 @@ async function enterBuilding(c, townKey, town, door) {
 
 let walking = false;
 
+/** Traps someone set off while the DM was busy (a companion walking somewhere); the next turn rules on them. */
+let trapEvents = [];
+export function takeTrapEvents() { const t = trapEvents; trapEvents = []; return t; }
+
+
 /** Passive Perception of the best spotter in the party. */
 function passivePerception(c) {
     let best = 10;
@@ -653,6 +667,7 @@ export async function walkTo(target, redraw = () => { }) {
         ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId).map(g => `${g.x},${g.y}`),
         ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
     ]);
+    for (const k of knownTraps(place, floorId, target)) others.add(k);
     const path = findPath(place, floorId, lead, target, { blocked: others, toward: dark });
     if (dark && !path?.length) { toastr.info('Something in the dark blocks the way.', 'Map', { timeOut: 2500 }); return; }
     if (dark) target = { x: path[path.length - 1][0], y: path[path.length - 1][1] };
@@ -705,9 +720,6 @@ export async function walkTo(target, redraw = () => { }) {
     let event = null, handoff = null;
     try {
         for (const [x, y] of path) {
-            // A trap on the next square. Hidden ones stay hidden until someone searches the room
-            // (a Perception or Investigation roll) or steps on one: then it springs.
-            const trap = Object.values(place.traps).find(t => t.floor === floorId && t.x === x && t.y === y && (t.state === 'hidden' || t.state === 'found'));
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') setDoorState(place, d, 'open');
             lead.x = x; lead.y = y;
@@ -720,19 +732,10 @@ export async function walkTo(target, redraw = () => { }) {
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
-            if (trap && trap.state === 'hidden') {
-                trap.state = 'sprung';
-                const sprungProp = floorById(place, floorId).map.props.find(p => p.trap === trap.id);
-                if (sprungProp) { sprungProp.hidden = false; floorById(place, floorId).map.version = (floorById(place, floorId).map.version || 0) + 1; }
-                const room = place.rooms[trap.room];
-                event = `${names[0]} stepped on a hidden ${trap.kind} (${trap.id}) in ${room?.name ?? 'a passage'}: DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}. Ask for the save (player_roll) and narrate it.`;
-                break;
-            }
-            if (trap && trap.state === 'found') {
-                const room = place.rooms[trap.room];
-                event = `${names[0]} deliberately stepped onto the ${trap.kind} (${trap.id}) in ${room?.name ?? 'a passage'} that they already knew about: DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}. It goes off unless they cross it carefully: ask for the roll (player_roll) and narrate it; mark it "sprung" or "disarmed" in place_changes if that's what happens.`;
-                break;
-            }
+            // A trap here. Hidden ones stay hidden until someone searches the room (a Perception or
+            // Investigation roll) or steps on one: then it springs.
+            const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
+            if (sprung) { event = sprung; break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);

@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { stepOn, knownTraps, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
 import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
@@ -508,4 +508,24 @@ test('a jail is organized: cells in rows on a cell-block hallway, behind bars an
         assert.equal(roomAt(p, p.start.floor, p.start.x, p.start.y)?.name, 'Cell 3', 'the party starts in their cell');
         assert.equal(reachable(p).roomsReached.length, Object.keys(p.rooms).length, 'still solvable');
     }
+});
+
+test('anyone who steps on a trap sets it off: hidden ones spring, known ones are walked around, open pits stay open', () => {
+    const place = generatePlace(MANOR_PLAN, 4);
+    const trap = Object.values(place.traps)[0];
+    const prop = floorById(place, trap.floor).map.props.find(p => p.trap === trap.id);
+    assert.equal(stepOn(place, 'Judy Hopps', trap.floor, trap.x + 40, trap.y), '', 'nothing there');
+    const ev = stepOn(place, 'Judy Hopps', trap.floor, trap.x, trap.y);
+    assert.match(ev, /Judy Hopps stepped on a hidden/);
+    assert.match(ev, /npc_rolls/, 'a companion: the DM rolls for them');
+    assert.equal(trap.state, 'sprung');
+    assert.equal(prop.hidden, false, 'a sprung trap shows');
+    trap.kind = 'darts';
+    assert.equal(stepOn(place, 'Amber', trap.floor, trap.x, trap.y), '', 'spent darts do nothing');
+    trap.kind = 'covered pit';
+    assert.match(stepOn(place, 'Amber', trap.floor, trap.x, trap.y, { player: true }), /Amber walked into the open covered pit.*player_roll/);
+    assert.deepEqual(knownTraps(place, trap.floor), [`${trap.x},${trap.y}`], 'walks go around the open pit');
+    assert.deepEqual(knownTraps(place, trap.floor, { x: trap.x, y: trap.y }), [], '...unless you click right on it');
+    trap.state = 'found'; trap.kind = 'tripwire';
+    assert.match(stepOn(place, 'Judy Hopps', trap.floor, trap.x, trap.y), /already knew about/);
 });
