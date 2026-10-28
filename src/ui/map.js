@@ -535,7 +535,7 @@ async function onSquare(sq, positions) {
     const c = campaign();
     const map = board(c).map;
     const who = whoAt(positions, map, sq);
-    const coord = toCoord(sq.x, sq.y);
+    let coord = toCoord(sq.x, sq.y);
     if (who) {
         if (who === c.meta.persona.name) return;
         selection.target = selection.target === who ? '' : who;
@@ -544,6 +544,12 @@ async function onSquare(sq, positions) {
         if (isRunning()) { toastr.info('The DM is working out the round. Pick your move when it\'s your turn again.', 'Map', { timeOut: 3000 }); return; }
         const held = lockedReason(c, c.meta.persona.name);
         if (held) { toastr.info(held, 'Map', { timeOut: 4000 }); return; }
+        const fb = board(c);
+        if (fb?.fog && fb.place && !isExplored(fb.place, fb.floor.id, sq.x, sq.y) && !isWalkable(map, sq.x, sq.y)) {
+            const reach = reachFor(c, fb);
+            const near = reach && [...reach.keys()].map(k => k.split(',').map(Number)).sort((p, q) => Math.max(Math.abs(p[0] - sq.x), Math.abs(p[1] - sq.y)) - Math.max(Math.abs(q[0] - sq.x), Math.abs(q[1] - sq.y)))[0];
+            if (near) { sq = { x: near[0], y: near[1] }; coord = toCoord(sq.x, sq.y); }
+        }
         if (!isWalkable(map, sq.x, sq.y)) {
             toastr.info(`${coord} is ${squareName(map, sq.x, sq.y) || TERRAIN[terrainAt(map, sq.x, sq.y)]?.name || 'blocked'}: you can't stand there.`, 'Map', { timeOut: 2500 });
             return;

@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.18.1 (run into the dark)
+- Tapping an unexplored square walks there anyway: `findPath(..., { toward: true })` uses the real map, not what's explored, and when the square can't be reached (a wall, a locked door) returns the way to the closest square it can reach. No "can't go there" or locked-door hints for squares you haven't seen. In a fight in the dark, a solid black square picks the reachable square nearest it.
+
 ### v0.18 (hiding, places that fit their kind, hidden traps, NPC variety)
 - A plan has a `condition`: kept, worn or ruined (Claude sets it; otherwise ruined if the name or reason says abandoned/ruined/derelict..., kept for buildings people look after: mansions, castles, temples, prisons, taverns...). Kept: the floor's main hallway (or gallery/foyer) with 3+ links becomes a spine, placed first with its rooms in two rows along it (the same code as the cell block); furnishing skips mess (bones, blood, webs, debris...); no grime; decay traps become pressure plates. Ruined keeps the organic growth and gets extra grime.
 - Traps: no free noticing. A hidden trap shows only when someone searches the room: a Perception or Investigation roll (the player's, or a companion's in npc_rolls) reveals every hidden trap in their room with DC at or under the roll (`searchForTraps`), and the DM is told what was found. Stepping on one springs it (and shows it). Tap yourself: "Search for traps". New art for glyphs and tripwires.

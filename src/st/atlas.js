@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -645,13 +645,17 @@ export async function walkTo(target, redraw = () => { }) {
     const { isRunning } = await import('./orchestrator.js');
     if (isRunning()) { toastr.info('The DM is busy. Move when the turn is done.', 'Map', { timeOut: 2500 }); return; }
     const floorId = lead.floor;
-    const door = doorAt(place, floorId, target.x, target.y);
+    // Running into the dark: no warnings about what's there. Walk the real way toward it, as far as it goes.
+    const dark = place.fog !== false && !isExplored(place, floorId, target.x, target.y);
+    const door = dark ? null : doorAt(place, floorId, target.x, target.y);
     if (door && door.state === 'locked') { toastr.info(`That door is locked (${door.id}). Tell the DM how you deal with it.`, 'Map', { timeOut: 3500 }); return; }
     const others = new Set([
         ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId).map(g => `${g.x},${g.y}`),
         ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
     ]);
-    const path = findPath(place, floorId, lead, target, { blocked: others });
+    const path = findPath(place, floorId, lead, target, { blocked: others, toward: dark });
+    if (dark && !path?.length) { toastr.info('Something in the dark blocks the way.', 'Map', { timeOut: 2500 }); return; }
+    if (dark) target = { x: path[path.length - 1][0], y: path[path.length - 1][1] };
     if (!path?.length) {
         // Shut in (a locked cell, a locked room): say so, rather than a vague "can't get there".
         const here = roomAt(place, floorId, lead.x, lead.y);

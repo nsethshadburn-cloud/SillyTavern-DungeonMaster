@@ -207,22 +207,28 @@ export function walkable(place, floorId, x, y) {
 /**
  * Shortest walk to a square through explored, walkable squares (diagonals allowed, no cutting
  * corners). Returns the steps after the start, or null.
+ * toward: running into the dark. Uses the real map (not what's explored) and, when the square
+ * can't be reached (a wall, a locked door), goes as close to it as the way allows.
  */
-export function findPath(place, floorId, from, to, { knownOnly = true, blocked = new Set() } = {}) {
+export function findPath(place, floorId, from, to, { knownOnly = true, blocked = new Set(), toward = false } = {}) {
     const map = floorById(place, floorId).map;
-    const known = (x, y) => !knownOnly || isExplored(place, floorId, x, y);
-    if (!walkable(place, floorId, to.x, to.y) || !known(to.x, to.y)) return null;
+    const known = (x, y) => toward || !knownOnly || isExplored(place, floorId, x, y);
+    if (!toward && (!walkable(place, floorId, to.x, to.y) || !known(to.x, to.y))) return null;
     const key = (x, y) => y * map.w + x;
     const prev = new Map([[key(from.x, from.y), null]]);
     const queue = [[from.x, from.y]];
+    const pathTo = k => {
+        const path = [];
+        while (prev.get(k) !== null) { path.unshift([k % map.w, Math.floor(k / map.w)]); k = prev.get(k); }
+        return path;
+    };
+    const far = (x, y) => Math.max(Math.abs(x - to.x), Math.abs(y - to.y)) * 1000 + Math.abs(x - to.x) + Math.abs(y - to.y);
+    let best = key(from.x, from.y), bestFar = far(from.x, from.y);
     for (let qi = 0; qi < queue.length; qi++) {
         const [x, y] = queue[qi];
-        if (x === to.x && y === to.y) {
-            const path = [];
-            let k = key(x, y);
-            while (prev.get(k) !== null) { path.unshift([k % map.w, Math.floor(k / map.w)]); k = prev.get(k); }
-            return path;
-        }
+        if (x === to.x && y === to.y) return pathTo(key(x, y));
+        // Stairs and ways out are where a walk ends, not somewhere to stop near.
+        if (toward && far(x, y) < bestFar && terrainAt(map, x, y) !== '<' && terrainAt(map, x, y) !== '>') { best = key(x, y); bestFar = far(x, y); }
         for (const [dx, dy] of DIRS8) {
             const nx = x + dx, ny = y + dy, k = key(nx, ny);
             if (prev.has(k) || !walkable(place, floorId, nx, ny) || !known(nx, ny) || blocked.has(`${nx},${ny}`)) continue;
@@ -234,7 +240,7 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
             queue.push([nx, ny]);
         }
     }
-    return null;
+    return toward ? pathTo(best) : null;
 }
 
 /** A free square next to (x, y) for a companion to stand on. */

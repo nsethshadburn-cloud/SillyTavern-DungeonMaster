@@ -195,6 +195,13 @@ test('walking: around walls, through closed doors, never through a locked one; D
     // Unexplored squares can't be walked to.
     place.state.explored.G = '0'.repeat(map.w * map.h);
     assert.equal(findPath(place, 'G', place.start, { x: B.x + 1, y: B.y + 1 }), null);
+    // ...unless you run into the dark on purpose: the real way there, or as close as it goes.
+    const dark = findPath(place, 'G', place.start, { x: B.x + 1, y: B.y + 1 }, { toward: true });
+    assert.deepEqual(dark.at(-1), [B.x + 1, B.y + 1], 'runs into the dark room');
+    const wall = { x: B.x - 1, y: B.y + 1 };
+    assert.equal(terrainAt(map, wall.x, wall.y), '#');
+    const bump = findPath(place, 'G', place.start, wall, { toward: true }).at(-1);
+    assert.ok(Math.max(Math.abs(bump[0] - wall.x), Math.abs(bump[1] - wall.y)) <= 1, 'a wall in the dark: stops right next to it');
 });
 
 test('DM changes: secret doors found, traps spotted, guards moved; patrols walk on their own', () => {
