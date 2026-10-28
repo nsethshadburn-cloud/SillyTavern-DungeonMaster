@@ -176,7 +176,8 @@ function board(c) {
         const floor = floorById(place, floorId);
         const visible = floorId === lead?.floor ? look(c, key, place) : new Uint8Array(floor.map.w * floor.map.h);
         const positions = {};
-        for (const n of names) { const p = place.state.positions[n]; if (p?.floor === floorId) positions[n] = toCoord(p.x, p.y); }
+        // A companion held somewhere (caged in the dungeon) shows only once the party can see them.
+        for (const n of names) { const p = place.state.positions[n]; if (p?.floor === floorId && (!place.state.held?.[n] || visible[p.y * floor.map.w + p.x])) positions[n] = toCoord(p.x, p.y); }
         const enemies = new Set(), people = new Set();
         for (const g of Object.values(place.guards)) {
             if (g.state === 'gone' || g.floor !== floorId || !visible[g.y * floor.map.w + g.x]) continue;

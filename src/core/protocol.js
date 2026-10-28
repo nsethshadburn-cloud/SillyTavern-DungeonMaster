@@ -156,7 +156,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "table_rules_remove": ["a table rule the player changed"],
   "objective": "<=15 words: the party's immediate goal (only when it changes)",
   "world_next": 3,
-  "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline (only when someone splits off)"},
+  "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline; inside a place, name the room (caged in the kennels, locked in Cell 4), or say she is somewhere in this place and the code picks a room the party hasn't found yet (only when someone splits off)"},
   "knowledge_update": {"Judy Hopps": "full new 'what you know' text for that companion (rarely; or when MISSING)"},
   "level_change": {"Judy Hopps": 5},
   "build_place": {"name": "place name", "size": "big|small", "kind": "mansion|dungeon|town|...", "why": "one line"},

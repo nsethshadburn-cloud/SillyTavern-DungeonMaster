@@ -16,7 +16,7 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
+import { heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
@@ -384,6 +384,45 @@ export async function setWaiting(name, wait, { why = '', quiet = false } = {}) {
     }
     saveDoc('world');
     savePlace(key, c);
+}
+
+/**
+ * Companions the DM sent away who are really somewhere in this place (caged in the dungeon, locked
+ * in a cell upstairs): put them in that room on the map, held there (a cage if the story says so),
+ * so the player can find them. They stay put ("waiting") until the player reaches them and they're
+ * free to move; then they come along again. Away somewhere else (back in town): off the map as before.
+ * Returns the names placed.
+ */
+export function placeHeld(c) {
+    const cur = currentPlace(c);
+    if (!cur) return [];
+    const { key, place } = cur;
+    const w = c.docs.world;
+    const lead = place.state.positions[c.meta.persona.name];
+    const placed = [];
+    place.state.waiting ??= {};
+    place.state.held ??= {};
+    for (const [name, where] of Object.entries(w.away ?? {})) {
+        if (place.state.held[name] === where) continue;          // already put where these words say
+        if (place.state.waiting[name] && !place.state.held[name]) continue; // stayed behind on their own: they're where they stood
+        const spot = heldRoom(place, where, lead);
+        if (!spot) continue;
+        const rm = place.rooms[spot.roomId];
+        const others = new Set([...Object.entries(place.state.positions).filter(([n]) => n !== name).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === rm.floor).map(g => `${g.x},${g.y}`)]);
+        const at = openSquareNear(place, rm.floor, rm.rect.x + Math.floor(rm.rect.w / 2), rm.rect.y + Math.floor(rm.rect.h / 2), others, 4);
+        if (!at) continue;
+        place.state.positions[name] = { floor: rm.floor, x: at.x, y: at.y };
+        if (place.state.hidden?.[name]) delete place.state.hidden[name];
+        if (place.state.pose?.[name]) delete place.state.pose[name];
+        place.state.waiting[name] = true;
+        place.state.held[name] = where;
+        if (spot.caged && !conditionsOf(w, name).some(x => /cage/i.test(x))) { w.party[name] ??= { hp: 10, hp_max: 10, conditions: [] }; (w.party[name].conditions ??= []).push('caged'); }
+        w.away[name] = `${where} (on the map: ${rm.name}, ${rm.id})`;
+        place.state.held[name] = w.away[name];
+        placed.push(name);
+    }
+    if (placed.length) { savePlace(key, c); saveDoc('world'); }
+    return placed;
 }
 
 /**
@@ -943,10 +982,10 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         // never on the same walk they decided to stay.
         for (const [n, w] of Object.entries(place.state.waiting || {})) {
             const p = place.state.positions[n];
-            if (!w || !p || p.floor !== lead.floor || refused.has(n)) continue;
+            if (!w || !p || p.floor !== lead.floor || refused.has(n) || lockedReason(c, n)) continue;
             const theirs = roomAt(place, p.floor, p.x, p.y);
             const near = !theirs && !here && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 2;
-            if (near || (here && theirs?.id === here.id)) await setWaiting(n, false);
+            if (near || (here && theirs?.id === here.id)) { if (place.state.held?.[n]) delete place.state.held[n]; await setWaiting(n, false); }
         }
         if (handoff?.stairs) {
             const s = handoff.stairs;

@@ -159,3 +159,18 @@ test('items are never people on the map; newcomers come in out of sight; lingeri
     applyStateChanges(w, { conditions_add: { Amber: ['groggy'] } }, ['Amber'], { turn: 17 });
     assert.ok(w.party.Amber.conditions.includes('groggy'), 'later it can come back');
 });
+
+test('a companion taken away inside the place is put in a real room to find: named, or a captive\'s room nobody has seen', async () => {
+    const { heldRoom } = await import('../src/core/explore.js');
+    const place = build({ name: 'Gloomhold', kind: 'dungeon', size: 'medium' }, 3);
+    const from = place.start;
+    const anyCell = Object.values(place.rooms).find(r => r.type === 'cell');
+    const caged = heldRoom(place, 'caged somewhere deep in the dungeon', from);
+    assert.ok(caged && caged.caged, 'held here, in a cage');
+    assert.ok(!place.state.visited.includes(caged.roomId), 'somewhere the party hasn\'t been');
+    if (anyCell) assert.equal(place.rooms[heldRoom(place, 'locked up in a cell', from).roomId].type, 'cell');
+    const room = Object.values(place.rooms).find(r => r.name.length > 6);
+    assert.equal(heldRoom(place, `tied up in the ${room.name}`, from).roomId, room.id, 'a room the words name');
+    assert.equal(heldRoom(place, 'waiting back at the camp by the road', from), null, 'somewhere else: off this map');
+    assert.equal(heldRoom(place, 'went to think', from), null, 'nowhere in particular: off the map');
+});

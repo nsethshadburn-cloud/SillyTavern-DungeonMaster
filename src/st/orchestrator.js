@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
@@ -931,6 +931,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     world.sceneCard = applySceneCard(world.sceneCard, t.scene_card, { newPlace, partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
     // Who split off from the player, and who is back.
     applyPresence(world, meta.party.map(p => p.name), t.party_away, t.party_back);
+    // Back with the player: no longer held or waiting anywhere on the map.
+    const herePlace = currentPlace(c);
+    if (herePlace && t.party_back.length) {
+        for (const n of t.party_back) { const m = matchName(n, meta.party.map(p => p.name)); if (m) { delete herePlace.place.state.waiting?.[m]; delete herePlace.place.state.held?.[m]; } }
+        savePlace(herePlace.key, c);
+    }
+    // Taken somewhere in this place (caged in the dungeon): they're put in a real room to find.
+    const held = placeHeld(c);
+    if (held.length) status.note(`${held.join(', ')} put on the map where the story keeps them`);
     // NPCs who get briefs are "here".
     for (const d of t.directions) {
         const npc = c.docs.npcs.find(n => nameKey(n.name) === nameKey(d.speaker));

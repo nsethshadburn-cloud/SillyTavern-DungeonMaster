@@ -1022,6 +1022,41 @@ export function clearEngaged(place) {
     for (const g of Object.values(place.guards || {})) delete g.engaged;
 }
 
+// ---------- someone taken away, inside this place ----------
+
+/** Where a captive is likely kept, best first. */
+const HOLDS = ['cell', 'kennel', 'torture_chamber', 'vault', 'storage', 'cellar', 'crypt', 'cave', 'attic', 'room'];
+const ELSEWHERE = /\b(outside|in town|the town|village|camp\b|the road|forest|woods|treeline|back home|went home|left the|another place|far away|miles)\b/i;
+const INSIDE = /\b(here|inside|somewhere in|deeper|further in|below|down in|upstairs|cell|cage|caged|kennel|dungeon|cellar|crypt|prison|jail|locked (?:up|away|in)|captive|held|imprisoned|chained|taken (?:away|deeper|below))\b/i;
+
+/**
+ * A companion the DM split off ("caged somewhere in the dungeon"): are they inside this place, and
+ * where? A room the words name; else, if they're held here, the likeliest room for a captive that the
+ * party hasn't been in, as far from the player as possible. Returns {roomId, caged} or null when the
+ * words put them somewhere else (outside, back in town) or nowhere in particular.
+ */
+export function heldRoom(place, where, from = null) {
+    const text = String(where || '');
+    const words = nameKey(text);
+    if (!words) return null;
+    const named = Object.values(place.rooms).filter(r => r.name && words.includes(nameKey(r.name))).sort((a, b) => b.name.length - a.name.length)[0];
+    const placeNamed = place.name && words.includes(nameKey(place.name));
+    if (!named && !placeNamed && (ELSEWHERE.test(text) || !INSIDE.test(text))) return null;
+    const caged = /\bcage|caged|kennel\b/i.test(text);
+    if (named) return { roomId: named.id, caged };
+    const visited = new Set(place.state?.visited || []);
+    const dist = r => (from && r.floor === from.floor ? Math.abs(r.rect.x + r.rect.w / 2 - from.x) + Math.abs(r.rect.y + r.rect.h / 2 - from.y) : 1000);
+    const want = /\bcell|locked|jail|prison/i.test(text) ? ['cell', ...HOLDS] : caged ? ['kennel', 'cell', ...HOLDS] : HOLDS;
+    for (const unseenOnly of [true, false]) {
+        for (const t of want) {
+            const list = Object.values(place.rooms).filter(r => r.type === t && (!unseenOnly || !visited.has(r.id)));
+            if (list.length) return { roomId: list.sort((a, b) => dist(b) - dist(a))[0].id, caged };
+        }
+    }
+    const any = Object.values(place.rooms).filter(r => !visited.has(r.id)).sort((a, b) => dist(b) - dist(a))[0] ?? Object.values(place.rooms).sort((a, b) => dist(b) - dist(a))[0];
+    return any ? { roomId: any.id, caged } : null;
+}
+
 // ---------- the DM's view ----------
 
 const coord = (x, y) => `${colName(x)}${y + 1}`;
