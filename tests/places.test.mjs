@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { stepOn, knownTraps, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { stepOn, knownTraps, adoptTrapProps, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
 import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
@@ -528,4 +528,27 @@ test('anyone who steps on a trap sets it off: hidden ones spring, known ones are
     assert.deepEqual(knownTraps(place, trap.floor, { x: trap.x, y: trap.y }), [], '...unless you click right on it');
     trap.state = 'found'; trap.kind = 'tripwire';
     assert.match(stepOn(place, 'Judy Hopps', trap.floor, trap.x, trap.y), /already knew about/);
+});
+
+test('traps the DM sets go off: add_traps, add_props type "trap", and old trap pictures', () => {
+    const place = tinyPlace();
+    const map = floorById(place, 'G').map;
+    const A = place.rooms.A.rect;
+    const at = { x: A.x + 1, y: A.y + 1 };
+    const log = applyPlaceChanges(place, { add_traps: [{ at: toCoord(at.x, at.y), kind: 'pressure plate (darts)', dc: 14, save: 'DEX', effect: '2d4 piercing' }] });
+    const t = Object.values(place.traps).find(x => x.x === at.x && x.y === at.y);
+    assert.ok(t, `a real trap: ${log}`);
+    assert.equal(t.state, 'found', 'set in plain sight unless hidden');
+    assert.equal(t.room, 'A');
+    assert.match(stepOn(place, 'Amber', 'G', at.x, at.y, { player: true }), /pressure plate \(darts\)/);
+    // add_props with type "trap": also real.
+    const at2 = { x: A.x, y: A.y };
+    applyPlaceChanges(place, { add_props: [{ type: 'trap', at: toCoord(at2.x, at2.y), label: 'bear trap' }] });
+    assert.ok(Object.values(place.traps).some(x => x.x === at2.x && x.y === at2.y && x.kind === 'bear trap'));
+    assert.equal(map.props.filter(p => p.type === 'trap' && p.x === at2.x && p.y === at2.y).length, 1, 'one picture, linked');
+    // A trap picture with nothing behind it (an older turn): made real on load.
+    map.props.push({ x: A.x + 1, y: A.y, type: 'trap', label: 'spikes' });
+    assert.equal(adoptTrapProps(place), 1);
+    assert.match(stepOn(place, 'Judy Hopps', 'G', A.x + 1, A.y), /spikes/);
+    assert.equal(adoptTrapProps(place), 0, 'nothing left to fix');
 });

@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.18.4 (traps the DM sets)
+- `place_changes.add_traps` [{at, kind, dc, save, effect, hidden}] → `addTrap` puts a real trap in place.traps with its linked prop. `add_props` with type "trap" is treated the same (that was how the DM drew traps before: a picture with no trap behind it, so nothing went off). `adoptTrapProps` on load turns old unlinked trap pictures into visible traps.
+
 ### v0.18.3 (traps catch everyone)
 - `stepOn(place, name, floor, x, y)` (explore.js) is the one rule for stepping on a trap square: hidden springs and shows, found goes off unless crossed carefully, a sprung pit/hole/trapdoor stays open. The player's walk and a companion's own walk (companionGoTo) both use it; the companion stops on the trap. A trap set off during a turn is queued (takeTrapEvents): a companion task's walk finishes before the DM is asked, so the trap goes into that call instead of the search; one set off after the DM ruled starts an explore turn right after. `knownTraps` makes walks route around known traps unless one is the target.
 

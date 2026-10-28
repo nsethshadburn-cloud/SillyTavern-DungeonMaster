@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, knownTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, knownTraps, adoptTrapProps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -53,8 +53,10 @@ export async function loadPlace(key, c = campaign()) {
         // Places built by older versions: furniture out of doorways, ids for things and windows.
         const moved = clearDoorways(place);
         ensureIds(place);
+        // Trap pictures the DM put down before they could be real traps: make them real.
+        const traps = adoptTrapProps(place);
         places.set(id, place);
-        if (moved) savePlace(key, c);
+        if (moved || traps) savePlace(key, c);
     }
     return place;
 }

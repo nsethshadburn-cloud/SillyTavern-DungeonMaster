@@ -273,6 +273,45 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
     return `${name} walked into the open ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate the fall.`;
 }
 
+/**
+ * A new trap on a square: in place.traps (so stepping on it sets it off and a search can find it)
+ * with its prop on the map. Hidden ones aren't drawn until found or sprung.
+ */
+export function addTrap(place, floorId, x, y, { kind = '', dc = 13, save = '', effect = '', hidden = false } = {}) {
+    let n = Object.keys(place.traps).length + 1;
+    while (place.traps[`T${n}`]) n++;
+    const id = `T${n}`;
+    const name = String(kind || 'trap').slice(0, 60);
+    const trap = {
+        id, room: roomAt(place, floorId, x, y)?.id ?? null, floor: floorId, x, y, kind: name,
+        dc: Math.min(25, Math.max(8, Math.round(Number(dc)) || 13)), save: String(save || '').slice(0, 24),
+        effect: String(effect || '').slice(0, 240) || `the ${name} goes off`, state: hidden ? 'hidden' : 'found',
+    };
+    place.traps[id] = trap;
+    const map = floorById(place, floorId).map;
+    map.props.push({ x, y, type: 'trap', hidden, trap: id, label: name });
+    ensureIds(place);
+    bump(place, floorId);
+    return trap;
+}
+
+/**
+ * Trap pictures with no trap behind them (an older DM turn put one down with add_props): make them
+ * real traps, visible ones, so they go off. Returns how many were fixed.
+ */
+export function adoptTrapProps(place) {
+    let n = 0;
+    for (const f of place.floors) {
+        for (const p of [...(f.map.props || [])]) {
+            if (p.type !== 'trap' || (p.trap && place.traps[p.trap])) continue;
+            f.map.props = f.map.props.filter(q => q !== p);
+            addTrap(place, f.id, p.x, p.y, { kind: p.label || 'trap', hidden: false });
+            n++;
+        }
+    }
+    return n;
+}
+
 /** A free square next to (x, y) for a companion to stand on. */
 export function freeNear(place, floorId, x, y, taken = new Set()) {
     for (let d = 1; d <= 3; d++) {
@@ -396,9 +435,20 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         if (to) { const r = moveProp(place, id, to, { force: true }); log.push(r.ok ? `${id} moved` : `${id} couldn't move: ${r.why}`); }
         if (typeof v.obstacle === 'boolean') found.prop.obstacle = v.obstacle;
     }
+    // New traps the DM sets: real traps (they go off when stepped on), not just a picture.
+    // add_props with type "trap" counts too.
+    const newTraps = [...(Array.isArray(c.add_traps) ? c.add_traps : []), ...(Array.isArray(c.add_props) ? c.add_props : []).filter(a => /^trap$/i.test(String(a?.type || '').trim()))];
+    for (const a of newTraps) {
+        const floorId = a?.floor && place.floors.some(f => f.id === a.floor) ? a.floor : place.state.floor;
+        const at = parseCoord(a?.at, floorById(place, floorId).map);
+        if (!at) continue;
+        const t = addTrap(place, floorId, at.x, at.y, { kind: a.kind || a.label || a.name, dc: a.dc, save: a.save, effect: a.effect, hidden: a.hidden === true || a.hidden === 'true' });
+        log.push(`${t.kind} (${t.id}) set at ${a.at}${t.state === 'hidden' ? ', hidden' : ''}`);
+    }
     // New things the DM puts on the map (a barricade, bars, a cave-in...). On purpose, so they may block a door.
     for (const a of Array.isArray(c.add_props) ? c.add_props : []) {
         const type = String(a?.type || '').toLowerCase().replace(/[\s-]+/g, '_');
+        if (type === 'trap') continue;
         const floorId = a?.floor && place.floors.some(f => f.id === a.floor) ? a.floor : place.state.floor;
         const map = floorById(place, floorId).map;
         const at = parseCoord(a?.at, map);
