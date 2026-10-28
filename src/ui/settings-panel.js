@@ -132,6 +132,7 @@ function panelHtml() {
       <label>Helper (quick decisions)
         <select id="dm-helper-profile" class="text_pole">${profileOptions(s.helperProfileId, { emptyLabel: 'Same as actors (current connection)', filter: p => p.api !== 'claude' })}</select></label>
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
+      <label class="checkbox_label"><input id="dm-bookkeeper" type="checkbox" ${s.bookkeeper !== false ? 'checked' : ''}> Bookkeeper: after each turn the helper checks what was said against everyone's conditions and items, and fills in what the DM forgot (shown on a 📜 card)</label>
       <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
       <label class="checkbox_label"><input id="dm-map-figures" type="checkbox" ${s.mapFigures !== false ? 'checked' : ''}> Little animated figures on the map (off = round portraits). Your party's are drawn once by Claude from their card and picture (about 1-2 cents each); type <code>/dmfigure Judy</code> to redraw one.</label>
       <label class="checkbox_label"><input id="dm-map-ambience" type="checkbox" ${s.mapAmbience !== false ? 'checked' : ''}> Weather and ambient particles on the map (rain, snow, dust, fireflies, glints on water, flickering torches). Fire and spell effects always show. Also a button on the map.</label>
@@ -374,6 +375,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindSelect('dm-actor-profile', 'actorProfileId');
     bindSelect('dm-helper-profile', 'helperProfileId');
     bindCheck('dm-use-helper', 'useHelper');
+    bindCheck('dm-bookkeeper', 'bookkeeper');
     bindCheck('dm-auto-dice', 'autoReadDice');
     bindCheck('dm-map-figures', 'mapFigures');
     bindCheck('dm-map-ambience', 'mapAmbience');

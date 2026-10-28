@@ -25,7 +25,8 @@ import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPromp
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway } from '../core/world.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf } from '../core/world.js';
+import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens } from '../core/text.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
@@ -100,8 +101,11 @@ export async function runTurn(opts = {}) {
     const onStop = () => controller.abort();
     ST.eventSource.on(ST.eventTypes.GENERATION_STOPPED, onStop);
     const status = beginTurn('Dungeon Master');
+    const turnStart = ST.chat.length;
     try {
         await turnBody(c, opts, status, controller.signal);
+        // The books: in the background, so the next move never waits on it.
+        if (!controller.signal.aborted) queueBookkeeping(c, turnStart);
         const left = await rotateIdleNpcs();
         if (left.length) status.note(`${left.join(', ')} left the scene`);
         status.finish(`Turn done${c.meta.stats.lastTurnUsd ? ` · ${formatUsd(c.meta.stats.lastTurnUsd)} est.` : ''}`);
@@ -337,6 +341,49 @@ async function turnBody(c, opts, status, signal) {
         meta.stats.localTurns = (meta.stats.localTurns || 0) + 1;
         await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal, { moved: taskWent ? [triage.task.who] : [] });
     }
+}
+
+let bookkeeping = Promise.resolve();
+function queueBookkeeping(c, fromIndex) {
+    bookkeeping = bookkeeping.then(() => bookkeep(c, fromIndex)).catch(error => console.warn('[Dungeon Master] bookkeeping failed', error));
+}
+
+/**
+ * After a turn, the local model reads what was just said (the DM's narration, companions' and NPCs'
+ * replies) next to the tracked status, and fills in what the story says happened that isn't on the
+ * books yet (someone passed out or can't walk, an item changed hands). Checked in code first (known
+ * conditions, people who are here, nothing twice); shown on a 📜 card.
+ */
+async function bookkeep(c, fromIndex) {
+    const s = settings();
+    if (!s.useHelper || s.bookkeeper === false || campaign() !== c) return;
+    const said = ST.chat.slice(fromIndex).filter(m => !m.is_user && m.mes && !/^\s*(🎲|📜|🗺️|🔥|💥|⚠️|📈)/u.test(m.mes));
+    if (!said.length) return;
+    const story = trimToTokens(said.map(m => `${m.name}: ${m.mes}`).join('\n\n'), 1200, true);
+    const w = c.docs.world;
+    const party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+    const present = (c.docs.npcs || []).filter(n => n.lastSeen && n.lastSeen === w.location && !n.dead).map(n => n.name);
+    const own = n => w.inventory?.[matchName(n, Object.keys(w.inventory || {})) ?? ''] ?? [];
+    const { system, user } = bookkeeperPrompt({
+        status: party.map(n => ({ name: n, hp: w.party[n] ? `${w.party[n].hp}/${w.party[n].hp_max}` : '', conditions: conditionsOf(w, n), items: own(n) })),
+        shared: w.items || [],
+        others: present.map(n => `${n}${conditionsOf(w, n).length ? ` (${conditionsOf(w, n).join(', ')})` : ''}`),
+        story,
+    });
+    const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 300, profileId: s.helperProfileId });
+    const changes = parseBookkeeping(raw, {
+        names: [...party, ...present],
+        itemNames: party,
+        conditionsOf: n => conditionsOf(w, n),
+        itemsOf: n => [...own(n), ...(w.items || [])],
+        allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
+    });
+    if (!changes) return;
+    const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name));
+    if (!log.length) return;
+    saveDoc('world');
+    await postDiceCard(`📜 Bookkeeping: ${log.join(' · ')}`, { state: true });
+    refreshMap();
 }
 
 /** Rewrite a companion's sheet for a new level and keep their HP in step. */

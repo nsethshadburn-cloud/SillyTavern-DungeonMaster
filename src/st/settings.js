@@ -31,6 +31,7 @@ export const DEFAULTS = Object.freeze({
     helperProfileId: '',        // '' = same as actors (current connection)
     helperMaxTokens: 160,
     useHelper: true,
+    bookkeeper: true,           // after each turn the helper checks the story against HP, conditions and items
 
     // Budget (USD) and Claude prices (USD per million tokens)
     monthlyCap: 20,
