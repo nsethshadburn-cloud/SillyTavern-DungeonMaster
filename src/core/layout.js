@@ -257,6 +257,7 @@ export function normalizePlan(raw) {
         // A lit, lived-in home has no fog of war: you can see its rooms. Dark or ruined places keep it.
         fog: building && condition !== 'ruined' && rooms.filter(r => r.lit ?? recipeFor(r.type).lit).length * 2 >= rooms.length ? false : typeof d.fog === 'boolean' ? d.fog : true,
         building, outside, outsideGuards, startOutside,
+        exterior: Object.fromEntries(Object.entries(obj(d.exterior)).map(([k, v]) => [k, typeof v === 'string' ? v.trim().toLowerCase().replace(/^(l|u|h|e|t)$/, m => m.toUpperCase()) : v])),
         barred: d.barred_windows === true,
         summary: str(d.summary).slice(0, 1200),
         condition,
@@ -1245,26 +1246,113 @@ function yardKind(yd) {
             : /stable|paddock|pasture|barn|corral/.test(n) ? 'stable'
                 : /orchard|grove/.test(n) ? 'orchard'
                     : /garden|lawn|hedge|maze|flower|rose|herb|vegetable|green/.test(n) ? 'garden'
-                        : /court|plaza|square|terrace|patio|yard/.test(n) ? 'courtyard'
+                        : /court|plaza|square|terrace|patio|yard|bailey/.test(n) ? 'courtyard'
                             : yd.type === 'graveyard' ? 'graveyard' : 'garden';
 }
 
+/** Building shapes (seen from above) and fronts the plan can ask for. */
+export const SHAPES = ['plain', 'L', 'U', 'H', 'E', 'T', 'tower', 'castle'];
+export const FRONTS = ['flat', 'bay', 'rotunda', 'portico'];
+
 /**
- * A building's outside, as its own map. The house sits back from the edge, a drive or path leads up
- * to its front door, and its gardens and yards from the plan each get their own spot: beside the house
- * (gardens, courtyards, stable yards), behind it (graveyards, orchards), or at the end of the drive
- * (the gate, in a fence or hedge around the grounds). Each is laid out neatly for what it is. The land
- * around (trees, bushes, rocks for its setting) stays outside the grounds. Walking through the front
- * door goes inside (the interior is its own place). No way out at the edges: the DM moves the story on.
- * @param {object} plan the building's normalized plan (its "outside" rooms)
+ * How a building looks from outside: the plan's "exterior" if it gave one, else what fits its kind.
+ * shape: plain block, L / U / H / E with wings (E: a centre pavilion), T (a temple's transepts),
+ * tower (one round tower), castle (curtain walls, corner towers, gatehouse, keep, maybe a moat).
+ * front: flat, bay (rounded bay windows either side of the door), rotunda (a round entrance hall
+ * bulging out, the door in its curve), portico (columns and a roof over the door).
+ */
+export function exteriorOf(plan, r = Math.random) {
+    const e = plan.exterior || {};
+    const k = `${plan.kind} ${plan.name}`.toLowerCase();
+    const castle = /castle|fortress|citadel|stronghold|\bkeep\b/.test(k) && !/ruin/.test(k);
+    const grand = GRAND_KINDS.test(k);
+    const shape = SHAPES.includes(e.shape) ? e.shape
+        : castle ? 'castle' : /tower|lighthouse|observatory|spire/.test(k) ? 'tower' : grand ? pickR(r, ['U', 'H', 'E', 'U', 'L'])
+            : /temple|church|cathedral|chapel|abbey|monastery/.test(k) ? 'T' : /tavern|inn|lodge|guild|hall|academy|school/.test(k) ? pickR(r, ['L', 'plain']) : 'plain';
+    const front = FRONTS.includes(e.front) ? e.front
+        : shape === 'castle' || shape === 'tower' ? 'flat' : grand ? pickR(r, ['rotunda', 'portico', 'bay', 'rotunda'])
+            : /temple|church|cathedral|bank|library|academy|museum|hall/.test(k) ? 'portico' : /house|home|cottage|villa/.test(k) ? pickR(r, ['flat', 'flat', 'bay']) : 'flat';
+    const towers = Number.isFinite(Number(e.towers)) && e.towers !== null && e.towers !== '' ? clamp(Math.round(Number(e.towers)), 0, 4) : shape === 'castle' ? 4 : grand ? pickR(r, [0, 2, 2, 4]) : 0;
+    return {
+        shape, front, towers, grand: grand || shape === 'castle',
+        wall: typeof e.wall === 'boolean' ? e.wall : shape === 'castle',
+        moat: typeof e.moat === 'boolean' ? e.moat : shape === 'castle' && r() < 0.5,
+    };
+}
+
+/**
+ * A building's footprint, in squares from the main block's front-left corner (x right, y toward the
+ * back; the front is y < 0): blocks (each under its own hipped roof) and rounds (towers under cones,
+ * a rotunda or bay windows under half-domes), and where its front door is.
+ */
+function footprint(ext, bw, bd) {
+    const blocks = [], rounds = [];
+    const mid = Math.floor(bw / 2);
+    let door = { x: mid, y: 0 };
+    if (ext.shape === 'tower') {
+        const rad = Math.max(3, Math.floor(Math.min(bw, bd) / 2));
+        rounds.push({ cx: rad, cy: rad, rad, half: false });
+        return { blocks, rounds, door: { x: rad, y: 0 } };
+    }
+    blocks.push({ x: 0, y: 0, w: bw, h: bd });
+    const ww = clamp(Math.round(bw * 0.32), 4, 7), wd = clamp(Math.round(bd * 0.6), 3, 6);
+    const wings = { L: [[0, -wd]], U: [[0, -wd], [bw - ww, -wd]], H: [[0, -wd], [bw - ww, -wd], [0, bd], [bw - ww, bd]], E: [[0, -wd], [bw - ww, -wd]] }[ext.shape] ?? [];
+    for (const [x, y] of wings) blocks.push({ x, y, w: ww, h: wd });
+    if (ext.shape === 'E') { blocks.push({ x: mid - 2, y: -2, w: 5, h: 2 }); door = { x: mid, y: -2 }; }
+    if (ext.shape === 'T') { const ty = Math.max(1, Math.floor(bd / 2) - 2); blocks.push({ x: -3, y: ty, w: 3, h: 4 }, { x: bw, y: ty, w: 3, h: 4 }); }
+    if (ext.front === 'rotunda' && ext.shape !== 'E') {
+        const rad = bw >= 12 ? 3 : 2;
+        rounds.push({ cx: mid, cy: 0, rad, half: true });
+        door = { x: mid, y: -rad };
+    }
+    if (ext.front === 'bay' && ext.shape !== 'E') {
+        const off = Math.max(3, Math.floor(bw / 4));
+        for (const bx of [mid - off, mid + off]) {
+            const clear = !wings.some(([wx, wy]) => wy < 0 && bx >= wx - 1 && bx <= wx + ww);
+            if (bx >= 1 && bx <= bw - 2 && clear) rounds.push({ cx: bx, cy: 0, rad: 1, half: true });
+        }
+    }
+    // Round towers at the outer corners (the front two first).
+    if (ext.towers) {
+        const xs = blocks.flatMap(b => [b.x, b.x + b.w - 1]), ys = blocks.flatMap(b => [b.y, b.y + b.h - 1]);
+        const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+        for (const [cx, cy] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].slice(0, ext.towers)) rounds.push({ cx, cy, rad: 2, half: false });
+    }
+    return { blocks, rounds, door };
+}
+
+/** The squares a round covers (a half round: only its front half, in front of y = cy). */
+function roundTiles({ cx, cy, rad, half }) {
+    const out = [];
+    for (let x = Math.floor(cx - rad); x <= Math.ceil(cx + rad); x++) for (let y = Math.floor(cy - rad); y <= Math.ceil(cy + rad); y++) {
+        if (half && y >= cy) continue;
+        const dy = half ? y - cy + 0.5 : y - cy;
+        if ((x - cx) ** 2 + dy ** 2 <= rad * rad + 0.6) out.push([x, y]);
+    }
+    return out;
+}
+
+/**
+ * A building's outside, as its own map. The house sits back from the edge, shaped like the real thing
+ * (wings round a front court, a round entrance hall, bay windows, corner towers, a columned porch; or a
+ * castle's walls, towers, gatehouse and keep), a drive or path leads up to its front door, and its
+ * gardens and yards from the plan each get their own spot: beside it (gardens, courtyards, stable
+ * yards), behind it (graveyards, orchards), or at the end of the drive (the gate, in a fence or hedge
+ * round the grounds). The land around (trees, bushes, rocks for its setting) stays outside the grounds.
+ * Walking through the front door goes inside (the interior is its own place). No way out at the edges:
+ * the DM moves the story on.
+ * @param {object} plan the building's normalized plan (its "outside" rooms, its "exterior")
  * @param {object} inside the generated interior (its ground floor sets the building's size)
  */
 export function generateGrounds(plan, inside, seed = 1) {
     const r = rng(seed);
     const theme = groundsTheme(plan);
-    const grand = GRAND_KINDS.test(`${plan.kind} ${plan.name}`.toLowerCase());
+    const ext = exteriorOf(plan, r);
+    const grand = ext.grand;
     const groundFloor = inside.floors.slice().sort((a, b) => Math.abs(a.level) - Math.abs(b.level))[0];
-    const bw = clamp(Math.round(groundFloor.map.w * 0.55), grand ? 13 : 7, 22), bd = clamp(Math.round(groundFloor.map.h * 0.45), grand ? 8 : 5, 14);
+    // A grand house is wide and shallow (a long facade); others follow their ground floor.
+    const bd = clamp(Math.round(groundFloor.map.h * 0.45), grand ? 7 : 5, grand ? 9 : 14);
+    const bw = clamp(Math.max(Math.round(groundFloor.map.w * 0.55), grand ? Math.round(bd * 1.8) : 0), grand ? 13 : 7, ext.shape === 'castle' ? 16 : 22);
     // Where each outdoor area goes.
     const yards = (plan.outside || []).map(yd => ({ ...yd, kind: yardKind(yd) }));
     const gate = yards.find(y => y.kind === 'gate');
@@ -1275,67 +1363,112 @@ export function generateGrounds(plan, inside, seed = 1) {
         const free = ['right', 'left', 'back'].find(s => !slots[s]);
         if (free) slots[free] = yd;
     }
+    if (ext.shape === 'castle') return castleGrounds(plan, ext, theme, bw, bd, slots, gate, r, seed);
+    const fp = footprint(ext, bw, bd);
+    const cells = new Set();
+    for (const b of fp.blocks) for (let x = b.x; x < b.x + b.w; x++) for (let y = b.y; y < b.y + b.h; y++) cells.add(K(x, y));
+    for (const rd of fp.rounds) for (const [x, y] of roundTiles(rd)) cells.add(K(x, y));
+    const pts = [...cells].map(k => k.split(',').map(Number));
+    const minX = Math.min(...pts.map(p => p[0])), maxX = Math.max(...pts.map(p => p[0])), minY = Math.min(...pts.map(p => p[1])), maxY = Math.max(...pts.map(p => p[1]));
     const fenced = grand || Boolean(gate);
-    const sideW = 9, margin = 3, lawn = grand ? 8 : 6, backH = slots.back ? 8 : 0;
+    const sideW = 9, margin = 3, approach = (grand ? 7 : 5) + (ext.front === 'portico' ? 2 : 0), backH = slots.back ? 8 : 0;
     const left = slots.left ? sideW + 2 : 0, right = slots.right ? sideW + 2 : 0;
-    const W = Math.min(MAX_PLACE_SIZE, margin * 2 + left + bw + right + (fenced ? 2 : 0));
-    const H = Math.min(MAX_PLACE_SIZE, lawn + bd + 2 + backH + margin);
+    const ox = margin + (fenced ? 1 : 0) + left - minX, oy = approach - minY;
+    const W = Math.min(MAX_PLACE_SIZE, ox + maxX + 1 + 2 + right + margin + (fenced ? 1 : 0));
+    const H = Math.min(MAX_PLACE_SIZE, oy + maxY + 1 + 2 + backH + margin);
     const c = [...Array(H)].map(() => Array(W).fill('.'));
     const set = (x, y, ch) => { if (x >= 0 && y >= 0 && x < W && y < H) c[y][x] = ch; };
     const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
     const map = { w: W, h: H, rows: [], theme, props: [], areas: [], roofs: [], seed };
     const taken = (x, y) => map.props.some(p => x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
-    const put = (x, y, type, extra = {}) => { if (get(x, y) === '.' || get(x, y) === '=' || get(x, y) === ':' || get(x, y) === ',') { if (!taken(x, y)) map.props.push({ x, y, type, ...extra }); } };
+    const put = (x, y, type, extra = {}) => { if ('.=:,'.includes(get(x, y)) && !taken(x, y)) map.props.push({ x, y, type, ...extra }); };
     const place = {
         version: 1, kind: 'grounds', name: plan.name, theme, fog: false, seed, summary: plan.summary,
         floors: [{ id: 'F0', name: `Outside ${plan.name}`, level: 0, map }], rooms: {}, doors: {}, stairs: [], traps: {}, items: {}, guards: {}, exits: [], buildings: {},
         start: null, state: { positions: {}, explored: {}, visited: [], floor: 'F0' },
     };
-    // The house: a block of wall under a roof, windows along the front, the front door facing the drive.
-    const x0 = margin + (fenced ? 1 : 0) + left, y0 = lawn, frontY = y0;
-    for (let x = x0; x < x0 + bw; x++) for (let y = y0; y < y0 + bd; y++) set(x, y, '#');
-    const dx = x0 + Math.floor(bw / 2);
-    set(dx, frontY, '+');
-    for (let x = x0 + 1; x < x0 + bw - 1; x++) if (x !== dx && Math.abs(x - dx) % 3 === 2) set(x, frontY, '|');
-    const wall = { mansion: 'stoneblock', castle: 'stoneblock', temple: 'stoneblock', prison: 'brick', cabin: 'log', tavern: 'timber', house: 'timber', library: 'stoneblock' }[plan.theme] ?? 'plaster';
-    map.areas.push({ x: x0, y: y0, w: bw, h: bd, wall, building: 'B1' });
-    map.roofs.push({ x: x0, y: y0 + 1, w: bw, h: bd - 1, ridge: bw >= bd ? 'h' : 'v', hue: pickR(r, [8, 16, 24, 200, 210, 30, 350]), style: grand || /castle|temple|prison|library|mansion/.test(plan.theme) ? 'slate' : /cabin|barn|farm/.test(`${plan.theme} ${plan.kind}`) ? 'thatch' : 'shingle' });
+    // The building: its walls, its front door, windows along every exposed front, a roof for each part.
+    for (const k of cells) { const [x, y] = k.split(',').map(Number); set(x + ox, y + oy, '#'); }
+    const dx = fp.door.x + ox, dy = fp.door.y + oy;
+    set(dx, dy, '+');
+    const isWall = (x, y) => cells.has(K(x - ox, y - oy));
+    for (const k of cells) {
+        const [lx, ly] = k.split(',').map(Number), x = lx + ox, y = ly + oy;
+        if (isWall(x, y - 1) || Math.abs(x - dx) < 2 || get(x, y) !== '#') continue;
+        // A window on every other square of a front that faces out.
+        if ((x + y) % 3 === 0) set(x, y, '|');
+    }
+    const wall = { mansion: 'stoneblock', castle: 'stoneblock', temple: 'stoneblock', prison: 'brick', cabin: 'log', tavern: 'timber', house: 'timber', library: 'stoneblock' }[plan.theme] ?? (grand ? 'stoneblock' : 'plaster');
+    const hue = pickR(r, [8, 16, 24, 200, 210, 30, 350]);
+    const style = grand || /castle|temple|prison|library|mansion/.test(plan.theme) ? 'slate' : /cabin|barn|farm/.test(`${plan.theme} ${plan.kind}`) ? 'thatch' : 'shingle';
+    for (const b of fp.blocks) {
+        const x = b.x + ox, y = b.y + oy;
+        map.areas.push({ x, y, w: b.w, h: b.h, wall, building: 'B1' });
+        // Leave the front row showing (windows, the door) where it faces out.
+        const exposed = [...Array(b.w).keys()].some(i => !isWall(x + i, y - 1));
+        map.roofs.push({ x, y: exposed ? y + 1 : y, w: b.w, h: exposed ? b.h - 1 : b.h, shape: 'hip', hue, style, chimney: b === fp.blocks[0] });
+    }
+    for (const rd of fp.rounds) {
+        const x = Math.round(rd.cx - rd.rad) + ox, w = Math.round(rd.rad * 2) + 1;
+        if (rd.half) map.roofs.push({ x, y: rd.cy + oy - Math.ceil(rd.rad), w, h: Math.ceil(rd.rad), shape: 'apse', hue, style });
+        else map.roofs.push({ x, y: Math.round(rd.cy - rd.rad) + oy, w, h: w, shape: 'cone', hue, style });
+    }
+    // A columned porch over the door.
+    if (ext.front === 'portico') {
+        for (const px of [dx - 2, dx + 2]) for (const py of [dy - 1, dy - 2]) put(px, py, 'pillar');
+        map.roofs.push({ x: dx - 2, y: dy - 2, w: 5, h: 2, shape: 'portico' });
+    }
     // The drive (cobbles for a grand house or in town, a dirt path otherwise), wider for a grand one.
     const road = grand || theme === 'town' ? '=' : ':';
-    for (let y = frontY - 1; y >= 0; y--) { set(dx, y, road); if (grand) set(dx + 1, y, road); }
+    for (let y = dy - 1; y >= 0; y--) { set(dx, y, road); if (grand) set(dx + 1, y, road); }
     if (grand) {
-        // Flowers lining the drive, a fountain on the lawn on one side, a low hedge along the front.
-        for (let y = 2; y < frontY - 1; y += 2) { put(dx - 1, y, 'flowers'); put(dx + 2, y, 'flowers'); }
-        const fx = dx + 4, fy = Math.max(2, Math.floor(frontY / 2) - 1);
-        if (fx + 1 < x0 + bw && get(fx, fy) === '.' && get(fx + 1, fy + 1) === '.') put(fx, fy, 'fountain', { w: 2, h: 2 });
-        for (let x = x0; x < x0 + bw; x++) if (x < dx - 1 || x > dx + 2) put(x, frontY - 1, 'bush');
+        // Flowers lining the drive, a fountain on the lawn, a low hedge in front of the house.
+        for (let y = 2; y < dy - 2; y += 2) { put(dx - 1, y, 'flowers'); put(dx + 2, y, 'flowers'); }
+        const fx = dx + 5, fy = Math.max(2, Math.floor((oy + minY) / 2) - 1);
+        if (get(fx, fy) === '.' && get(fx + 1, fy + 1) === '.' && !isWall(fx, fy + 2)) put(fx, fy, 'fountain', { w: 2, h: 2 });
+        const hedgeY = oy + minY - 1;
+        for (let x = ox + minX; x <= ox + maxX; x++) if ((x < dx - 2 || x > dx + 3) && !isWall(x, hedgeY)) put(x, hedgeY, 'bush');
     } else {
-        put(dx - 1, frontY - 1, /tavern|inn|shop|store/.test(plan.kind) ? 'barrel' : 'flowers');
-        put(dx + 1, frontY - 1, 'flowers');
+        put(dx - 1, dy - 1, /tavern|inn|shop|store/.test(plan.kind) ? 'barrel' : 'flowers');
+        put(dx + 1, dy - 1, 'flowers');
     }
     if (/tavern|inn|shop|store|guild|bank/.test(plan.kind)) {
-        const sx = dx + 2 < x0 + bw - 1 ? dx + 2 : dx - 2;
-        set(sx, frontY, '#');
-        map.props.push({ x: sx, y: frontY, type: 'sign', facing: 's', icon: signIcon(`${plan.kind} ${plan.name}`), label: plan.name });
+        const sx = isWall(dx + 2, dy) ? dx + 2 : dx - 2;
+        if (isWall(sx, dy)) { set(sx, dy, '#'); map.props.push({ x: sx, y: dy, type: 'sign', facing: 's', icon: signIcon(`${plan.kind} ${plan.name}`), label: plan.name }); }
     }
-    place.doors.D1 = { id: 'D1', floor: 'F0', x: dx, y: frontY, kind: 'door', state: 'closed', rooms: [null, null], enter: 'B1' };
-    place.buildings.B1 = { id: 'B1', name: plan.name, kind: plan.kind, door: 'D1', rect: { x: x0, y: y0, w: bw, h: bd }, interior: null, enterable: true, description: plan.summary };
-    // The grounds' edge: a fence (or hedge for a grand house) all round, open where the drive comes in.
+    place.doors.D1 = { id: 'D1', floor: 'F0', x: dx, y: dy, kind: 'door', state: 'closed', rooms: [null, null], enter: 'B1' };
+    place.buildings.B1 = { id: 'B1', name: plan.name, kind: plan.kind, door: 'D1', rect: { x: ox + minX, y: oy + minY, w: maxX - minX + 1, h: maxY - minY + 1 }, interior: null, enterable: true, description: plan.summary };
+    // The grounds' edge: a fence (a hedge for a grand house) all round, open where the drive comes in.
     const fx0 = margin - 1, fx1 = W - margin, fy1 = H - 2;
     if (fenced) {
         const hedge = grand ? 'bush' : 'fence';
-        for (let x = fx0; x <= fx1; x++) if (Math.abs(x - dx - (grand ? 0.5 : 0)) > (grand ? 1.5 : 1)) put(x, 1, hedge);
+        for (let x = fx0; x <= fx1; x++) if (x < dx - 1 || x > dx + (grand ? 2 : 1)) put(x, 1, hedge);
         for (let y = 2; y <= fy1; y++) { put(fx0, y, hedge); put(fx1, y, hedge); }
         for (let x = fx0; x <= fx1; x++) put(x, fy1, hedge);
-        // Gateposts and lamps either side of the way in.
         put(dx - 2, 0, 'lamppost'); put(dx + (grand ? 3 : 2), 0, 'lamppost');
     }
-    // Each outdoor area of the plan, in its spot, laid out for what it is.
-    const areaRect = {
-        left: { x: margin + (fenced ? 1 : 0), y: y0, w: sideW, h: bd },
-        right: { x: x0 + bw + 2, y: y0, w: sideW, h: bd },
-        back: { x: x0, y: y0 + bd + 2, w: bw, h: Math.max(3, backH - 3) },
-    };
+    const bx0 = ox + minX, bx1 = ox + maxX, by0 = oy + minY, by1 = oy + maxY;
+    layYards(place, map, { set, get, put, taken }, r, slots, gate, {
+        left: { x: margin + (fenced ? 1 : 0), y: by0, w: sideW, h: by1 - by0 + 1 },
+        right: { x: bx1 + 3, y: by0, w: sideW, h: by1 - by0 + 1 },
+        back: { x: bx0, y: by1 + 3, w: bx1 - bx0 + 1, h: Math.max(3, backH - 3) },
+        gate: { x: dx - 2, y: 0, w: 5 + (grand ? 1 : 0), h: 3 },
+    }, W, H);
+    // The land: thick trees outside the grounds (or at the map's edges), an odd bush or rock on the lawn.
+    const inGrounds = (x, y) => fenced ? x > fx0 && x < fx1 && y > 1 && y < fy1 : x > 1 && x < W - 2 && y > 1 && y < H - 2;
+    const keep = (x, y) => (x >= bx0 - 1 && x <= bx1 + 1 && y >= by0 - 1 && y <= by1 + 1) || Math.abs(x - dx) <= 2 && y < dy
+        || Object.values(place.rooms).some(rm => x >= rm.rect.x - 1 && x <= rm.rect.x + rm.rect.w && y >= rm.rect.y - 1 && y <= rm.rect.y + rm.rect.h);
+    wilds(map, { get, set, put, taken }, r, theme, W, H, inGrounds, keep, grand);
+    outsidePeople(place, plan, r, get, taken, dx, dy);
+    map.rows = c.slice().reverse().map(row => row.join(''));
+    ensureIds(place);
+    place.start = { floor: 'F0', x: dx, y: 0, room: gate?.id ?? null };
+    place.state.explored.F0 = '1'.repeat(W * H);
+    return place;
+}
+
+/** Each outdoor area of the plan, in its spot, laid out for what it is. */
+function layYards(place, map, { set, get, put, taken }, r, slots, gate, rects, W, H) {
     const lay = (yd, rect) => {
         rect = { ...rect, w: Math.max(3, Math.min(rect.w, W - 1 - rect.x)), h: Math.max(3, Math.min(rect.h, H - 2 - rect.y)) };
         place.rooms[yd.id] = { id: yd.id, name: yd.name, type: yd.type, floor: 'F0', rect, lit: true, description: yd.description, exit: false };
@@ -1355,7 +1488,7 @@ export function generateGrounds(plan, inside, seed = 1) {
             for (let i = x; i < x + w; i++) put(i, y, 'fence');
         } else if (yd.kind === 'orchard') {
             for (let i = x + 1; i < x + w - 1; i += 2) for (let j = y + 1; j < y + h - 1; j += 2) set(i, j, 'T');
-        } else {
+        } else if (yd.kind !== 'gate') {
             // A garden: beds of flowers in rows either side of a centre path, bushes at the corners, a statue in the middle.
             for (let j = y; j < y + h; j++) set(cx, j, ':');
             for (let i = x; i < x + w; i++) for (let j = y + 1; j < y + h - 1; j += 2) if (i !== cx) put(i, j, 'flowers');
@@ -1366,28 +1499,121 @@ export function generateGrounds(plan, inside, seed = 1) {
             for (let tries = 0; tries < 10; tries++) { const i = int(r, x, x + w - 1), j = int(r, y, y + h - 1); if (get(i, j) !== 'T' && !taken(i, j)) { put(i, j, p.type); break; } }
         }
     };
-    for (const [slot, yd] of Object.entries(slots)) if (yd) lay(yd, areaRect[slot]);
-    if (gate) lay(gate, { x: dx - 2, y: 0, w: 5 + (grand ? 1 : 0), h: 3 });
-    // The land: thick trees outside the grounds (or at the map's edges), an odd bush or rock on the lawn.
-    const inGrounds = (x, y) => fenced ? x > fx0 && x < fx1 && y > 1 && y < fy1 : x > 1 && x < W - 2 && y > 1 && y < H - 2;
-    const keep = (x, y) => (x >= x0 - 1 && x <= x0 + bw && y >= y0 - 1 && y <= y0 + bd) || Math.abs(x - dx) <= 2 && y < frontY
-        || Object.values(place.rooms).some(rm => x >= rm.rect.x - 1 && x <= rm.rect.x + rm.rect.w && y >= rm.rect.y - 1 && y <= rm.rect.y + rm.rect.h);
+    for (const [slot, yd] of Object.entries(slots)) if (yd && rects[slot]) lay(yd, rects[slot]);
+    if (gate && rects.gate) lay(gate, rects.gate);
+}
+
+/** Trees, bushes and rocks: thick outside the grounds, now and then on the lawn. */
+function wilds(map, { get, set, put, taken }, r, theme, W, H, inGrounds, keep, grand) {
     const wild = theme === 'forest' ? 0.5 : theme === 'swamp' ? 0.35 : theme === 'town' ? 0.08 : theme === 'snow' ? 0.3 : 0.06;
     for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
         if (get(x, y) !== '.' || keep(x, y) || taken(x, y)) continue;
         if (!inGrounds(x, y)) { if (r() < wild) set(x, y, 'T'); else if (r() < 0.06) put(x, y, theme === 'desert' ? 'boulder' : pickR(r, ['bush', 'boulder', 'log'])); }
         else if (r() < (grand ? 0.012 : 0.03)) put(x, y, theme === 'desert' ? 'boulder' : pickR(r, ['bush', 'flowers', 'boulder']));
     }
-    // Whoever is out in the yard.
+}
+
+/** Whoever is out in the yard (from the plan's outdoor rooms). */
+function outsidePeople(place, plan, r, get, taken, dx, dy) {
     for (const g of plan.outsideGuards || []) {
         const rm = place.rooms[g.room] ?? Object.values(place.rooms)[0];
-        let spot = [dx + 2, Math.max(0, frontY - 2)];
-        if (rm) for (let tries = 0; tries < 20; tries++) { const i = int(r, rm.rect.x, rm.rect.x + rm.rect.w - 1), j = int(r, rm.rect.y, rm.rect.y + rm.rect.h - 1); if (get(i, j) !== 'T' && !taken(i, j)) { spot = [i, j]; break; } }
+        let spot = [dx + 2, Math.max(0, dy - 2)];
+        if (rm) for (let tries = 0; tries < 20; tries++) { const i = int(r, rm.rect.x, rm.rect.x + rm.rect.w - 1), j = int(r, rm.rect.y, rm.rect.y + rm.rect.h - 1); if ('.=:,'.includes(get(i, j)) && !taken(i, j)) { spot = [i, j]; break; } }
         place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: rm?.id ?? null, patrol: [rm?.id].filter(Boolean), step: 0, floor: 'F0', x: spot[0], y: spot[1], state: 'patrol' };
     }
+}
+
+/**
+ * A castle from outside: a curtain wall (battlements along the top) round a bailey, round towers at
+ * its corners, a gatehouse in the front wall with the way in through it, maybe a moat with a bridge,
+ * and the keep (the castle's inside) in the bailey facing the gate, with turrets on its corners. The
+ * plan's yards go in the bailey; the road leads up to the gate from the edge of the map.
+ */
+function castleGrounds(plan, ext, theme, bw, bd, slots, gate, r, seed) {
+    const sideW = 9, margin = 3, moatW = ext.moat ? 4 : 0;
+    const left = slots.left ? sideW + 1 : 3, right = slots.right ? sideW + 1 : 3, front = 8, back = slots.back ? 9 : 3;
+    // Inner bailey, then the wall (2 thick) round it, the moat and the margin outside.
+    const bx0 = margin + moatW + 2, by0 = margin + 2 + moatW + 2;
+    const iw = left + bw + right, ih = front + bd + back;
+    const W = Math.min(MAX_PLACE_SIZE, bx0 + iw + 2 + moatW + margin), H = Math.min(MAX_PLACE_SIZE, by0 + ih + 2 + moatW + margin);
+    const c = [...Array(H)].map(() => Array(W).fill('.'));
+    const set = (x, y, ch) => { if (x >= 0 && y >= 0 && x < W && y < H) c[y][x] = ch; };
+    const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
+    const map = { w: W, h: H, rows: [], theme, props: [], areas: [], roofs: [], seed };
+    const taken = (x, y) => map.props.some(p => x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
+    const put = (x, y, type, extra = {}) => { if ('.=:,'.includes(get(x, y)) && !taken(x, y)) map.props.push({ x, y, type, ...extra }); };
+    const place = {
+        version: 1, kind: 'grounds', name: plan.name, theme, fog: false, seed, summary: plan.summary,
+        floors: [{ id: 'F0', name: `Outside ${plan.name}`, level: 0, map }], rooms: {}, doors: {}, stairs: [], traps: {}, items: {}, guards: {}, exits: [], buildings: {},
+        start: null, state: { positions: {}, explored: {}, visited: [], floor: 'F0' },
+    };
+    const wx0 = bx0 - 2, wy0 = by0 - 2, wx1 = bx0 + iw + 1, wy1 = by0 + ih + 1;
+    const stone = { wall: 'stoneblock', building: 'W' };
+    // The curtain wall.
+    for (let x = wx0; x <= wx1; x++) for (let y = wy0; y <= wy1; y++) if (x < bx0 || x >= bx0 + iw || y < by0 || y >= by0 + ih) set(x, y, '#');
+    // The gatehouse: a block across the front wall, the way in through it.
+    const gx = bx0 + left + Math.floor(bw / 2) - 1;
+    for (let x = gx - 2; x <= gx + 3; x++) for (let y = wy0 - 1; y <= by0 + 1; y++) set(x, y, '#');
+    for (let y = wy0 - 1; y <= by0 + 1; y++) { set(gx, y, '='); set(gx + 1, y, '='); }
+    // Battlements along the walls (the front in two, either side of the gatehouse), the gatehouse roof.
+    map.roofs.push(
+        { x: wx0, y: wy1 - 1, w: wx1 - wx0 + 1, h: 2, shape: 'battlement' },
+        { x: wx0, y: wy0 + 2, w: 2, h: wy1 - wy0 - 3, shape: 'battlement' },
+        { x: wx1 - 1, y: wy0 + 2, w: 2, h: wy1 - wy0 - 3, shape: 'battlement' },
+        { x: wx0, y: wy0, w: gx - 2 - wx0, h: 2, shape: 'battlement' },
+        { x: gx + 4, y: wy0, w: wx1 - gx - 3, h: 2, shape: 'battlement' },
+        { x: gx - 2, y: wy0 - 1, w: 6, h: by0 - wy0 + 3, shape: 'battlement' },
+    );
+    // Round towers at the corners.
+    for (const [cx, cy] of [[wx0 + 0.5, wy0 + 0.5], [wx1 - 0.5, wy0 + 0.5], [wx0 + 0.5, wy1 - 0.5], [wx1 - 0.5, wy1 - 0.5]].slice(0, Math.max(ext.towers, 4))) {
+        for (const [x, y] of roundTiles({ cx, cy, rad: 2.2, half: false })) set(x, y, '#');
+        map.roofs.push({ x: Math.round(cx - 2.5), y: Math.round(cy - 2.5), w: 5, h: 5, shape: 'cone', style: 'slate' });
+    }
+    map.areas.push({ x: wx0 - 2, y: wy0 - 2, w: wx1 - wx0 + 5, h: wy1 - wy0 + 5, ...stone });
+    // The moat, with a bridge to the gate.
+    if (ext.moat) {
+        for (let x = wx0 - 4; x <= wx1 + 4; x++) for (let y = wy0 - 4; y <= wy1 + 4; y++) {
+            const out = x < wx0 - 2 || x > wx1 + 2 || y < wy0 - 2 || y > wy1 + 2;
+            if (out && get(x, y) === '.') set(x, y, 'w');
+        }
+        for (let y = wy0 - 4; y < wy0 - 1; y++) { set(gx, y, 'b'); set(gx + 1, y, 'b'); }
+    }
+    // The road up to the gate.
+    for (let y = 0; y < wy0 - 1; y++) if (get(gx, y) === '.') { set(gx, y, '='); set(gx + 1, y, '='); }
+    // The bailey: grass, a cobbled way from the gate to the keep.
+    place.rooms.bailey = { id: 'bailey', name: 'The bailey', type: 'courtyard', floor: 'F0', rect: { x: bx0, y: by0, w: iw, h: ih }, lit: true, description: 'The courtyard inside the castle walls.', exit: false };
+    // The keep: the castle's inside, facing the gate, with turrets on its front corners.
+    const kx = bx0 + left, ky = by0 + front;
+    for (let x = kx; x < kx + bw; x++) for (let y = ky; y < ky + bd; y++) set(x, y, '#');
+    const kd = gx;
+    set(kd, ky, '+');
+    for (let x = kx + 1; x < kx + bw - 1; x++) if (Math.abs(x - kd) >= 2 && x % 3 === 0) set(x, ky, '|');
+    map.roofs.push({ x: kx, y: ky + 1, w: bw, h: bd - 1, shape: 'battlement' });
+    for (const cx of [kx, kx + bw - 1]) {
+        for (const [x, y] of roundTiles({ cx, cy: ky, rad: 1.4, half: false })) if (get(x, y) === '.') set(x, y, '#');
+        map.roofs.push({ x: cx - 1, y: ky - 1, w: 3, h: 3, shape: 'cone', style: 'slate' });
+    }
+    for (let y = by0 + 2; y < ky; y++) set(kd, y, '=');
+    // Life in the bailey: a well, braziers inside the gate, barrels and crates by the walls, a cart.
+    put(kd - 2, by0 + 2, 'brazier'); put(kd + 2, by0 + 2, 'brazier');
+    put(kx + bw + 1, ky - 2, 'well');
+    for (let i = 0; i < 3; i++) put(bx0 + i, by0 + ih - 1, pickR(r, ['barrel', 'crate', 'crate']));
+    put(bx0 + iw - 2, by0 + 3, 'cart');
+    place.doors.D1 = { id: 'D1', floor: 'F0', x: kd, y: ky, kind: 'door', state: 'closed', rooms: [null, null], enter: 'B1' };
+    place.buildings.B1 = { id: 'B1', name: plan.name, kind: plan.kind, door: 'D1', rect: { x: kx, y: ky, w: bw, h: bd }, interior: null, enterable: true, description: plan.summary };
+    layYards(place, map, { set, get, put, taken }, r, slots, null, {
+        left: { x: bx0, y: ky, w: left - 1, h: bd },
+        right: { x: kx + bw + 2, y: ky, w: right - 2, h: bd },
+        back: { x: kx, y: ky + bd + 2, w: bw, h: back - 3 },
+    }, W, H);
+    // Outside the walls: woods (or scrub) thick at the edges, the road kept clear.
+    const inside = (x, y) => x >= wx0 - (ext.moat ? 4 : 2) && x <= wx1 + (ext.moat ? 4 : 2) && y >= wy0 - (ext.moat ? 4 : 2) && y <= wy1 + (ext.moat ? 4 : 2);
+    const keep = (x, y) => Math.abs(x - gx - 0.5) <= 2 && y < wy0;
+    wilds(map, { get, set, put, taken }, r, theme, W, H, inside, keep, true);
+    outsidePeople(place, plan, r, get, taken, kd, ky);
     map.rows = c.slice().reverse().map(row => row.join(''));
     ensureIds(place);
-    place.start = { floor: 'F0', x: dx, y: 0, room: gate?.id ?? null };
+    place.start = { floor: 'F0', x: gx, y: 0, room: gate?.id ?? null };
     place.state.explored.F0 = '1'.repeat(W * H);
     return place;
 }

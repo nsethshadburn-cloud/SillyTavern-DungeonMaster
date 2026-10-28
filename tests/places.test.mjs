@@ -645,7 +645,7 @@ test('a building is two maps: the grounds outside (its door, gardens, trees) and
     assert.ok(Object.values(out.rooms).some(r => r.name === 'Herb garden'), 'the garden is an area outside');
     assert.ok(out.guards['Old Wren'], 'whoever was in the garden is outside');
     assert.ok(out.floors[0].map.rows.join('').includes('T'), 'trees');
-    assert.ok(out.floors[0].map.roofs.length === 1);
+    assert.ok(out.floors[0].map.roofs.length >= 1, 'a roof (and one for each bay window, if it has them)');
     assert.ok(findPath(out, 'F0', out.start, { x: door.x, y: door.y - 1 }, { knownOnly: false }), 'a way up to the door');
     // Never windows in a hedge (an outdoor room inside a ruin).
     const ruin = generatePlace({ name: 'Old Ruin', kind: 'ruins', rooms: [{ id: 'A', name: 'Hall', type: 'hall' }, { id: 'B', name: 'Overgrown garden', type: 'garden' }], links: [{ a: 'A', b: 'B' }] }, 2);
@@ -737,4 +737,32 @@ test('a mansion planned as just its grounds still gets the mansion: an inside, a
     assert.ok(out.floors[0].map.w >= 29, 'not a pitiful little map');
     // A building named for what it is, whatever "kind" the DM gave it.
     assert.equal(normalizePlan({ name: 'Ashworth Manor', kind: 'heist target', rooms: [{ id: 'A', name: 'Garden' }] }).building, true);
+});
+
+test('buildings take real shapes: wings, a round front, towers, porticos; castles get walls, towers, a gatehouse and a keep', async () => {
+    const { generateGrounds, exteriorOf } = await import('../src/core/layout.js');
+    const { findPath: fp } = await import('../src/core/explore.js');
+    const base = { summary: 'Rich and old.', rooms: [{ id: 'A', name: 'Entrance hall', type: 'foyer' }, { id: 'B', name: 'Parlor', type: 'parlor' }, { id: 'C', name: 'Kitchen', type: 'kitchen' }, { id: 'G', name: 'Rose garden', type: 'garden' }], links: [{ a: 'A', b: 'B' }, { a: 'B', b: 'C' }, { a: 'A', b: 'G' }], start: 'G' };
+    for (const [shape, front, towers] of [['U', 'rotunda', 2], ['H', 'portico', 4], ['E', 'flat', 0], ['L', 'bay', 0], ['T', 'portico', 0], ['tower', 'flat', 0], ['plain', 'rotunda', 4]]) {
+        const plan = normalizePlan({ ...base, name: 'Larkspur Manor', kind: 'mansion', exterior: { shape, front, towers } });
+        assert.equal(exteriorOf(plan).shape, shape);
+        const out = generateGrounds(plan, generatePlace(plan, 2), 3);
+        const map = out.floors[0].map, door = out.doors.D1;
+        assert.equal(terrainAt(map, door.x, door.y), '+', `${shape}/${front}: a front door`);
+        assert.ok(fp(out, 'F0', out.start, { x: door.x, y: door.y - 1 }, { knownOnly: false }), `${shape}/${front}: a way up to it`);
+        const shapes = map.roofs.map(r => r.shape);
+        if (front === 'rotunda') assert.ok(shapes.includes('apse'), 'a round front under a half-dome');
+        if (front === 'portico') assert.ok(shapes.includes('portico') && map.props.filter(p => p.type === 'pillar').length >= 4, 'columns and a porch roof');
+        if (towers || shape === 'tower') assert.ok(shapes.includes('cone'), 'round towers under cones');
+        if (['U', 'H', 'E', 'L'].includes(shape)) assert.ok(shapes.filter(s => s === 'hip').length >= 2, 'wings under their own roofs');
+        assert.ok(map.w <= 64 && map.h <= 64);
+    }
+    const castle = normalizePlan({ ...base, name: 'Gallowmere Castle', kind: 'castle', exterior: { moat: true } });
+    const out = generateGrounds(castle, generatePlace(castle, 2), 3);
+    const map = out.floors[0].map, door = out.doors.D1;
+    assert.ok(map.roofs.filter(r => r.shape === 'battlement').length >= 5, 'battlements along the walls');
+    assert.ok(map.roofs.filter(r => r.shape === 'cone').length >= 4, 'corner towers');
+    assert.ok(map.rows.join('').includes('w') && map.rows.join('').includes('b'), 'a moat and a bridge');
+    assert.ok(out.rooms.bailey, 'a bailey');
+    assert.ok(fp(out, 'F0', out.start, { x: door.x, y: door.y - 1 }, { knownOnly: false }), 'over the bridge, through the gatehouse, up to the keep');
 });

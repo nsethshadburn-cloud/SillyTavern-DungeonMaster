@@ -493,6 +493,93 @@ function voidTile(ctx, r, x, y, s) {
 }
 
 // ---------- roofs (town buildings) ----------
+// ---------- roofs with shape: hipped wings, cone towers, half-domes, battlements, porticos ----------
+
+/** Shingle (or slate) rows across a polygon, darker or lighter for the way the face slopes. */
+function roofFace(ctx, r, points, base, dl, tile, vertical, style) {
+    ctx.save();
+    ctx.beginPath(); points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
+    ctx.fillStyle = hsl(base[0], base[1], base[2] + dl); ctx.fill();
+    ctx.clip();
+    const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const row = tile * (style === 'thatch' ? 0.18 : 0.22);
+    if (!vertical) {
+        for (let y = y0; y < y1; y += row) {
+            const off = Math.round((y - y0) / row) % 2 ? row * 0.6 : 0;
+            for (let x = x0 - off; x < x1; x += row * 1.2) { ctx.fillStyle = hsl(base[0] + between(r, -3, 3), base[1], base[2] + dl + between(r, -5, 5)); ctx.fillRect(x + 1, y + 1, row * 1.2 - 2, row - 2); }
+            line(ctx, x0, y, x1, y, 'rgba(0,0,0,0.22)', 1);
+        }
+    } else {
+        for (let x = x0; x < x1; x += row) {
+            const off = Math.round((x - x0) / row) % 2 ? row * 0.6 : 0;
+            for (let y = y0 - off; y < y1; y += row * 1.2) { ctx.fillStyle = hsl(base[0] + between(r, -3, 3), base[1], base[2] + dl + between(r, -5, 5)); ctx.fillRect(x + 1, y + 1, row - 2, row * 1.2 - 2); }
+            line(ctx, x, y0, x, y1, 'rgba(0,0,0,0.22)', 1);
+        }
+    }
+    ctx.restore();
+}
+
+/** A hipped roof: slopes on all four sides, a short ridge along the long way (a pyramid when square). */
+function hipRoof(ctx, r, rf, px, py, w, h, base, tile) {
+    const along = w >= h;
+    const inset = (along ? h : w) / 2;
+    const cx = px + w / 2, cy = py + h / 2;
+    const ra = along ? [px + inset, cy] : [cx, py + inset], rb = along ? [px + w - inset, cy] : [cx, py + h - inset];
+    const tl = [px, py], tr = [px + w, py], bl = [px, py + h], br = [px + w, py + h];
+    const faces = along
+        ? [[[tl, tr, rb, ra], 8, false], [[bl, br, rb, ra], -10, false], [[tl, bl, ra], 0, true], [[tr, br, rb], -4, true]]
+        : [[[tl, bl, rb, ra], 8, true], [[tr, br, rb, ra], -10, true], [[tl, tr, ra], 2, false], [[bl, br, rb], -8, false]];
+    for (const [pts, dl, vertical] of faces) roofFace(ctx, r, pts, base, dl, tile, vertical, rf.style);
+    // Hips and ridge.
+    ctx.strokeStyle = hsl(base[0], base[1], base[2] - 18); ctx.lineWidth = Math.max(2, tile / 14);
+    ctx.beginPath(); ctx.moveTo(...tl); ctx.lineTo(...ra); ctx.lineTo(...rb); ctx.lineTo(...br); ctx.moveTo(...tr); ctx.lineTo(...(along ? rb : ra)); ctx.moveTo(...bl); ctx.lineTo(...(along ? ra : rb)); ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, w - 2, h - 2);
+}
+
+/** A round tower's cone (or, with half: true, the half-dome over a round front): segments meeting at a finial. */
+function coneRoof(ctx, r, rf, px, py, w, h, base, tile, half = false) {
+    const cx = px + w / 2, cy = half ? py : py + h / 2, rad = half ? Math.min(w / 2, h) : Math.min(w, h) / 2;
+    const n = half ? 8 : 12;
+    const a0 = half ? 0 : -Math.PI / 2, span = half ? Math.PI : Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+        const a = a0 + span * i / n, b = a0 + span * (i + 1) / n;
+        const light = Math.cos((a + b) / 2 + Math.PI * 0.75);
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, rad, a, b); ctx.closePath();
+        ctx.fillStyle = hsl(base[0], base[1], base[2] + light * 10 + between(r, -2, 2)); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    // Rings of shingles.
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.arc(cx, cy, rad * k / 4, a0, a0 + span); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, rad - 1, a0, a0 + span); if (half) ctx.closePath(); ctx.stroke();
+    ellipse(ctx, cx, cy, tile * 0.1, tile * 0.1, hsl(45, 60, 55), hsl(45, 60, 25), 1);
+}
+
+/** The top of a castle wall or tower: a stone walkway behind a row of merlons. */
+function battlementRoof(ctx, r, rf, px, py, w, h, tile) {
+    ctx.fillStyle = hsl(30, 6, 46); ctx.fillRect(px, py, w, h);
+    // Flagstones on the walk.
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1;
+    for (let x = px; x < px + w; x += tile * 0.5) { ctx.beginPath(); ctx.moveTo(x, py); ctx.lineTo(x, py + h); ctx.stroke(); }
+    for (let y = py; y < py + h; y += tile * 0.5) { ctx.beginPath(); ctx.moveTo(px, y); ctx.lineTo(px + w, y); ctx.stroke(); }
+    // Merlons all round the edge.
+    const m = tile * 0.26;
+    ctx.fillStyle = hsl(30, 6, 62); ctx.strokeStyle = hsl(30, 6, 26); ctx.lineWidth = 1;
+    for (let x = px; x < px + w - m / 2; x += m * 2) for (const y of [py, py + h - m]) { ctx.fillRect(x, y, m, m); ctx.strokeRect(x + 0.5, y + 0.5, m - 1, m - 1); }
+    for (let y = py + m * 2; y < py + h - m * 2; y += m * 2) for (const x of [px, px + w - m]) { ctx.fillRect(x, y, m, m); ctx.strokeRect(x + 0.5, y + 0.5, m - 1, m - 1); }
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, w - 2, h - 2);
+}
+
+/** A portico: a pale stone roof on columns over the front door, with a pediment line. */
+function porticoRoof(ctx, r, rf, px, py, w, h, tile) {
+    rrect(ctx, px, py, w, h, 2, hsl(40, 14, 78), hsl(40, 10, 40), 2);
+    ctx.strokeStyle = hsl(40, 10, 55); ctx.lineWidth = Math.max(1.5, tile / 20);
+    ctx.beginPath(); ctx.moveTo(px + tile * 0.2, py + h - tile * 0.2); ctx.lineTo(px + w / 2, py + tile * 0.2); ctx.lineTo(px + w - tile * 0.2, py + h - tile * 0.2); ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(px, py + h - tile * 0.12, w, tile * 0.12);
+}
+
 function roof(ctx, rf, tile, mapH, seed) {
     const r = rngFor(seed, rf.x, rf.y, 91);
     const px = rf.x * tile, py = (mapH - rf.y - rf.h) * tile, w = rf.w * tile, h = rf.h * tile;
@@ -500,7 +587,15 @@ function roof(ctx, rf, tile, mapH, seed) {
     const hue = rf.hue ?? pick(r, [8, 18, 25, 200, 30, 350]);
     const base = rf.style === 'thatch' ? [40, 45, 42] : rf.style === 'slate' ? [215, 12, 30] : [hue, 38, 34];
     // Shadow on the ground (the sun is up-left).
-    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(px + tile * 0.18, py + tile * 0.22, w, h);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    if (rf.shape === 'cone') { ctx.beginPath(); ctx.arc(px + w / 2 + tile * 0.18, py + h / 2 + tile * 0.22, Math.min(w, h) / 2, 0, Math.PI * 2); ctx.fill(); }
+    else if (rf.shape !== 'apse') ctx.fillRect(px + tile * 0.18, py + tile * 0.22, w, h);
+    // Shaped roofs: hipped wings, round towers, half-domes over round fronts, castle walls, porticos.
+    if (rf.shape === 'hip') return hipRoof(ctx, r, rf, px, py, w, h, base, tile);
+    if (rf.shape === 'cone') return coneRoof(ctx, r, rf, px, py, w, h, base, tile);
+    if (rf.shape === 'apse') return coneRoof(ctx, r, rf, px, py, w, h, base, tile, true);
+    if (rf.shape === 'battlement') return battlementRoof(ctx, r, rf, px, py, w, h, tile);
+    if (rf.shape === 'portico') return porticoRoof(ctx, r, rf, px, py, w, h, tile);
     const halves = ridgeAlong === 'h'
         ? [[px, py, w, h / 2, 8], [px, py + h / 2, w, h / 2, -10]]
         : [[px, py, w / 2, h, 8], [px + w / 2, py, w / 2, h, -10]];
