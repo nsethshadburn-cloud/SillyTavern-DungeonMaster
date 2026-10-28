@@ -228,10 +228,10 @@ function shade(hexColor, f) {
 }
 
 // Palette slots.
-const O = 1, SK = 2, SKD = 3, HR = 4, HRD = 5, OF = 6, OFD = 7, AC = 8, EYE = 9, MET = 10, METD = 11, WOOD = 12, WH = 13, PINK = 14, BOOT = 15, BLK = 16, GOLD = 17, HORN = 18, SKL = 19, STB = 20, ROPE = 21, ROPED = 22;
+const O = 1, SK = 2, SKD = 3, HR = 4, HRD = 5, OF = 6, OFD = 7, AC = 8, EYE = 9, MET = 10, METD = 11, WOOD = 12, WH = 13, PINK = 14, BOOT = 15, BLK = 16, GOLD = 17, HORN = 18, SKL = 19, STB = 20, ROPE = 21, ROPED = 22, BLD = 23, BLDD = 24;
 
 function paletteFor(look) {
-    const p = new Array(23).fill(null);
+    const p = new Array(25).fill(null);
     const skin = look.skin ?? look.fur ?? '#9aa0a8';
     p[O] = '#17131a';
     p[SK] = skin; p[SKD] = shade(skin, -0.22); p[SKL] = shade(skin, 0.28);
@@ -243,6 +243,7 @@ function paletteFor(look) {
     p[EYE] = look.eyes ?? '#2a2030';
     p[MET] = '#b8c0c8'; p[METD] = '#6a727a'; p[WOOD] = '#7a5230'; p[WH] = '#f2efe8'; p[PINK] = '#e8a0a8';
     p[BOOT] = '#3a2a20'; p[BLK] = '#120e12'; p[GOLD] = '#e0b83a'; p[HORN] = '#d8ccb0';
+    p[BLD] = '#a01818'; p[BLDD] = '#5e0c0c';
     return p;
 }
 
@@ -325,8 +326,8 @@ const POSES = {
     hurt: [{ lean: -2, blink: true, armsUp: true }],
 };
 
-// Badly hurt: hunched over with a hand pressed to the side, swaying a little.
-const INJURED = [{ bob: 2, lean: 2, armF: -3, armB: 1 }, { bob: 2, lean: 2, armF: -3, armB: 1 }, { bob: 2, lean: 1, armF: -3, armB: 1 }, { bob: 2, lean: 2, armF: -3, armB: 1, blink: true }];
+// Badly hurt: a hand pressed to the side, breathing hard (bent over and bloodied when built).
+const INJURED = [{ armF: -3, armB: 1 }, { armF: -3, armB: 1 }, { armF: -3, armB: 1, bob: 1 }, { armF: -3, armB: 1, blink: true }];
 const BEAST_INJURED = [{ bob: 1, lean: -1 }, { bob: 1 }, { bob: 1, lean: -1, blink: true }];
 
 // Tied up: a slow squirm (lean one way, then the other) instead of breathing; dragged, a little bob.
@@ -620,6 +621,54 @@ function sitting(frame, legLen) {
     return out;
 }
 
+/**
+ * Badly hurt: bent over. Knees bent (the legs fold to three rows, knees forward), the body drops
+ * onto them and leans forward, more at the head than at the hips.
+ */
+function hunched(frame, legLen) {
+    const feet = 22, hip = feet - legLen, drop = 2;
+    const out = new Uint8Array(SIZE * SIZE);
+    for (let y = 0; y < hip; y++) {
+        const dx = Math.round((hip - y) / 5);
+        for (let x = 0; x < SIZE; x++) { const c = frame[y * SIZE + x]; if (c && y + drop < SIZE && x + dx < SIZE) out[(y + drop) * SIZE + x + dx] = c; }
+    }
+    // Legs: the top of the legs, the knees (forward a pixel), the feet where they were.
+    const legRows = [[hip, hip + drop, 1], [hip + Math.ceil(legLen / 2), hip + drop + 1, 1], [feet, feet, 0]];
+    for (const [from, to, dx] of legRows) for (let x = 0; x < SIZE; x++) { const c = frame[from * SIZE + x]; if (c && x + dx < SIZE) out[to * SIZE + x + dx] ||= c; }
+    return out;
+}
+
+/** Blood: a few stains where the clothes (or skin) are, around the middle of the body. */
+function bloodied(frame, spots = 4, seed = 3) {
+    const out = frame.slice();
+    const body = [];
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) { const c = frame[y * SIZE + x]; if (c === OF || c === OFD || c === SK || c === SKD) body.push([x, y]); }
+    if (!body.length) return out;
+    body.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+    const mid = body.slice(Math.floor(body.length * 0.35), Math.ceil(body.length * 0.8));
+    for (let i = 0; i < spots && mid.length; i++) {
+        const [x, y] = mid[(seed * 7 + i * 11) % mid.length];
+        out[y * SIZE + x] = i % 2 ? BLDD : BLD;
+        if (frame[(y + 1) * SIZE + x] && i % 2 === 0) out[(y + 1) * SIZE + x] = BLD;
+    }
+    return out;
+}
+
+/** Out cold: a pool of blood spreading out under the body (on the ground around it, never over it). */
+function pooled(frame) {
+    const out = frame.slice();
+    let minX = SIZE, maxX = -1, bottom = -1;
+    for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) if (frame[y * SIZE + x]) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); bottom = Math.max(bottom, y); }
+    if (maxX < 0) return out;
+    const cx = minX + (maxX - minX) * 0.45, rx = Math.max(4, (maxX - minX) * 0.42);
+    for (let y = bottom - 2; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+        const dx = (x - cx) / rx, dy = (y - bottom) / 2.2;
+        if (dx * dx + dy * dy > 1 || frame[y * SIZE + x]) continue;
+        out[y * SIZE + x] = dx * dx + dy * dy > 0.55 ? BLDD : BLD;
+    }
+    return out;
+}
+
 /** A beast settling down: the whole body lower (legs tucked under). */
 function crouched(frame, rows) {
     const out = new Uint8Array(SIZE * SIZE);
@@ -658,10 +707,10 @@ export function buildSprite(lookIn) {
     const poses = isBeast ? BEAST_POSES : look.bound === 'rope' ? { ...POSES, idle: SQUIRM, walk: DRAGGED } : POSES;
     const anims = {};
     for (const [name, list] of Object.entries(poses)) anims[name] = list.map(p => draw(look, p).d);
-    anims.down = [lyingDown(anims.idle[3])];
+    anims.down = [bloodied(pooled(lyingDown(anims.idle[3])), 3)];
     // Badly hurt (low HP), sitting, lying down awake or asleep, and asleep in a bed seen from above.
-    anims.injured = (isBeast ? BEAST_INJURED : INJURED).map(p => draw(look, p).d);
     const legLen = look.build === 'small' ? 3 : look.build === 'large' ? 5 : 4;
+    anims.injured = (isBeast ? BEAST_INJURED : INJURED).map(p => bloodied(isBeast ? draw(look, p).d : hunched(draw(look, p).d, legLen)));
     anims.sit = isBeast ? [crouched(anims.idle[0], 2), crouched(anims.idle[1], 2)] : [sitting(anims.idle[0], legLen), sitting(anims.idle[1], legLen)];
     anims.lie = isBeast ? [crouched(anims.idle[0], 4)] : [lyingDown(anims.idle[0])];
     anims.sleep = isBeast ? [crouched(anims.idle[3], 4)] : [lyingDown(anims.idle[3])];

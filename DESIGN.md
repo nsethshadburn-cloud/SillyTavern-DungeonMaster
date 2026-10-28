@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.21.1 (hurt and out cold look it)
+- Palette gains blood (BLD, BLDD). `injured` = the hand-on-side pose run through `hunched` (knees bent, body dropped two pixels and leaning forward, more at the head) and `bloodied` (stains on the middle of the body). `down` = the lying frame with `pooled` (a blood pool on the ground around it) and stains.
+
 ### v0.21 (map tiers, companions through the chat, traps that grab)
 - `settings.mapTier`: off / some / always. `dmRules(tier)` (protocol.js): "always" swaps the no-map line for a build-every-new-place rule; "off" drops the Places and maps section and every map-only rule and reply field (MAP_ONLY) and says so. Off also makes `currentPlace` null, `activeBoard` null, blanks the map fields of DM turns (no battle map), and the map button says maps are off.
 - Tapping a person shows an info card only (HP, conditions, hiding, resting, caught, staying). Companions' moves come from their replies: `companionActionPrompt` asks `stance` (close / follow / stay) in both companion checks; `setStance` keeps it in `meta.stance` and sets waiting. A companion with close or follow comes along without the per-walk follow question.
