@@ -134,6 +134,7 @@ function panelHtml() {
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
       <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
       <label class="checkbox_label"><input id="dm-map-figures" type="checkbox" ${s.mapFigures !== false ? 'checked' : ''}> Little animated figures on the map (off = round portraits). Your party's are drawn once by Claude from their card and picture (about 1-2 cents each); type <code>/dmfigure Judy</code> to redraw one.</label>
+      <label class="checkbox_label"><input id="dm-map-ambience" type="checkbox" ${s.mapAmbience !== false ? 'checked' : ''}> Weather and ambient particles on the map (rain, snow, dust, fireflies, glints on water, flickering torches). Fire and spell effects always show. Also a button on the map.</label>
       <small>Profiles come from SillyTavern's Connection Manager. A profile brings its own saved formats, so update old profiles before using them here.</small>
 
       <h4>Budget</h4>
@@ -375,6 +376,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindCheck('dm-use-helper', 'useHelper');
     bindCheck('dm-auto-dice', 'autoReadDice');
     bindCheck('dm-map-figures', 'mapFigures');
+    bindCheck('dm-map-ambience', 'mapAmbience');
     bindNumber('dm-monthly', 'monthlyCap');
     bindNumber('dm-nightly', 'nightlySoftCap');
     bindCheck('dm-caching', 'cachingEnabled');

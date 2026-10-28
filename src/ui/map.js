@@ -15,7 +15,9 @@ import { conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow } from '../core/explore.js';
 import { statsForName } from '../st/sheets.js';
-import { settings } from '../st/settings.js';
+import { settings, saveSettings } from '../st/settings.js';
+import { drawEffects, effectsActive } from './effects.js';
+import { fireAt } from '../core/fire.js';
 import { drawFigure } from './sprite-render.js';
 import { figureFor } from '../st/figures.js';
 
@@ -182,6 +184,7 @@ function renderMap(center = false) {
   <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>
   ${floors.length > 1 ? `<select class="dm-map-floor text_pole" title="Look at another floor you've explored">${floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === b.floor.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>` : ''}
   ${map.w > 16 || map.h > 16 ? '<span class="dm-map-btn fa-solid fa-magnifying-glass-minus" data-act="out" title="Zoom out"></span><span class="dm-map-btn fa-solid fa-magnifying-glass-plus" data-act="in" title="Zoom in"></span>' : ''}
+  <span class="dm-map-btn fa-solid fa-cloud-rain ${settings().mapAmbience === false ? 'dm-map-off' : ''}" data-act="ambience" title="Weather and ambient particles: on/off (fire and spells always show)"></span>
   <span class="dm-map-btn fa-solid fa-location-crosshairs ${follow ? 'dm-hidden' : ''}" data-act="center" title="Follow ${escapeHtml(c.meta.persona.name)} again"></span>
   <span class="dm-map-btn fa-solid fa-window-minimize" data-act="min" title="Minimize"></span>
   <span class="dm-map-btn fa-solid fa-xmark" data-act="close" title="Close (reopen from the wand menu)"></span>
@@ -246,6 +249,7 @@ function renderMap(center = false) {
     panel.querySelector('[data-act="in"]')?.addEventListener('click', () => { zoom = Math.min(1.5, zoom + 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="out"]')?.addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
+    panel.querySelector('[data-act="ambience"]')?.addEventListener('click', () => { settings().mapAmbience = settings().mapAmbience === false; saveSettings(); renderMap(); });
     panel.querySelector('[data-act="min"]').addEventListener('click', () => { panel.classList.toggle('dm-map-min'); ensureLoop(); });
     panel.querySelector('[data-act="clear"]')?.addEventListener('click', () => { selection = { move: '', target: '' }; renderMap(); });
     panel.querySelector('[data-act="add"]')?.addEventListener('click', addToMessage);
@@ -299,6 +303,7 @@ let live = null; // {canvas, c, b, layer, tile} for the animation loop
 const motion = new Map(); // name -> {x, y, facing, walkUntil, anim, animStart, animUntil, hp}
 let loopTimer = null;
 const TICK_MS = 110; // about 9 frames a second: lively, and light on a phone
+const FX_TICK_MS = 70; // about 14 a second while fire, spells or weather move
 
 function nameOffset(name) {
     let h = 0;
@@ -344,12 +349,42 @@ function drawBoard(canvas, c, b) {
     }
     const sel = parseCoord(selection.move, map);
     if (sel) { const [px, py] = cell(sel.x, sel.y); lctx.strokeStyle = '#ffd54a'; lctx.lineWidth = 4; lctx.strokeRect(px + 3, py + 3, tile - 6, tile - 6); }
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(layer, 0, 0);
     live = { canvas, c, b, layer, tile };
     noteMotion(c, b);
-    drawTokens(ctx, c, b, tile, performance.now(), false);
+    drawFrame(performance.now(), true);
     ensureLoop();
+}
+
+/** The part of the canvas that's on screen, in canvas pixels. */
+function viewRect(canvas) {
+    const view = canvas.parentElement, k = canvas.width / (canvas.clientWidth || canvas.width);
+    return view?.clientWidth ? { x: view.scrollLeft * k, y: view.scrollTop * k, w: view.clientWidth * k, h: view.clientHeight * k } : { x: 0, y: 0, w: canvas.width, h: canvas.height };
+}
+
+/** Draw one frame. full = the whole board (otherwise only the figures' squares, when nothing else moves). */
+function drawFrame(now, full = false) {
+    const { canvas, c, b, layer, tile } = live;
+    const ctx = canvas.getContext('2d');
+    const ambient = settings().mapAmbience !== false;
+    const fx = effectsActive(b.map, ambient);
+    if (fx) {
+        ctx.drawImage(layer, 0, 0);
+        const seen = b.place && b.fog && b.visible ? (x, y) => Boolean(b.visible[y * b.map.w + x]) : () => true;
+        const o = { map: b.map, tile, margin: MARGIN, now, ambient, view: viewRect(canvas), seen };
+        drawEffects(ctx, o, 'under');
+        drawTokens(ctx, c, b, tile, now, false);
+        drawEffects(ctx, o, 'over');
+    } else {
+        // Effects just ended: one clean redraw to wipe them.
+        if (full || live.fx) ctx.drawImage(layer, 0, 0);
+        drawTokens(ctx, c, b, tile, now, !(full || live.fx));
+    }
+    live.fx = fx;
+}
+
+/** Anything moving on the map right now: figures, or fire, spells and the ambience. */
+function animated() {
+    return settings().mapFigures !== false || Boolean(live && (live.fx || effectsActive(live.b.map, settings().mapAmbience !== false)));
 }
 
 /** Who moved (walk and face that way), who lost HP (flinch). */
@@ -491,13 +526,13 @@ function drawCage(ctx, x, y, s) {
 
 /** The animation loop: only while the map is open, shown, and has figures to animate. */
 function ensureLoop() {
-    if (loopTimer || settings().mapFigures === false) return;
+    if (loopTimer || !animated()) return;
     const tick = () => {
         loopTimer = null;
-        if (!live || !live.canvas.isConnected || !panel || panel.classList.contains('dm-hidden') || panel.classList.contains('dm-map-min') || document.hidden) return;
-        // Only the figures' own squares are redrawn each tick.
-        drawTokens(live.canvas.getContext('2d'), live.c, live.b, live.tile, performance.now(), true);
-        loopTimer = setTimeout(() => requestAnimationFrame(tick), TICK_MS);
+        if (!live || !live.canvas.isConnected || !panel || panel.classList.contains('dm-hidden') || panel.classList.contains('dm-map-min') || document.hidden || !animated()) return;
+        drawFrame(performance.now());
+        // A little smoother while fire and weather move; otherwise light on a phone.
+        loopTimer = setTimeout(() => requestAnimationFrame(tick), live.fx ? FX_TICK_MS : TICK_MS);
     };
     loopTimer = setTimeout(() => requestAnimationFrame(tick), TICK_MS);
 }
@@ -528,7 +563,8 @@ function describeSquare(b, sq) {
     const room = b.kind === 'place' ? roomAt(b.place, b.floor.id, sq.x, sq.y)?.name : '';
     const door = b.kind === 'place' ? doorAt(b.place, b.floor.id, sq.x, sq.y) : null;
     const doorText = door ? (door.enter ? `door to ${b.place.buildings[door.enter]?.name ?? 'a building'}` : door.exit ? 'the way out' : `door (${door.state === 'closed' ? 'closed' : door.state})`) : '';
-    return [toCoord(sq.x, sq.y), room, who, doorText || prop, doorText ? '' : ground].filter(Boolean).join(' · ');
+    const burning = fireAt(map, sq.x, sq.y) ? '🔥 on fire' : map.burnt?.[`${sq.x},${sq.y}`] ? 'burnt' : '';
+    return [toCoord(sq.x, sq.y), room, who, doorText || prop, doorText ? '' : ground, burning].filter(Boolean).join(' · ');
 }
 
 async function onSquare(sq, positions) {

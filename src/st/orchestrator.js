@@ -16,6 +16,8 @@ import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps } from '../core/explore.js';
+import { applyMapEffects, fireTurn } from './fire-turn.js';
+import { mergeBurn } from '../core/fire.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
@@ -227,6 +229,11 @@ async function turnBody(c, opts, status, signal) {
     // The player picked something on the map (smash the bookshelf, pry the bars): the DM rules on it.
     const picked = !autoRoll ? takeMapAction() : '';
     if (picked) placeEvent = [picked, placeEvent].filter(Boolean).join(' ');
+    // Fire and effects move on one step each player turn (they never spread while you just walk).
+    if (!opts.force && !autoRoll) {
+        const burned = await fireTurn(c, status);
+        if (burned) placeEvent = [placeEvent, burned].filter(Boolean).join(' ');
+    }
     if (!opts.force && !autoRoll && !pacing.inCombat) {
         const spotted = tickPlace(c);
         if (spotted.length) placeEvent = `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party and what they do.`;
@@ -698,6 +705,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const here = currentPlace(c);
         if (here) {
             const floorId = world.combat.inPlace.floor, map = floorById(here.place, floorId).map;
+            mergeBurn(world.combat.map, map);
             const party = new Set([meta.persona.name, ...meta.party.map(p => p.name)].map(nameKey));
             for (const name of partyOnMap(c)) {
                 const pt = parseCoord(world.combat.positions?.[name], map);
@@ -773,6 +781,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         savePlace(key, c);
         mapChanged = true;
     }
+    if (t.map_effects && applyMapEffects(c, t.map_effects, status)) mapChanged = true;
     if (!world.combat && world.sceneMap?.map) {
         const friends = [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))];
         const { positions } = applyPositions(world.sceneMap.map, world.sceneMap.positions, t.positions);

@@ -59,8 +59,9 @@ export function litMask(place, floorId) {
             const r = rm.rect;
             for (let x = r.x - 1; x <= r.x + r.w; x++) for (let y = r.y - 1; y <= r.y + r.h; y++) if (x >= 0 && y >= 0 && x < map.w && y < map.h) mask[y * map.w + x] = 1;
         }
-        for (const p of map.props || []) {
-            const rad = PROPS[p.type]?.light;
+        const fireLit = Object.entries(map.fire || {}).map(([k, f]) => { const [x, y] = k.split(',').map(Number); return { x, y, type: '', hidden: false, rad: 1 + f.heat }; });
+        for (const p of [...(map.props || []), ...fireLit]) {
+            const rad = p.rad ?? PROPS[p.type]?.light;
             if (!rad || p.hidden) continue;
             for (let dx = -rad; dx <= rad; dx++) for (let dy = -rad; dy <= rad; dy++) {
                 const x = p.x + dx, y = p.y + dy;

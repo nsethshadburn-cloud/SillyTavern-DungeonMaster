@@ -74,7 +74,7 @@ export const PROPS = Object.freeze({
     // Marks on the floor
     debris: { name: 'broken pieces', decal: true },
     blood: { name: 'blood', decal: true }, scratches: { name: 'scratch marks', decal: true }, papers: { name: 'scattered papers', decal: true },
-    stain: { name: 'stain', decal: true },
+    stain: { name: 'stain', decal: true }, ash: { name: 'charred remains', decal: true },
 });
 
 /** Furniture too heavy to shove without a roll (the DM rules on it). Everything else that blocks can be pushed freely. */

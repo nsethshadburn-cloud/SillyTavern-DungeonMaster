@@ -137,6 +137,7 @@
 .dm-map-head b { flex: 1; }
 .dm-map-btn { cursor: pointer; opacity: 0.7; padding: 4px 6px; }
 .dm-map-btn:hover { opacity: 1; }
+.dm-map-btn.dm-map-off { opacity: 0.3; }
 .dm-map-body { overflow: auto; padding: 8px 10px 10px; }
 .dm-map.dm-map-min .dm-map-body { display: none; }
 .dm-map-grid { display: grid; gap: 1px; user-select: none; touch-action: manipulation; }

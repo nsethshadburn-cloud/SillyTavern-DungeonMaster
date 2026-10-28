@@ -9,6 +9,8 @@ import { dmType } from './messages.js';
 import { DM_RULES, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { placeSummary, placeView, cropText } from '../core/explore.js';
 import { atlas, currentPlace, partyOnMap } from './atlas.js';
+import { activeBoard } from './fire-turn.js';
+import { fireSummary } from '../core/fire.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
@@ -190,6 +192,10 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     } else if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
     else if (here) sections.push(`# INSIDE ${here.place.name.toUpperCase()}`, placeView(here.place, partyOnMap(c)));
     else if (w.sceneMap?.map) sections.push(`Scene map "${w.sceneMap.title}" (columns a.., rows 1.. from the bottom; send "scene_map": "close" when they leave):`, renderMapText(w.sceneMap.map, w.sceneMap.positions || {}));
+    // Fire, spell effects and the air on the map in play.
+    const board = activeBoard(c);
+    const burning = board ? fireSummary(board.map, board.nameAt) : '';
+    if (burning) sections.push(burning);
     sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
     sections.push('SCENE CARD (what companions and NPCs are told is physically true right now; send "scene_card" changes to fix or update it):', renderSceneCard(w.sceneCard) || '(empty: send a full "scene_card" this turn)');
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);

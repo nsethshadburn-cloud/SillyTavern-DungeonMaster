@@ -63,6 +63,7 @@ export const DEFAULTS = Object.freeze({
     hideNarration: true,        // the bot never sees "Dungeon Master" messages; it gets briefs instead
     autoReadDice: true,         // read SillyTavern's dice rolls for a pending roll (no need to type the number)
     mapFigures: true,           // animated pixel figures on the map (false = round portraits)
+    mapAmbience: true,          // weather and ambient particles on the map (fire and spells always show)
     figures: {},                // "p:<persona avatar>" / "c:<character avatar>" -> the look Claude described
 
     // Surprises Claude may add

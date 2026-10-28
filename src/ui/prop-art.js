@@ -270,5 +270,17 @@ export const PROP_ART = {
     blood(ctx, r, cx, cy, s) { const n = 3 + Math.floor(r() * 4); for (let i = 0; i < n; i++) { const x = cx + between(r, -0.3, 0.3) * s, y = cy + between(r, -0.3, 0.3) * s, rad = s * between(r, 0.04, 0.16); ellipse(ctx, x, y, rad, rad * between(r, 0.6, 1), `rgba(${Math.round(between(r, 90, 130))},0,0,${between(r, 0.55, 0.8)})`); } for (let i = 0; i < 6; i++) ellipse(ctx, cx + between(r, -0.45, 0.45) * s, cy + between(r, -0.45, 0.45) * s, s * 0.015, s * 0.015, 'rgba(110,0,0,0.7)'); if (r() < 0.4) { ctx.strokeStyle = 'rgba(100,0,0,0.5)'; ctx.lineWidth = s * 0.05; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + between(r, -0.4, 0.4) * s, cy + between(r, -0.4, 0.4) * s); ctx.stroke(); ctx.lineCap = 'butt'; } },
     scratches(ctx, r, cx, cy, s) { ctx.save(); ctx.translate(cx, cy); ctx.rotate(between(r, -0.8, 0.8)); for (let i = 0; i < 4; i++) { const x = -s * 0.15 + i * s * 0.1; line(ctx, x, -s * 0.3, x + s * 0.05, s * 0.3, 'rgba(0,0,0,0.45)', s / 30); line(ctx, x + 1, -s * 0.3, x + s * 0.05 + 1, s * 0.3, 'rgba(255,255,255,0.12)', 1); } ctx.restore(); },
     papers(ctx, r, cx, cy, s) { for (let i = 0; i < 4; i++) { ctx.save(); ctx.translate(cx + between(r, -0.28, 0.28) * s, cy + between(r, -0.28, 0.28) * s); ctx.rotate(between(r, -1, 1)); ctx.fillStyle = pick(r, ['#efe7d2', '#e6dcc0', '#f4efe2']); ctx.fillRect(-s * 0.09, -s * 0.12, s * 0.18, s * 0.24); for (let k = 0; k < 4; k++) line(ctx, -s * 0.06, -s * 0.08 + k * s * 0.05, s * 0.06, -s * 0.08 + k * s * 0.05, 'rgba(0,0,0,0.25)', 1); ctx.restore(); } },
+    ash(ctx, r, cx, cy, s) {
+        // What's left after a fire: a heap of grey ash with charcoal chunks and a dying ember or two.
+        blob(ctx, cx, cy, s * 0.45, 'rgba(10,8,6,0.55)');
+        ellipse(ctx, cx, cy + s * 0.04, s * 0.3, s * 0.2, 'rgba(95,90,86,0.75)');
+        for (let i = 0; i < 7; i++) {
+            ctx.save(); ctx.translate(cx + between(r, -0.26, 0.26) * s, cy + between(r, -0.18, 0.2) * s); ctx.rotate(r() * Math.PI);
+            ctx.fillStyle = hsl(20, 10, between(r, 6, 14)); ctx.fillRect(-s * between(r, 0.05, 0.13), -s * 0.025, s * between(r, 0.1, 0.26), s * 0.05);
+            ctx.restore();
+        }
+        for (let i = 0; i < 18; i++) ellipse(ctx, cx + between(r, -0.32, 0.32) * s, cy + between(r, -0.24, 0.26) * s, s * 0.014, s * 0.014, `rgba(190,185,178,${between(r, 0.3, 0.7)})`);
+        if (r() < 0.6) ellipse(ctx, cx + between(r, -0.15, 0.15) * s, cy + between(r, -0.1, 0.1) * s, s * 0.022, s * 0.016, 'rgba(230,90,30,0.7)');
+    },
     stain(ctx, r, cx, cy, s) { for (let i = 0; i < 4; i++) blob(ctx, cx + between(r, -0.15, 0.15) * s, cy + between(r, -0.15, 0.15) * s, s * between(r, 0.2, 0.4), `rgba(${pick(r, ['50,35,20', '30,40,20', '60,20,20'])},0.45)`); },
 };

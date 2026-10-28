@@ -7,6 +7,7 @@
 import { terrainAt, propsAt, propAt, PROPS, ORIENTED } from '../core/grid.js';
 import { rngFor, between, pick, hsl, tone, speckle, blob, crack, ellipse, rrect, line, shadow } from './paint-kit.js';
 import { PROP_ART } from './prop-art.js';
+import { fireLights } from '../core/fire.js';
 
 const THEME_STYLE = {
     dungeon: { floor: 'stone', floorC: [30, 6, 38], wall: 'brick', wallC: [25, 7, 28], dark: 0.35, moss: 0.12 },
@@ -467,6 +468,25 @@ function ironBars(ctx, x, y, s, horizontal, kind) {
     }
     ctx.restore();
 }
+/** A burnt-out square: blackened wall, or a floor of charcoal, soot and ash. */
+function charred(ctx, r, x, y, s, isWallTile) {
+    if (isWallTile) {
+        ctx.fillStyle = 'rgba(14,9,6,0.62)'; ctx.fillRect(x, y, s, s);
+        for (let i = 0; i < 3; i++) crack(ctx, r, x, y, s);
+        return;
+    }
+    ctx.fillStyle = 'rgba(20,15,12,0.8)'; ctx.fillRect(x, y, s, s);
+    // Charred boards or slabs: dark ridges with breaks.
+    for (let i = 1; i < 4; i++) {
+        const ly = y + (i / 4) * s + between(r, -1.5, 1.5);
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = Math.max(1, s / 40);
+        ctx.beginPath(); ctx.moveTo(x, ly); ctx.lineTo(x + s * between(r, 0.3, 0.7), ly + between(r, -1, 1)); ctx.moveTo(x + s * between(r, 0.75, 0.85), ly); ctx.lineTo(x + s, ly + between(r, -1, 1)); ctx.stroke();
+    }
+    for (let i = 0; i < 3; i++) blob(ctx, x + r() * s, y + r() * s, s * between(r, 0.2, 0.4), 'rgba(0,0,0,0.35)');
+    for (let i = 0; i < 22; i++) { ctx.fillStyle = `rgba(${Math.round(between(r, 120, 175))},${Math.round(between(r, 115, 165))},${Math.round(between(r, 110, 155))},${between(r, 0.18, 0.45)})`; ctx.fillRect(x + r() * s, y + r() * s, s * 0.025, s * 0.025); }
+    if (r() < 0.25) { ctx.fillStyle = 'rgba(170,60,20,0.45)'; ctx.fillRect(x + r() * s, y + r() * s, s * 0.03, s * 0.03); }
+}
+
 function voidTile(ctx, r, x, y, s) {
     ctx.fillStyle = hsl(220, 14, 7); ctx.fillRect(x, y, s, s);
     speckle(ctx, r, x, y, s, 14, 0.2, 0.03);
@@ -633,6 +653,13 @@ export function paintMapBase(map, tile) {
         ctx.strokeStyle = hsl(42, 55, 45, 0.5); ctx.lineWidth = 1;
         ctx.strokeRect(px + tile * 0.24, py + tile * 0.24, a.w * tile - tile * 0.48, a.h * tile - tile * 0.48);
     }
+    // Fire: charred floors and walls where it burnt out, scorch marks under it while it burns.
+    for (const k of new Set([...Object.keys(map.burnt || {}), ...Object.keys(map.fire || {})])) {
+        const [x, y] = k.split(',').map(Number);
+        const r = rngFor(map.seed, x, y, 31), px = x * tile, py = (map.h - 1 - y) * tile;
+        if (map.burnt?.[k]) charred(ctx, r, px, py, tile, isWall(at(x, y)));
+        else blob(ctx, px + tile / 2, py + tile / 2, tile * 0.7, 'rgba(25,14,8,0.45)');
+    }
     // Roofs over town buildings.
     for (const rf of map.roofs || []) roof(ctx, rf, tile, map.h, map.seed);
     // Props: floor marks, then rugs, then furniture, then things hanging from the ceiling.
@@ -667,7 +694,8 @@ export function paintMapBase(map, tile) {
         sctx.fillStyle = `rgba(5,5,15,${dark})`; sctx.fillRect(0, 0, shade.width, shade.height);
         sctx.globalCompositeOperation = 'destination-out';
         for (const a of map.areas || []) if (a.lit) { sctx.fillStyle = 'rgba(0,0,0,0.7)'; sctx.fillRect(a.x * tile, (map.h - a.y - a.h) * tile, a.w * tile, a.h * tile); }
-        for (const l of lights) {
+        // Fire lights up the dark too (its glow is drawn by the moving effects on top).
+        for (const l of [...lights, ...fireLights(map)]) {
             const cx = l.x * tile + tile / 2, cy = (map.h - 1 - l.y) * tile + tile / 2, rad = l.rad * tile;
             const g = sctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
             g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');

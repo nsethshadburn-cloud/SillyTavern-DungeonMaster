@@ -212,7 +212,7 @@ export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
         if (spot) goals.push(spot);
     }
     // Around the traps they know about if there's another way; over them if there isn't.
-    const careful = new Set([...others, ...trapsKnownTo(place, pos.floor, name)]);
+    const careful = new Set([...others, ...dangersFor(place, pos.floor, name)]);
     let path = null;
     for (const blocked of [careful, others]) {
         for (const g of goals) {
@@ -628,6 +628,11 @@ async function enterBuilding(c, townKey, town, door) {
 
 let walking = false;
 
+/** Squares a companion steers around: traps they know about, and fire. */
+function dangersFor(place, floorId, name) {
+    return [...trapsKnownTo(place, floorId, name), ...Object.keys(floorById(place, floorId).map.fire || {})];
+}
+
 /** Traps someone set off while the DM was busy (a companion walking somewhere); the next turn rules on them. */
 let trapEvents = [];
 export function takeTrapEvents() { const t = trapEvents; trapEvents = []; return t; }
@@ -711,7 +716,7 @@ export async function walkTo(target, redraw = () => { }) {
         for (const n of list) {
             const p = place.state.positions[n];
             const taken = new Set([...others, ...Object.entries(place.state.positions).filter(([m, q]) => m !== n && m !== names[0] && q.floor === floorId).map(([, q]) => `${q.x},${q.y}`)]);
-            const steps = followSteps(place, floorId, p, lead, { taken, steps: gap(p) > 3 ? 2 : 1, avoid: trapsKnownTo(place, floorId, n) });
+            const steps = followSteps(place, floorId, p, lead, { taken, steps: gap(p) > 3 ? 2 : 1, avoid: dangersFor(place, floorId, n) });
             // No way to get any closer (shut in, cut off): they stop trying for this walk.
             if (!steps.length && gap(p) > 3) active.delete(n);
             for (const [x, y] of steps) {
