@@ -246,11 +246,6 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
 /** An open pit (or hole) stays dangerous after it's sprung; darts and the like are spent. */
 const OPEN_TRAP = /pit|hole|trapdoor|chasm|shaft/i;
 
-/** Squares with traps everyone knows about (found, or an open pit): walks go around them unless that's where you're going. */
-export function knownTraps(place, floorId, except = null) {
-    return Object.values(place.traps).filter(t => t.floor === floorId && (t.state === 'found' || (t.state === 'sprung' && OPEN_TRAP.test(t.kind))) && !(except && t.x === except.x && t.y === except.y)).map(t => `${t.x},${t.y}`);
-}
-
 /**
  * Someone steps onto (x, y). A hidden trap springs (and shows); a known one goes off unless they
  * cross it carefully; an open pit swallows them. Returns what the DM needs to rule on, or ''.
@@ -269,7 +264,7 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
         if (prop) { prop.hidden = false; map.version = (map.version || 0) + 1; }
         return `${name} stepped on a hidden ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate it.`;
     }
-    if (trap.state === 'found') return `${name} stepped onto the ${trap.kind} (${trap.id}) in ${room} that the party already knew about: ${dc} It goes off unless they cross it carefully: ${roll.toLowerCase()} and narrate it; mark it "sprung" or "disarmed" in place_changes if that's what happens.`;
+    if (trap.state === 'found') return `${name} stepped onto the ${trap.kind} (${trap.id}) in ${room} that the party already knew about, and it goes off: ${dc} ${roll} for the save and narrate it; mark it "sprung" (or "disarmed" if it breaks) in place_changes.`;
     return `${name} walked into the open ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate the fall.`;
 }
 

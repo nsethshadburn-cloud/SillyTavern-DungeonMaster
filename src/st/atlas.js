@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, knownTraps, adoptTrapProps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, adoptTrapProps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -198,7 +198,7 @@ export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
     const pos = place.state.positions[name];
     if (!pos) return '';
     const map = floorById(place, pos.floor).map;
-    const others = new Set([...Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === pos.floor).map(g => `${g.x},${g.y}`), ...knownTraps(place, pos.floor)]);
+    const others = new Set([...Object.entries(place.state.positions).filter(([n, p]) => n !== name && p.floor === pos.floor).map(([, p]) => `${p.x},${p.y}`), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === pos.floor).map(g => `${g.x},${g.y}`)]);
     const prop = (map.props || []).find(p => p.id === targetId);
     const room = place.rooms[targetId];
     let goals = [];
@@ -669,7 +669,6 @@ export async function walkTo(target, redraw = () => { }) {
         ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.floor === floorId).map(g => `${g.x},${g.y}`),
         ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
     ]);
-    for (const k of knownTraps(place, floorId, target)) others.add(k);
     const path = findPath(place, floorId, lead, target, { blocked: others, toward: dark });
     if (dark && !path?.length) { toastr.info('Something in the dark blocks the way.', 'Map', { timeOut: 2500 }); return; }
     if (dark) target = { x: path[path.length - 1][0], y: path[path.length - 1][1] };
