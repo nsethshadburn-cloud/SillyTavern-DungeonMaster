@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS, OLD_DEFAULTS } from '../core/notes.js';
-import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
+import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, LIGHT_V25, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -124,6 +124,15 @@ export function settings() {
             for (const k of LIGHT_V24) if (s.taskModels[k] === main) s.taskModels[k] = DEFAULT_LIGHT_MODEL;
         }
         s.lightV24 = true;
+    }
+    // v0.25.2: story direction during play (steering back to the plot, stuck scenes, deadlocks, resyncs)
+    // moves to the light model too, the same way. One-off setup the story builds on stays.
+    if (!s.lightV25) {
+        if (s.taskModels) {
+            const main = s.dmModel || DEFAULT_MAIN_MODEL;
+            for (const k of LIGHT_V25) if (s.taskModels[k] === main) s.taskModels[k] = DEFAULT_LIGHT_MODEL;
+        }
+        s.lightV25 = true;
     }
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();

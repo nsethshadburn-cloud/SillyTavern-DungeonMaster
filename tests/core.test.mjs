@@ -189,13 +189,13 @@ test('per-job models: Sonnet for setup and story direction, Haiku for everyday p
     const taskModels = defaultTaskModels();
     const price = { [S]: 2, [H]: 0.1, 'claude-opus-5-5': 5 };
     const o = { hybrid: true, mainModel: S, taskModels, rank: m => price[m] ?? 0 };
-    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'build_place', 'drift', 'stalled', 'deadlock']) {
+    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'build_place']) {
         assert.equal(pickModel([k], o), S, k);
     }
-    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'explore', 'map_sync']) {
+    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'explore', 'map_sync', 'drift', 'stalled', 'deadlock', 'resync', 'map_brief']) {
         assert.equal(pickModel([k], o), H, k);
     }
-    assert.equal(pickModel(['ooc', 'drift'], o), S, 'the more capable model wins when jobs disagree');
+    assert.equal(pickModel(['ooc', 'opening'], o), S, 'the more capable model wins when jobs disagree');
     assert.equal(pickModel(['ooc'], { ...o, criticalRoll: true }), H, 'criticals unchanged by default');
     assert.equal(pickModel(['ooc'], { ...o, criticalRoll: true, criticalModel: S }), S);
     assert.equal(pickModel(['ooc'], { ...o, hybrid: false }), S, 'hybrid off = main model for everything');
@@ -396,7 +396,7 @@ test('companion knowledge, level changes, group-check rules, chatty scenes slow 
     assert.match(DM_RULES, /Group checks/);
     assert.match(DM_RULES, /Companions are players too/);
     assert.match(DM_RULES, /knowledge_update/);
-    assert.ok(TASKS.some(x => x.key === 'resync' && x.main), 'resync uses the main model');
+    assert.ok(TASKS.some(x => x.key === 'resync' && !x.main), 'resync runs on the light model (v0.25.2)');
     // Real conversation: the world's clock runs at half speed.
     const p = createPacingState();
     applyDmPacing(p, { world_next: 2 });
@@ -482,7 +482,7 @@ test('v0.10: refusals become a deadlock, "just happened" reaches companions', as
     assert.equal(parseDmTurn('{"happened":"The bolt is out and Amber\'s leg is bandaged."}').happened, "The bolt is out and Amber's leg is bandaged.");
     assert.match(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: 'The bolt is out.' }), /already done.*The bolt is out\.\]/);
     assert.equal(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: '' }).includes('{{happened}}'), false);
-    assert.ok(TASKS.some(t => t.key === 'deadlock' && t.main));
+    assert.ok(TASKS.some(t => t.key === 'deadlock' && !t.main), 'deadlocks run on the light model (v0.25.2)');
 });
 
 test('v0.10.1 fixes: scene_map null keeps the map, 2d20kh1 has a natural die', () => {

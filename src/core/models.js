@@ -11,6 +11,8 @@ export const DEFAULT_LIGHT_MODEL = 'claude-haiku-5-5';
  */
 /** Everyday jobs that moved to the light model in v0.24 (they hand up to the main model for big moments). */
 export const LIGHT_V24 = Object.freeze(['checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'sprite']);
+/** Story direction during play moved to the light model in v0.25.2 (one-off setup the story builds on stays on the main model). */
+export const LIGHT_V25 = Object.freeze(['drift', 'stalled', 'deadlock', 'resync']);
 
 export const TASKS = Object.freeze([
     { key: 'campaign_design', group: 'Setup', label: 'Designing a new campaign', main: true },
@@ -21,9 +23,9 @@ export const TASKS = Object.freeze([
     { key: 'build_place', group: 'Setup', label: 'Planning a map room by room (only when the map builder is set to Claude)', main: true },
     { key: 'map_brief', group: 'Setup', label: 'A map\'s short brief for the map algorithm (when the local helper isn\'t used)', main: false },
     { key: 'sprite', group: 'Setup', label: 'Describing your party\'s little map figures', main: false },
-    { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: true },
-    { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: true },
-    { key: 'deadlock', group: 'Story direction', label: 'Breaking a deadlock (you keep refusing)', main: true },
+    { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: false },
+    { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: false },
+    { key: 'deadlock', group: 'Story direction', label: 'Breaking a deadlock (you keep refusing)', main: false },
     { key: 'checkin', group: 'Story direction', label: 'The world moving on between your actions', main: false },
     { key: 'combat_action', group: 'Combat', label: 'Starting fights and your combat actions', main: false },
     { key: 'combat_round', group: 'Combat', label: 'Running combat rounds', main: false },
@@ -41,7 +43,7 @@ export const TASKS = Object.freeze([
     { key: 'map_sync', group: 'Housekeeping', label: 'Keeping the map in step with the story (when the local helper is off)', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
-    { key: 'resync', group: 'Housekeeping', label: 'Fixing a mismatch with the chat', main: true },
+    { key: 'resync', group: 'Housekeeping', label: 'Fixing a mismatch with the chat', main: false },
 ]);
 
 /** The recommended model for every job. */

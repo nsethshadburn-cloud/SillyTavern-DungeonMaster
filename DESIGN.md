@@ -324,6 +324,10 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.25.2 (more on Haiku)
+- drift, stalled, deadlock and resync default to the light model (LIGHT_V25, migrated like v0.24 for saved settings still on the main model). Because a turn with several reasons takes the most capable model, any turn that also had a drift reason used to go to Sonnet. Only one-off setup the story builds on stays on the main model (campaign design, pitches, opening, sheets, Claude-planned maps).
+- ESCALATE_INSTRUCTION: hand up only for a major reveal, completing a plot beat, or a new chapter (no longer fights breaking out, new locations or "changes where the story is going"): each hand-up paid for both models.
+
 ### v0.25.1 (companions taken away stay on the map)
 - party_away only recorded text, and partyOnMap drops away companions, so a companion "caged somewhere in the dungeon" vanished from the map. Now `heldRoom` (explore.js) reads the words: a room they name, else (held here: cell, cage, locked up, captive, somewhere in, deeper...) the likeliest captive's room the party hasn't visited, farthest from the player; elsewhere (town, camp, the road) stays off the map. `placeHeld` (atlas, after applyPresence each DM turn) puts them there, `waiting`, `held` (caged if the words say so), and adds the room to their away line for the DM. Held companions are drawn only when seen; reaching them brings them along only once they can move; party_back clears waiting and held.
 
