@@ -465,7 +465,8 @@ test('crowded, half-linked plans still build: big floors split, cut-off rooms ge
     const messy = generatePlace({ name: 'Gallowmere Keep', kind: 'castle', floors: [{ id: 'G', name: 'Ground', level: 0 }, { id: 'T', name: 'Tower top', level: 2 }],
         rooms: [{ id: 'G1', name: 'Gatehouse', floor: 'G', exit: true }, { id: 'G2', name: 'Courtyard', floor: 'G' }, { id: 'G3', name: 'Great Hall', floor: 'G' }, { id: 'T1', name: 'Lookout', floor: 'T' }, { id: 'T2', name: 'Bell room', floor: 'T' }],
         links: [{ a: 'Gatehouse', b: 'Courtyard' }, { a: 'the courtyard', b: 'G3' }, { a: 'T1', b: 'T2' }] }, 5);
-    assert.equal(reachable(messy).roomsReached.length, 4, 'every room inside can be reached');
+    assert.equal(reachable(messy).roomsReached.length, Object.keys(messy.rooms).length, 'every room inside can be reached');
+    assert.ok(Object.keys(messy.rooms).length >= 6, 'a castle gets at least its usual rooms');
     assert.ok(!Object.values(messy.rooms).some(r => r.name === 'Courtyard'), 'the courtyard is outside, on the grounds');
     assert.ok(messy.stairs.length >= 1, 'the tower got stairs');
 });
@@ -710,4 +711,30 @@ test('caught in a trap: the look fits the trap, held on its square until freed',
     place.state.positions['Judy Hopps'].x += 1;
     assert.equal(caughtNow(place, 'Judy Hopps'), null);
     assert.equal(release(place, 'Nobody'), false);
+});
+
+test('a mansion planned as just its grounds still gets the mansion: an inside, a front door, a grand outside', async () => {
+    const { generateGrounds } = await import('../src/core/layout.js');
+    // What went wrong: the party arrives to rob it, and the plan is only the yard outside.
+    const plan = normalizePlan({
+        name: 'Vashti Manor', kind: 'estate', summary: 'A rich merchant\'s manor at the edge of town.',
+        rooms: [{ id: 'Y1', name: 'Front gate', type: 'courtyard' }, { id: 'Y2', name: 'Rose garden', type: 'garden' }, { id: 'Y3', name: 'Stable yard', type: 'courtyard' }],
+        links: [{ a: 'Y1', b: 'Y2' }, { a: 'Y2', b: 'Y3' }], start: 'Y1',
+    });
+    assert.equal(plan.building, true);
+    assert.ok(plan.rooms.length >= 6, `the usual rooms of a manor: ${plan.rooms.map(r => r.name)}`);
+    assert.ok(plan.rooms.some(r => r.type === 'foyer' && r.exit), 'an entrance hall with the front door');
+    assert.ok(plan.floors.length >= 2, 'more than one floor');
+    assert.deepEqual(plan.outside.map(r => r.name), ['Front gate', 'Rose garden', 'Stable yard'], 'the yard is outside');
+    assert.equal(plan.startOutside, true);
+    const inside = generatePlace(plan, 3);
+    assert.equal(reachable(inside).roomsReached.length, Object.keys(inside.rooms).length, 'every room inside can be reached');
+    assert.ok(inside.exits.length >= 1, 'a front door');
+    const out = generateGrounds(plan, inside, 4);
+    const b = out.buildings.B1.rect;
+    assert.ok(b.w >= 13 && b.h >= 8, `a manor-sized house: ${b.w}x${b.h}`);
+    assert.ok(out.floors[0].map.props.some(p => p.type === 'fountain'), 'a fountain out front');
+    assert.ok(out.floors[0].map.w >= 29, 'not a pitiful little map');
+    // A building named for what it is, whatever "kind" the DM gave it.
+    assert.equal(normalizePlan({ name: 'Ashworth Manor', kind: 'heist target', rooms: [{ id: 'A', name: 'Garden' }] }).building, true);
 });

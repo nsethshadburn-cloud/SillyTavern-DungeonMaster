@@ -80,7 +80,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 
 ## Places and maps
 - Three kinds of places:
-  1. BIG SITES, where a large part of the story happens (the mansion they're held captive in, a dungeon to clear, a castle to infiltrate): every room on every floor is built once, up front, and kept for the rest of the campaign.
+  1. BIG SITES, where a large part of the story happens (the mansion they're held captive in or about to rob, a dungeon to clear, a castle to infiltrate, any heist or infiltration): every room on every floor is built once, up front, and kept for the rest of the campaign.
   2. SMALL MAPS: a town or village, a camp, a lone tavern or shrine, a short cave. Built once when the party arrives; a town's buildings get their insides built when the party walks in.
   3. NO MAP: roads, travel, conversations, quick stops. Most scenes.
 - To build one, set "build_place": {"name": "Blackmoor Manor", "size": "big|small", "kind": "mansion|castle|dungeon|cave|prison|temple|crypt|tower|town|village|camp|tavern|...", "why": "one line", "start": "where the party is right now in it, e.g. locked together in a cell on the lower level"}. You'll be asked for the full plan in a separate call. Big sites are expensive: only for a place the plot stays in for a long time (an act or more). Never for travel or a one-scene stop.
@@ -457,6 +457,7 @@ ${PLACE_JSON}
 
 Give every guard and person a "sprite" (their little map figure), the closest from: ${FIGURES}.
 What makes a great place (follow all of it):
+- A building is always planned INSIDE, in full, even when the party starts outside it (arriving, sneaking up, about to break in): list its inside rooms (entrance hall, the rooms on each floor). If they start outside, add the outdoor spot they're in (front garden, gate, courtyard) as a room and make it the start: it goes on the grounds map, the inside on its own.
 - Story first. Build it from the campaign bible, plot, notes, NPCs met and the recent chat. The people, clues, threats and secrets of the plot live here, in the rooms where they make sense. Rooms reveal the story as the party explores: a journal, a portrait, a room that shouldn't exist.
 - Every room earns its place: something to find, learn, use, fear, or choose. No filler. Give rooms specific names and specific descriptions.
 - Size: the number of rooms you're asked for, spread over floors the way the real building would be (cellars, ground floor, upper floors, attic, towers, wings). 6-14 rooms per floor.
@@ -478,7 +479,7 @@ What makes a great place (follow all of it):
 export const SMALL_PLACE_INSTRUCTIONS = `Design this small place for a map. The code builds the walls, doors and furniture from your plan.
 Return ONE JSON object and nothing else, in this format (usually one floor and 1-8 rooms):
 ${PLACE_JSON}
-Rules: build it from the story and the recent chat; every room has a purpose and a specific name; describe each room in 1-3 vivid sentences; a building (house, mansion, tavern, temple, castle, prison...) is built as two maps: its inside from your rooms, and its grounds outside (the building's walls and roof, its front door, the land around it) made by the code, so list the outdoor parts (garden, courtyard, stable yard, graveyard, porch) as rooms too: they go on the grounds, never inside; mark "exit": true only where a non-building place (a dungeon, a cave, a mine) has a real way out, since the DM moves the story on to new places; traps and guards only if the story has them. Room types: ${ROOM_TYPES_TEXT}.`;
+Rules: A building is always planned INSIDE, in full, even when the party starts outside it (arriving, sneaking up, about to break in): list its inside rooms (entrance hall, the rooms on each floor). If they start outside, add the outdoor spot they're in (front garden, gate, courtyard) as a room and make it the start: it goes on the grounds map, the inside on its own. Build it from the story and the recent chat; every room has a purpose and a specific name; describe each room in 1-3 vivid sentences; a building (house, mansion, tavern, temple, castle, prison...) is built as two maps: its inside from your rooms, and its grounds outside (the building's walls and roof, its front door, the land around it) made by the code, so list the outdoor parts (garden, courtyard, stable yard, graveyard, porch) as rooms too: they go on the grounds, never inside; mark "exit": true only where a non-building place (a dungeon, a cave, a mine) has a real way out, since the DM moves the story on to new places; traps and guards only if the story has them. Room types: ${ROOM_TYPES_TEXT}.`;
 
 /** Planning a town or village. */
 export const TOWN_PLAN_INSTRUCTIONS = `Design this town or village for a map. The code lays out the streets, roofs, signs and greenery; each building's inside is built when the party walks in.

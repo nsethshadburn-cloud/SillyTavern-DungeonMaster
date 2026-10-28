@@ -11,6 +11,7 @@ import { placeSummary, placeView, cropText } from '../core/explore.js';
 import { atlas, currentPlace, partyOnMap, loadPlace } from './atlas.js';
 import { activeBoard } from './fire-turn.js';
 import { fireSummary } from '../core/fire.js';
+import { GRAND_KINDS } from '../core/layout.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
@@ -302,7 +303,9 @@ function logCost(label, usd) {
 export async function askPlacePlan(req, { signal = null } = {}) {
     const c = campaign();
     const big = req.size === 'big';
-    const rooms = big ? (/castle|palace|fortress|dungeon|prison|asylum/.test(req.kind) ? 40 : /mansion|manor|estate|temple|tower|mine|crypt|catacomb/.test(req.kind) ? 34 : 26) : 6;
+    // A mansion or castle is never a handful of rooms, even as a "small" map: it gets the full rules.
+    const grand = !big && GRAND_KINDS.test(`${req.kind} ${req.name}`.toLowerCase());
+    const rooms = big ? (/castle|palace|fortress|dungeon|prison|asylum/.test(req.kind) ? 40 : /mansion|manor|estate|temple|tower|mine|crypt|catacomb/.test(req.kind) ? 34 : 26) : grand ? 12 : 6;
     const user = [
         '# PLOT', c.docs.plot || '(none)',
         '', '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none)',
@@ -313,9 +316,9 @@ export async function askPlacePlan(req, { signal = null } = {}) {
         '', '# WHERE THE PARTY IS RIGHT NOW (the scene card)', renderSceneCard(c.docs.world.sceneCard) || '(not set)',
         '', '# BUILD THIS PLACE',
         `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nWhy it's needed: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}${req.town ? '' : `\nAbout ${rooms} rooms${big ? '' : ' at most'}.`}`,
-        '', req.town ? TOWN_PLAN_INSTRUCTIONS : big ? PLACE_PLAN_INSTRUCTIONS : SMALL_PLACE_INSTRUCTIONS,
+        '', req.town ? TOWN_PLAN_INSTRUCTIONS : big || grand ? PLACE_PLAN_INSTRUCTIONS : SMALL_PLACE_INSTRUCTIONS,
     ].join('\n');
-    const reply = await callClaude({ system: await stableSystem(), user, task: 'build_place', label: `planning ${req.name}`, maxTokens: big ? 20000 : 6000, signal });
+    const reply = await callClaude({ system: await stableSystem(), user, task: 'build_place', label: `planning ${req.name}`, maxTokens: big ? 20000 : grand ? 12000 : 6000, signal });
     logCost(`planning ${req.name} · ${modelLabel(reply.model)}`, reply.usd);
     const json = extractJson(reply.text);
     if (!json) throw new Error('Claude did not return a usable plan. Ask the DM to try again.');
