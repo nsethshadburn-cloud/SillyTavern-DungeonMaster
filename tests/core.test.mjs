@@ -507,3 +507,22 @@ test('v0.18.2: telling a companion to do something: where they go, and whether t
     assert.equal(parseHelperTriage('{"category":"banter","task":null}', []).task, null);
     assert.equal(parseHelperTriage('{"category":"action","task":{"who":"Judy Hopps","what":"wait here"}}', []).task.dm, false);
 });
+
+test('v0.19.1: damage from a save: all on a failure, half on a success when it says so', async () => {
+    const { damageDice, saveDamage } = await import('../src/core/dice.js');
+    const { parseDmTurn } = await import('../src/core/protocol.js');
+    assert.equal(damageDice('2d4 piercing'), '2d4');
+    assert.equal(damageDice('takes 3d6 + 2 fire damage'), '3d6+2');
+    assert.equal(damageDice('5'), '5');
+    assert.equal(damageDice('nothing happens'), '');
+    const fail = saveDamage('2d4 piercing', true, false, { rng: sides => sides }); // every die rolls its highest
+    assert.deepEqual([fail.total, fail.half], [8, false]);
+    const half = saveDamage('2d4', false, true, { rng: sides => sides });
+    assert.deepEqual([half.total, half.half], [4, true]);
+    assert.equal(saveDamage('2d4', false, false), null, 'a success without half: nothing');
+    assert.equal(saveDamage('', true), null);
+    const t = parseDmTurn('{"npc_rolls": [{"who": "Judy Hopps", "what": "DEX save", "notation": "1d20+4", "dc": 13, "kind": "save", "damage": "2d4 piercing", "half": true}], "player_roll": {"kind": "save", "skill": "DEX save", "dc": 13, "damage": "3d6", "half": true}}');
+    assert.equal(t.npc_rolls[0].half, true);
+    assert.equal(t.npc_rolls[0].damage, '2d4 piercing');
+    assert.equal(t.player_roll.half, true);
+});

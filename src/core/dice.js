@@ -65,6 +65,25 @@ export function parseNotation(notation) {
  * @param {{advantage?: 'advantage'|'disadvantage'|'none'|string, rng?: (sides:number)=>number}} [options]
  * @returns {{notation:string, total:number, rolls:number[], dropped:number[], modifier:number, natural:number|null, detail:string} | null}
  */
+/** The dice in a damage text ("2d4 piercing", "3d6 fire, half on a save", "5"), or ''. */
+export function damageDice(text) {
+    const m = String(text ?? '').match(/\d*d\d+(?:\s*[+-]\s*\d+)?|^\s*\d+\b/i);
+    return m ? m[0].replace(/\s+/g, '').trim() : '';
+}
+
+/**
+ * Damage from a saving throw: all of it on a failure, half (rounded down) on a success when
+ * half is true, else none. Returns {total, half, detail} or null when nothing is taken.
+ */
+export function saveDamage(damage, failed, half = false, options = {}) {
+    const dice = damageDice(damage);
+    if (!dice || (!failed && !half)) return null;
+    const r = roll(dice, options);
+    if (!r) return null;
+    const total = failed ? r.total : Math.floor(r.total / 2);
+    return total > 0 ? { total, half: !failed, detail: r.detail } : null;
+}
+
 export function roll(notation, options = {}) {
     const parsed = parseNotation(notation);
     if (!parsed) return null;

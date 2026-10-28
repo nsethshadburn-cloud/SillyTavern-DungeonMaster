@@ -288,7 +288,8 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
     if (!trap) return '';
     const room = place.rooms[trap.room]?.name ?? 'a passage';
     const dc = `DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}.`;
-    const roll = player ? 'Ask for the roll (player_roll)' : `Roll for ${name} (npc_rolls)`;
+    const dmg = `kind "save"${trap.save ? ` (${trap.save})` : ''}, dc ${trap.dc}, with the trap's damage dice in "damage" (and "half": true if a success still takes half) so the code applies it`;
+    const roll = player ? `Ask for the save (player_roll, ${dmg})` : `Roll ${name}'s save (npc_rolls, ${dmg})`;
     if (trap.state === 'hidden') {
         trap.state = 'sprung';
         const map = floorById(place, floorId).map;

@@ -58,6 +58,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - One roll per check. Never re-roll the same check because the first result was inconvenient, and make every result matter: a success or failure changes what happens next.
 - Every roll is shown to the player with who rolled, for what, and the number. There are no secret rolls.
 - When a companion or NPC acts covertly near the player (sneaking, stealing, picking a lock, slipping a key), THEY roll (Stealth, Sleight of Hand...) against the player's PASSIVE Perception (10 + Perception bonus; -5 if asleep). Don't ask the player for an active roll to notice something while they're asleep or unaware. Roll first, then decide what happened; never brief a companion that they succeeded before their roll.
+- Damage from a save (a trap, a Fireball, poison) is applied by the code, since you don't know the roll: put the dice in "damage" on the save (npc_rolls or player_roll kind "save"), with "half": true when a success still takes half (Fireball, most traps that blast an area). Never leave damage only in the narration: HP that isn't sent doesn't change.
 - Everyone else's dice are rolled by code from npc_rolls. You don't know the result in advance, so give both outcomes (on_success / on_fail) in plain words; they are shown to the player on the dice card and passed to that character. Keep your narration neutral about that outcome.
 
 ## Combat: you run it
@@ -127,7 +128,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "happened": "one plain past-tense sentence of what visibly changed this turn, or empty",
   "ooc": "out-of-character reply (only when the player asked something OOC)",
   "player_roll": {"kind": "check|save|attack|damage|initiative", "skill": "Perception", "ability": "WIS", "die": 20, "dc": 15, "advantage": "none|advantage|disadvantage", "reason": "why", "damage": "1d8+3 (for attacks)", "bonus": "only when their sheet has no number for it in skills or tools"},
-  "npc_rolls": [{"who": "Judy Hopps", "what": "Stealth", "notation": "1d20+5", "dc": 13, "kind": "check|attack|save", "target": "name (attacks)", "damage": "1d6+2 (attacks)", "on_success": "plain words: what happens", "on_fail": "plain words: what happens"}],
+  "npc_rolls": [{"who": "Judy Hopps", "what": "Stealth", "notation": "1d20+5", "dc": 13, "kind": "check|attack|save", "target": "name (attacks)", "damage": "1d6+2 (attacks: dealt to the target on a hit; saves: taken by the roller on a failure)", "half": false, "on_success": "plain words: what happens", "on_fail": "plain words: what happens"}],
   "directions": [{"speaker": "exact name", "direction": "the brief", "length": "short|normal|long"}],
   "new_npcs": [{"name": "Brannoc Vell", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile", "stats": "optional: AC 12, HP 11, +4 to hit, 1d6+2", "sprite": "the figure that fits THIS person (see Map figures)"}],
   "scene": {"type": "social|exploration|tension|combat|downtime", "location": "short place name", "setting": "road|town|wild|dungeon|sea", "time": "morning|afternoon|evening|night", "changed": false},
@@ -300,6 +301,7 @@ export function normalizeDmTurn(raw) {
             advantage: str(pr.advantage) || 'none',
             reason: str(pr.reason),
             damage: str(pr.damage),
+            half: pr.half === true || pr.half === 'true',
             bonus: pr.bonus !== null && pr.bonus !== '' && Number.isFinite(Number(pr.bonus)) ? Math.round(Number(pr.bonus)) : null,
         };
     }
@@ -311,6 +313,7 @@ export function normalizeDmTurn(raw) {
         kind: ['check', 'attack', 'save'].includes(String(r.kind)) ? String(r.kind) : 'check',
         target: str(r.target),
         damage: str(r.damage),
+        half: r.half === true || r.half === 'true',
         on_success: str(r.on_success),
         on_fail: str(r.on_fail),
     }));

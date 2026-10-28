@@ -24,7 +24,7 @@ import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
-import { roll, judge, formatModifier, random01 } from '../core/dice.js';
+import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway } from '../core/world.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens } from '../core/text.js';
@@ -505,11 +505,23 @@ async function resolvePlayerRoll(c, parsed, status) {
         saveDoc('world');
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
+    // A save with damage: the code takes the HP off (all on a failure, half on a success if it says so).
+    let saveHurt = '';
+    if (pr.kind === 'save' && pr.damage) {
+        const hurt = saveDamage(pr.damage, judged.success === false, pr.half);
+        if (hurt) {
+            const line = changeHp(c.docs.world, meta.persona.name, -hurt.total, [meta.persona.name, ...meta.party.map(p => p.name)]);
+            saveDoc('world');
+            playAnim(meta.persona.name, 'hurt');
+            await postNote(`💥 ${meta.persona.name} takes **${hurt.total}** damage${hurt.half ? ' (half)' : ''}${line ? ` (${line})` : ''}.`);
+            saveHurt = ` The code already applied ${hurt.total} damage${hurt.half ? ' (half, for the success)' : ''}: ${line || 'done'}. Don't apply it again.`;
+        }
+    }
     const search = pr.kind !== 'damage' && /perception|investigation|search/i.test(`${pr.skill} ${pr.reason || ''}`) ? searchForTraps(c, meta.persona.name, total) : null;
     if (search?.found.length) { await postNote(`⚠️ Searching ${search.room}, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
     const searchText = search ? ` Searching ${search.room} with that roll, the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
     if (pr.kind === 'damage') return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
-    return searchText + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
+    return searchText + saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
 }
 
 /**
@@ -886,6 +898,17 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (dmg) {
                 const line = changeHp(world, r.target, -dmg.total, [...meta.party.map(p => p.name), meta.persona.name]);
                 damageText = ` · **${dmg.total}** damage${line ? ` (${line})` : ''}`;
+            }
+        }
+        // A save with damage (a trap, a Fireball): taken by the one who rolled, all on a failure, half on a success if it says so.
+        // (Dice written only in the failure text, "takes 2d4 piercing damage", count too.)
+        const saveDice = r.damage || (/\d*d\d+/i.test(r.on_fail) ? r.on_fail : '');
+        if (r.kind === 'save' && saveDice) {
+            const hurt = saveDamage(saveDice, judged.success === false, r.half);
+            if (hurt) {
+                const line = changeHp(world, r.who, -hurt.total, [...meta.party.map(p => p.name), meta.persona.name]);
+                damageText = ` · **${hurt.total}** damage${hurt.half ? ' (half)' : ''}${line ? ` (${line})` : ''}`;
+                playAnim(r.who, 'hurt');
             }
         }
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
