@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizePlan, generatePlace, generateTown, generateInterior, reachable, normalizeTownPlan } from '../src/core/layout.js';
-import { stepOn, adoptTrapProps, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
+import { stepOn, adoptTrapProps, followSteps, trapsKnownTo, tellTraps, knowsTrap, roomAt, doorAt, computeVisible, reveal, isExplored, findPath, applyPlaceChanges, placeSummary, placeView, tickGuards, stairsAt, floorById, placePerson, adoptStrays, walkable } from '../src/core/explore.js';
 import { colName, parseCoord, terrainAt, PROPS, MAX_PLACE_SIZE, signIcon, propAt, isWalkable, normalizeMap, placeNear, toCoord } from '../src/core/grid.js';
 import { roomType } from '../src/core/rooms.js';
 import { parseDmTurn, DM_RULES, PLACE_PLAN_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS } from '../src/core/protocol.js';
@@ -549,4 +549,44 @@ test('traps the DM sets go off: add_traps, add_props type "trap", and old trap p
     assert.equal(adoptTrapProps(place), 1);
     assert.match(stepOn(place, 'Judy Hopps', 'G', A.x + 1, A.y), /spikes/);
     assert.equal(adoptTrapProps(place), 0, 'nothing left to fix');
+});
+
+test('companions follow on their own way, around traps they know about, over them when there is no other way', () => {
+    const place = tinyPlace();
+    const close = (p, q) => Math.max(Math.abs(p.x - q.x), Math.abs(p.y - q.y));
+    const walk = (from, lead, avoid) => {
+        const p = { ...from }, trod = [];
+        for (let i = 0; i < 20; i++) {
+            const s = followSteps(place, 'G', p, lead, { avoid });
+            if (!s.length) break;
+            [[p.x, p.y]] = s;
+            trod.push(`${p.x},${p.y}`);
+        }
+        return { p, trod };
+    };
+    // Through the door from A into B: ends right next to the player.
+    const lead = { x: 4, y: 11 };
+    const { p, trod } = walk({ x: 4, y: 16 }, lead, []);
+    assert.equal(close(p, lead), 1, 'stops beside the player');
+    assert.ok(trod.includes('4,13'), 'through the doorway');
+    assert.equal(followSteps(place, 'G', p, lead).length, 0, 'already close: stays put');
+    // A trap in the doorway they know about: it's the only way, so they cross it.
+    const door = Object.values(place.traps).length;
+    const log = applyPlaceChanges(place, { add_traps: [{ at: toCoord(4, 13), kind: 'tripwire', hidden: true }] });
+    const trap = Object.values(place.traps)[door];
+    assert.ok(trap, String(log));
+    trap.state = 'found';
+    assert.equal(knowsTrap(trap, 'Judy Hopps'), false, 'found by the player: Judy doesn\'t know yet');
+    assert.deepEqual(trapsKnownTo(place, 'G', 'Judy Hopps'), []);
+    assert.deepEqual(tellTraps(place, 'Judy Hopps').map(t => t.id), [trap.id], 'the player tells her');
+    assert.deepEqual(trapsKnownTo(place, 'G', 'Judy Hopps'), ['4,13']);
+    assert.ok(walk({ x: 4, y: 16 }, lead, trapsKnownTo(place, 'G', 'Judy Hopps')).trod.includes('4,13'), 'no other way: over it');
+    // In the open she goes around it.
+    trap.x = 3; trap.y = 10;
+    const around = walk({ x: 3, y: 12 }, { x: 3, y: 8 }, trapsKnownTo(place, 'G', 'Judy Hopps'));
+    assert.ok(!around.trod.includes('3,10'), `around the known trap: ${around.trod}`);
+    assert.equal(close(around.p, { x: 3, y: 8 }), 1);
+    // Set in plain sight: everyone knows.
+    applyPlaceChanges(place, { add_traps: [{ at: toCoord(5, 10), kind: 'caltrops' }] });
+    assert.ok(trapsKnownTo(place, 'G', 'Anyone').includes('5,10'));
 });

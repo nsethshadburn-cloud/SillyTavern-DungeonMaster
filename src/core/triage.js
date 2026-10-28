@@ -90,6 +90,7 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
         away.length ? `Not with the player (can't hear or reply): ${away.join('; ')}.` : '',
         '"addressed": the name of the character the player is speaking to or acting toward (any name, even if not in that list), or "" if nobody in particular.',
         companions.length ? `"task": only if the player tells or asks a companion (${companions.map(s => JSON.stringify(s)).join(', ')}) to DO something now (not just talk): {"who": their name, "what": "a few words", "go": ${places.length ? '"the id of the place or thing they have to go to first, from the list below, or empty"' : '""'}, "dm": true if what happens or what they find isn't known yet and the Dungeon Master has to decide it (searching, looking inside, checking for something, opening, picking a lock, sneaking, scouting, listening at a door, anything that could need a dice roll), false for simple things whose result is obvious (follow me, wait here, sit down, hand me that, go stand over there)}. Otherwise "task": null.` : '',
+        companions.length ? `"warned": the name of the companion the player tells or warns about a trap or a dangerous spot (where it is, to watch out for it), or "".` : '',
         companions.length && places.length ? `Places and things on the map near the party: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}.` : '',
         'Example: {"category":"banter","engaged":2,"stalled":false,"speakers":["Judy Hopps"],"addressed":"Judy Hopps"' + (companions.length ? ',"task":null' : '') + '}',
     ].filter(Boolean).join('\n');
@@ -116,6 +117,7 @@ export function parseHelperTriage(text, speakers = []) {
         speakers: picked.filter(s => speakers.some(x => x.toLowerCase() === s.toLowerCase())).slice(0, 2),
         addressed: typeof data.addressed === 'string' ? data.addressed.trim().slice(0, 60) : '',
         task: parseTask(data.task),
+        warned: typeof data.warned === 'string' ? data.warned.trim().slice(0, 60) : '',
     };
 }
 

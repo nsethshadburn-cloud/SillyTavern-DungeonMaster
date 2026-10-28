@@ -11,7 +11,7 @@ import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, adoptTrapProps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -211,10 +211,16 @@ export async function companionGoTo(c, name, targetId, { hide = false } = {}) {
         const spot = openSquareNear(place, pos.floor, room.rect.x + Math.floor(room.rect.w / 2), room.rect.y + Math.floor(room.rect.h / 2), others, 4);
         if (spot) goals.push(spot);
     }
+    // Around the traps they know about if there's another way; over them if there isn't.
+    const careful = new Set([...others, ...trapsKnownTo(place, pos.floor, name)]);
     let path = null;
-    for (const g of goals) {
-        const p = g.x === pos.x && g.y === pos.y ? [] : findPath(place, pos.floor, pos, g, { blocked: others, knownOnly: false });
-        if (p && (!path || p.length < path.length)) path = p;
+    for (const blocked of [careful, others]) {
+        for (const g of goals) {
+            if (blocked.has(`${g.x},${g.y}`) && blocked !== others) continue;
+            const p = g.x === pos.x && g.y === pos.y ? [] : findPath(place, pos.floor, pos, g, { blocked, knownOnly: false });
+            if (p && (!path || p.length < path.length)) path = p;
+        }
+        if (path) break;
     }
     if (!path) return '';
     const { refreshMap } = await import('../ui/map.js');
@@ -256,6 +262,7 @@ export function searchForTraps(c, name, total) {
     const near = t => (rm ? t.room === rm.id : Math.max(Math.abs(t.x - pos.x), Math.abs(t.y - pos.y)) <= 3);
     const inRoom = Object.values(place.traps).filter(t => t.floor === pos.floor && near(t));
     const found = inRoom.filter(t => t.state === 'hidden' && total >= t.dc);
+    learnTraps(found, name);
     for (const t of found) {
         t.state = 'found';
         const prop = floorById(place, t.floor).map.props.find(p => p.trap === t.id);
@@ -685,36 +692,43 @@ export async function walkTo(target, redraw = () => { }) {
         return;
     }
     walking = true;
-    const trail = [{ x: lead.x, y: lead.y }];
     // Leaving the room: each companion in it decides (local model) whether to come along. They
-    // stand still until they've decided; on a yes they walk after the player along the same path
-    // (a little faster, to catch up), on a no they stay where they are.
+    // stand still until they've decided; on a yes they follow (a little faster, to catch up), on a
+    // no they stay where they are. Followers find their own way to the player each step.
     const fromRoom = roomAt(place, floorId, lead.x, lead.y), toRoom = roomAt(place, floorId, target.x, target.y);
     const onFloor = followers(c, place).filter(n => place.state.positions[n]?.floor === floorId);
     const leaving = fromRoom?.id !== toRoom?.id || !fromRoom;
     const deciding = leaving ? onFloor.filter(n => { const p = place.state.positions[n]; return roomAt(place, floorId, p.x, p.y)?.id === fromRoom?.id; }) : [];
-    const walkers = onFloor.filter(n => !deciding.includes(n));
-    const chasers = new Map(); // name -> how far along the player's path they are (-1 = not started)
+    const active = new Set(onFloor.filter(n => !deciding.includes(n)));
     const refused = new Set();
     const pending = deciding.map(n => decideFollow(c, n, fromRoom?.name, toRoom?.name).then(d => {
-        if (d.follows) { chasers.set(n, -1); return; }
+        if (d.follows) { active.add(n); return; }
         refused.add(n);
         redraw();
         return setWaiting(n, true, { why: d.why });
     }));
-    const order = () => [...walkers, ...chasers.keys()];
-    /** Move companions who decided to come one or two squares further along the player's path. */
-    const advanceChasers = () => {
+    const trapped = [];
+    const gap = p => Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y));
+    /** Each follower takes a step (two when far behind) on their own way to the player; nearest first. */
+    const advance = () => {
         let moved = false;
-        order().forEach((n, i) => {
-            if (!chasers.has(n)) return;
-            const goal = Math.max(0, trail.length - 2 - i), cur = chasers.get(n);
-            if (cur >= goal) return;
-            const next = Math.min(goal, cur + 2);
-            chasers.set(n, next);
-            Object.assign(place.state.positions[n], trail[next]);
-            moved = true;
-        });
+        const list = [...active].filter(n => place.state.positions[n]?.floor === floorId).sort((a, b) => gap(place.state.positions[a]) - gap(place.state.positions[b]));
+        for (const n of list) {
+            const p = place.state.positions[n];
+            const taken = new Set([...others, ...Object.entries(place.state.positions).filter(([m, q]) => m !== n && m !== names[0] && q.floor === floorId).map(([, q]) => `${q.x},${q.y}`)]);
+            const steps = followSteps(place, floorId, p, lead, { taken, steps: gap(p) > 3 ? 2 : 1, avoid: trapsKnownTo(place, floorId, n) });
+            // No way to get any closer (shut in, cut off): they stop trying for this walk.
+            if (!steps.length && gap(p) > 3) active.delete(n);
+            for (const [x, y] of steps) {
+                const d = doorAt(place, floorId, x, y);
+                if (d && d.state === 'closed') setDoorState(place, d, 'open');
+                Object.assign(p, { x, y });
+                moved = true;
+                // Their own way, their own traps.
+                const sprung = stepOn(place, n, floorId, x, y);
+                if (sprung) { active.delete(n); trapped.push(sprung); break; }
+            }
+        }
         return moved;
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
@@ -724,19 +738,14 @@ export async function walkTo(target, redraw = () => { }) {
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') setDoorState(place, d, 'open');
             lead.x = x; lead.y = y;
-            trail.push({ x, y });
-            walkers.forEach((n, i) => {
-                const spot = trail[trail.length - 2 - i] ?? trail[0];
-                if (place.state.positions[n]?.floor === floorId) Object.assign(place.state.positions[n], spot);
-            });
-            advanceChasers();
+            advance();
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
             // A trap here. Hidden ones stay hidden until someone searches the room (a Perception or
             // Investigation roll) or steps on one: then it springs.
             const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
-            if (sprung) { event = sprung; break; }
+            if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);
@@ -746,15 +755,14 @@ export async function walkTo(target, redraw = () => { }) {
             if (d?.enter) { handoff = { building: d }; break; }
             if (d?.exit) { handoff = { exit: d }; break; }
         }
-        // Wait for anyone still deciding, then let those who chose to come catch up.
-        if (pending.length) {
-            await Promise.all(pending);
-            while (advanceChasers()) {
-                look(c, key, place);
-                redraw();
-                await sleep(95);
-            }
+        // Wait for anyone still deciding, then everyone following catches up (unless something happened).
+        if (pending.length) await Promise.all(pending);
+        for (let i = 0; i < 40 && !event && advance(); i++) {
+            look(c, key, place);
+            redraw();
+            await sleep(95);
         }
+        if (!event && trapped.length) event = trapped.join(' ');
         // Rooms entered on the way; a companion who stayed behind rejoins when you reach them.
         await noteRoom(c, place);
         const here = roomAt(place, lead.floor, lead.x, lead.y);

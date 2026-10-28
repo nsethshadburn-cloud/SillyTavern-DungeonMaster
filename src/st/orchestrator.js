@@ -15,7 +15,7 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
-import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear } from '../core/explore.js';
+import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps } from '../core/explore.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
@@ -184,6 +184,13 @@ async function turnBody(c, opts, status, signal) {
                 const h = parseHelperTriage(raw, candidates);
                 const who = h.task && matchName(h.task.who, helpers);
                 if (who) triage.task = { ...h.task, who, go: places.some(p => p.id === h.task.go) ? h.task.go : '' };
+                // Warned about a trap: they learn every trap the player knows about, and walk around them.
+                const warned = h.warned && matchName(h.warned, helpers);
+                const here = warned && currentPlace(c);
+                if (here) {
+                    const learned = tellTraps(here.place, warned);
+                    if (learned.length) { savePlace(here.key, c); status.note(`${warned} knows about the ${learned.map(t => t.kind).join(', ')} now`); }
+                }
                 if (!rule.category) triage.category = h.category;
                 triage.stalled = h.stalled;
                 triage.speakers = h.speakers;

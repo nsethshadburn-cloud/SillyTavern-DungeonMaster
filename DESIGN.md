@@ -324,6 +324,10 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.18.6 (companions find their own way; warning them about traps)
+- Following: `followSteps(place, floor, from, leader, {taken, steps, avoid})` (explore.js) is a BFS to the nearest free square within 1 (then 2, 3) of the leader, avoiding stairs. Each step of the player's walk every follower (nearest first) takes 1 step, 2 when more than 3 behind; after the walk they catch up. No more trail of the player's squares. Each follower's step goes through stepOn (their own traps). A follower who can't get closer stops for that walk (no whole-map searches every step).
+- Trap knowledge: `trap.knownBy` (names, or "*"). The finder (searchForTraps) learns it; sprung traps are known to all; traps set in plain sight (add_traps not hidden, old trap pictures) and traps the DM marks found are "*". `trapsKnownTo` gives a companion's known live traps: followSteps and companionGoTo route around them at each distance before crossing. The helper triage returns `warned` (the companion the player warns about a trap): `tellTraps` teaches them every found trap.
+
 ### v0.18.4 (traps the DM sets)
 - `place_changes.add_traps` [{at, kind, dc, save, effect, hidden}] → `addTrap` puts a real trap in place.traps with its linked prop. `add_props` with type "trap" is treated the same (that was how the DM drew traps before: a picture with no trap behind it, so nothing went off). `adoptTrapProps` on load turns old unlinked trap pictures into visible traps.
 

@@ -210,10 +210,10 @@ export function walkable(place, floorId, x, y) {
  * toward: running into the dark. Uses the real map (not what's explored) and, when the square
  * can't be reached (a wall, a locked door), goes as close to it as the way allows.
  */
-export function findPath(place, floorId, from, to, { knownOnly = true, blocked = new Set(), toward = false } = {}) {
+export function findPath(place, floorId, from, to, { knownOnly = true, blocked = new Set(), toward = false, isGoal = null } = {}) {
     const map = floorById(place, floorId).map;
     const known = (x, y) => toward || !knownOnly || isExplored(place, floorId, x, y);
-    if (!toward && (!walkable(place, floorId, to.x, to.y) || !known(to.x, to.y))) return null;
+    if (!toward && !isGoal && (!walkable(place, floorId, to.x, to.y) || !known(to.x, to.y))) return null;
     const key = (x, y) => y * map.w + x;
     const prev = new Map([[key(from.x, from.y), null]]);
     const queue = [[from.x, from.y]];
@@ -226,7 +226,7 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
     let best = key(from.x, from.y), bestFar = far(from.x, from.y);
     for (let qi = 0; qi < queue.length; qi++) {
         const [x, y] = queue[qi];
-        if (x === to.x && y === to.y) return pathTo(key(x, y));
+        if (isGoal ? qi > 0 && isGoal(x, y) : x === to.x && y === to.y) return pathTo(key(x, y));
         // Stairs and ways out are where a walk ends, not somewhere to stop near.
         if (toward && far(x, y) < bestFar && terrainAt(map, x, y) !== '<' && terrainAt(map, x, y) !== '>') { best = key(x, y); bestFar = far(x, y); }
         for (const [dx, dy] of DIRS8) {
@@ -245,6 +245,37 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
 
 /** An open pit (or hole) stays dangerous after it's sprung; darts and the like are spent. */
 const OPEN_TRAP = /pit|hole|trapdoor|chasm|shaft/i;
+
+/**
+ * Does `name` know about this trap? They found it, saw it go off, were told about it, or it was
+ * set in plain sight ("*"). Companions walk around the traps they know about.
+ */
+export function knowsTrap(trap, name) {
+    if (trap.state === 'sprung') return true;
+    if (trap.state !== 'found') return false;
+    return (trap.knownBy ?? []).some(n => n === '*' || nameKey(n) === nameKey(name));
+}
+
+/** Squares of live traps `name` knows about on a floor (a known plate, an open pit): to walk around. */
+export function trapsKnownTo(place, floorId, name) {
+    return Object.values(place.traps).filter(t => t.floor === floorId && (t.state === 'found' || (t.state === 'sprung' && OPEN_TRAP.test(t.kind))) && knowsTrap(t, name)).map(t => `${t.x},${t.y}`);
+}
+
+/** The player tells `to` about the traps they know of (every found one: they're on the map). Returns what `to` learned. */
+export function tellTraps(place, to) {
+    const learned = [];
+    for (const t of Object.values(place.traps)) {
+        if (t.state !== 'found' || knowsTrap(t, to)) continue;
+        (t.knownBy ??= []).push(to);
+        learned.push(t);
+    }
+    return learned;
+}
+
+/** `name` now knows about these traps (they found them). */
+export function learnTraps(traps, name) {
+    for (const t of traps) if (!knowsTrap(t, name)) (t.knownBy ??= []).push(name);
+}
 
 /**
  * Someone steps onto (x, y). A hidden trap springs (and shows); a known one goes off unless they
@@ -278,7 +309,7 @@ export function addTrap(place, floorId, x, y, { kind = '', dc = 13, save = '', e
     const id = `T${n}`;
     const name = String(kind || 'trap').slice(0, 60);
     const trap = {
-        id, room: roomAt(place, floorId, x, y)?.id ?? null, floor: floorId, x, y, kind: name,
+        id, room: roomAt(place, floorId, x, y)?.id ?? null, floor: floorId, x, y, kind: name, knownBy: hidden ? [] : ['*'],
         dc: Math.min(25, Math.max(8, Math.round(Number(dc)) || 13)), save: String(save || '').slice(0, 24),
         effect: String(effect || '').slice(0, 240) || `the ${name} goes off`, state: hidden ? 'hidden' : 'found',
     };
@@ -305,6 +336,28 @@ export function adoptTrapProps(place) {
         }
     }
     return n;
+}
+
+/**
+ * A companion following someone: their own shortest way to a free square close to the leader (next
+ * to them if there's room, else within two or three), not the leader's footprints. Returns up to
+ * `steps` squares, or [] when they're already close or can't get closer.
+ */
+export function followSteps(place, floorId, from, leader, { taken = new Set(), steps = 1, avoid = [] } = {}) {
+    const dist = (x, y) => Math.max(Math.abs(x - leader.x), Math.abs(y - leader.y));
+    const blocked = new Set([...taken, `${leader.x},${leader.y}`]);
+    const careful = new Set([...blocked, ...avoid]);
+    // Room next to the player first (then within two, three when it's crowded); at each distance, a
+    // way around their known traps if there is one.
+    for (const near of [1, 2, 3]) {
+        if (dist(from.x, from.y) <= near) return [];
+        for (const set of avoid.length ? [careful, blocked] : [blocked]) {
+            const isGoal = (x, y) => dist(x, y) <= near && !set.has(`${x},${y}`) && !stairsAt(place, floorId, x, y);
+            const path = findPath(place, floorId, from, leader, { knownOnly: false, blocked: set, isGoal });
+            if (path?.length) return path.slice(0, steps);
+        }
+    }
+    return [];
 }
 
 /** A free square next to (x, y) for a companion to stand on. */
@@ -364,6 +417,8 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         if (!trap) continue;
         const state = { found: 'found', spotted: 'found', disarmed: 'disarmed', sprung: 'sprung', triggered: 'sprung' }[String(raw).toLowerCase()];
         if (!state) continue;
+        // The DM revealing a trap in the story: the party all hear about it.
+        if (state === 'found' && trap.state === 'hidden') trap.knownBy = ['*'];
         trap.state = state;
         const prop = floorById(place, trap.floor).map.props.find(p => p.trap === trap.id);
         if (prop) prop.hidden = state === 'disarmed';
