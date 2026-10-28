@@ -118,7 +118,9 @@ test('towns: roofed buildings with doors on the road, shop signs, exits at the r
     const signs = map.props.filter(p => p.type === 'sign');
     assert.ok(signs.some(s => s.label === 'The Rusty Anvil' && s.icon === 'anvil'));
     assert.ok(signs.some(s => s.label === 'The Drowsy Goose' && s.icon === 'mug'));
-    assert.equal(map.roofs.length, 10);
+    assert.ok(map.roofs.length > 10, 'every building roofed, most in several parts (wings, gables, turrets, porches)');
+    const boxes = Object.values(town.buildings).filter(b => { let n = 0; for (let x = b.rect.x; x < b.rect.x + b.rect.w; x++) for (let y = b.rect.y; y < b.rect.y + b.rect.h; y++) if ('#|+'.includes(terrainAt(map, x, y))) n++; return n === b.rect.w * b.rect.h && !map.roofs.some(r => ['cone', 'apse', 'porch'].includes(r.shape) && r.x >= b.rect.x - 2 && r.x <= b.rect.x + b.rect.w + 1 && r.y >= b.rect.y - 2 && r.y <= b.rect.y + b.rect.h + 1); });
+    assert.ok(boxes.length <= 4, `variety, not boxes: ${boxes.length} of 10 are plain`);
     assert.ok(new Set(map.areas.map(a => JSON.stringify(a.wallColor))).size > 3, 'houses come in different colors');
     assert.ok(town.exits.length >= 4);
     assert.equal(town.state.explored.F0.includes('0'), false, 'a town needs no fog');
@@ -765,4 +767,43 @@ test('buildings take real shapes: wings, a round front, towers, porticos; castle
     assert.ok(map.rows.join('').includes('w') && map.rows.join('').includes('b'), 'a moat and a bridge');
     assert.ok(out.rooms.bailey, 'a bailey');
     assert.ok(fp(out, 'F0', out.start, { x: door.x, y: door.y - 1 }, { knownOnly: false }), 'over the bridge, through the gatehouse, up to the keep');
+});
+
+test('a walled town: walls with battlements round it, towers, gatehouses on the roads, the square inside', () => {
+    const town = generateTown({ ...TOWN_PLAN, walled: true, layout: 'crossroads' }, 5);
+    const map = town.floors[0].map;
+    assert.ok(map.w <= MAX_PLACE_SIZE && map.h <= MAX_PLACE_SIZE);
+    assert.ok(map.roofs.filter(r => r.shape === 'battlement').length >= 4, 'battlements all round');
+    assert.ok(map.roofs.filter(r => r.shape === 'cone').length >= 8, 'corner towers and gate towers');
+    assert.ok(map.props.some(p => p.type === 'fountain'), 'the square in the middle');
+    for (const b of Object.values(town.buildings)) {
+        const d = town.doors[b.door];
+        assert.equal(terrainAt(map, d.x, d.y), '+');
+        assert.ok(findPath(town, 'F0', town.start, { x: d.x, y: d.y }), `walk to ${b.name}`);
+    }
+    for (const e of town.exits) assert.ok(findPath(town, 'F0', town.start, { x: e.x, y: e.y }), 'out through every gate');
+    assert.equal(normalizeTownPlan({ features: ['town walls'] }).walled, true);
+});
+
+test('wild places are land: clearings joined by trails, water, great trees and undergrowth; reachable, dry start', async () => {
+    const { generateWilds, WILD_KINDS } = await import('../src/core/layout.js');
+    assert.ok(WILD_KINDS.test('jungle') && WILD_KINDS.test('bandit camp') && !WILD_KINDS.test('mansion'));
+    const plan = normalizePlan({ name: 'The Emerald Deep', kind: 'jungle', summary: 'Jungle cut by a river.', rooms: [{ id: 'A', name: 'Explorers camp', traps: [{ kind: 'snare', dc: 13 }] }, { id: 'B', name: 'Waterfall pool' }, { id: 'C', name: 'Ruined shrine', items: [{ name: 'Jade idol', hidden: true }] }], people: [{ name: 'Old Tama', room: 'C' }], start: 'A' });
+    const p = generateWilds(plan, 11);
+    const map = p.floors[0].map;
+    assert.equal(map.theme, 'jungle');
+    assert.equal(p.fog, false);
+    assert.ok(map.rows.join('').includes('~') || map.rows.join('').includes('w'), 'water');
+    assert.ok(map.rows.join('').split('T').length > 100, 'thick with trees');
+    for (const t of ['bigtree', 'fern']) assert.ok(map.props.some(pr => pr.type === t), t);
+    assert.ok(walkable(p, 'F0', p.start.x, p.start.y), 'starts on dry ground');
+    for (const rm of Object.values(p.rooms)) {
+        const cx = rm.rect.x + Math.floor(rm.rect.w / 2), cy = rm.rect.y + Math.floor(rm.rect.h / 2);
+        let ok = false;
+        for (let d = 0; d < 4 && !ok; d++) for (let i = -d; i <= d && !ok; i++) for (let j = -d; j <= d && !ok; j++) ok = walkable(p, 'F0', cx + i, cy + j) && Boolean(findPath(p, 'F0', p.start, { x: cx + i, y: cy + j }, { knownOnly: false }));
+        assert.ok(ok, `${rm.name} can be reached`);
+    }
+    assert.equal(Object.keys(p.traps).length, 1);
+    assert.ok(Object.values(p.items).some(i => i.name === 'Jade idol'));
+    assert.ok(p.guards['Old Tama']);
 });

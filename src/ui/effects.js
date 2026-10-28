@@ -13,7 +13,7 @@ const MAX = 150;
 const CAP = { z: 6, drop: 8, rain: 55, snow: 40, dust: 14, ash: 24, mist: 6, leaves: 6, fireflies: 10, sand: 18, ember: 50, smoke: 26, glint: 16, spark: 18, bubble: 16 };
 /** What the air is like by default, by kind of map. Rain only when the DM says it's raining. */
 const DEFAULT_AMBIENCE = {
-    snow: 'snow', desert: 'sand', swamp: 'fireflies', forest: 'leaves',
+    snow: 'snow', desert: 'sand', swamp: 'mist', jungle: 'fireflies', forest: 'leaves',
     dungeon: 'dust', crypt: 'dust', cave: 'dust', mine: 'dust', sewer: 'dust', prison: 'dust', castle: 'dust', library: 'dust', temple: 'dust', mansion: 'dust',
 };
 const FLICKER = new Set(['torch', 'brazier', 'campfire', 'fireplace', 'candles', 'forge', 'lamppost', 'chandelier']);

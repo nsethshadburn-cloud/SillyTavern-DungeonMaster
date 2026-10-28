@@ -13,10 +13,10 @@ const THEME_MATERIAL = {
     dungeon: ['stone', 'brick'], crypt: ['stone', 'brick'], cave: ['rock', 'rock'], mine: ['dirt', 'rock'], sewer: ['stone', 'brick'],
     castle: ['flag', 'stoneblock'], temple: ['marble', 'stoneblock'], prison: ['stone', 'brick'], tavern: ['planks', 'timber'],
     library: ['parquet', 'panel'], house: ['planks', 'timber'], mansion: ['parquet', 'wallpaper'], cabin: ['planks', 'log'],
-    town: ['grass', 'plaster'], forest: ['grass', 'hedge'], camp: ['dirt', 'hedge'], swamp: ['mud', 'hedge'], snow: ['snow', 'rock'],
+    town: ['grass', 'plaster'], forest: ['grass', 'hedge'], camp: ['dirt', 'hedge'], swamp: ['mud', 'hedge'], jungle: ['grass', 'hedge'], snow: ['snow', 'rock'],
     desert: ['sand', 'sandstone'], ship: ['deck', 'timber'],
 };
-const OUTDOOR = new Set(['forest', 'camp', 'swamp', 'snow', 'desert', 'town']);
+const OUTDOOR = new Set(['forest', 'camp', 'swamp', 'snow', 'desert', 'town', 'jungle']);
 
 /** [how easily it catches 0-1, how many turns it burns]. Anything not listed doesn't burn. */
 const MATERIAL_BURN = {
@@ -29,7 +29,7 @@ export const PROP_BURN = {
     dresser: [0.4, 6], nightstand: [0.45, 3], desk: [0.4, 5], sofa: [0.55, 5], armchair: [0.55, 4], piano: [0.3, 7], clock: [0.35, 5], cabinet: [0.4, 6],
     pew: [0.35, 6], counter: [0.35, 7], workbench: [0.35, 6], kennel: [0.5, 4], petbed: [0.7, 2], stall: [0.6, 4], fence: [0.45, 3], cart: [0.4, 5],
     log: [0.3, 7], coffin: [0.35, 5], weaponrack: [0.3, 3], painting: [0.6, 2], stocks: [0.35, 4], rack: [0.35, 4], plant: [0.3, 2], mushroom: [0.1, 1],
-    throne: [0.3, 6], trough: [0.2, 3], sign: [0.4, 2],
+    throne: [0.3, 6], trough: [0.2, 3], sign: [0.4, 2], bigtree: [0.3, 10], palm: [0.35, 6], fern: [0.6, 1], tallgrass: [0.8, 1], reeds: [0.6, 1],
 };
 /** Turns a door or a tree burns, and how easily. */
 const DOOR_BURN = [0.4, 4], TREE_BURN = [0.35, 8], BRIDGE_BURN = [0.35, 5];

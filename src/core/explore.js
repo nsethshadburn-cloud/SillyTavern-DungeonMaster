@@ -6,7 +6,7 @@ import { PROPS, TERRAIN, HEAVY, HIDE, SEATS, terrainAt, propsAt, colName, parseC
 import { doorChar, ensureIds } from './layout.js';
 import { nameKey, matchName } from './text.js';
 
-const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert']);
+const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'jungle']);
 /** Squares you can't see through. Windows and open doors are see-through. */
 const OPAQUE = new Set(['#', '%', '+', 'D', 'T']);
 const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];

@@ -24,7 +24,7 @@ const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const propType = t => str(t).toLowerCase().replace(/[\s-]+/g, '_');
 
 const VIA = ['door', 'arch', 'locked', 'secret', 'stairs', 'cell'];
-const KIND_THEME = { mansion: 'mansion', manor: 'mansion', estate: 'mansion', house: 'house', castle: 'castle', keep: 'castle', fortress: 'castle', tower: 'castle', palace: 'castle', dungeon: 'dungeon', prison: 'prison', jail: 'prison', asylum: 'prison', cave: 'cave', caves: 'cave', cavern: 'cave', mine: 'mine', crypt: 'crypt', tomb: 'crypt', catacombs: 'crypt', temple: 'temple', church: 'temple', cathedral: 'temple', monastery: 'temple', sewer: 'sewer', sewers: 'sewer', ship: 'ship', cabin: 'cabin', lodge: 'cabin', tavern: 'tavern', inn: 'tavern', library: 'library', academy: 'library' };
+const KIND_THEME = { jungle: 'jungle', rainforest: 'jungle', forest: 'forest', woods: 'forest', swamp: 'swamp', marsh: 'swamp', mansion: 'mansion', manor: 'mansion', estate: 'mansion', house: 'house', castle: 'castle', keep: 'castle', fortress: 'castle', tower: 'castle', palace: 'castle', dungeon: 'dungeon', prison: 'prison', jail: 'prison', asylum: 'prison', cave: 'cave', caves: 'cave', cavern: 'cave', mine: 'mine', crypt: 'crypt', tomb: 'crypt', catacombs: 'crypt', temple: 'temple', church: 'temple', cathedral: 'temple', monastery: 'temple', sewer: 'sewer', sewers: 'sewer', ship: 'ship', cabin: 'cabin', lodge: 'cabin', tavern: 'tavern', inn: 'tavern', library: 'library', academy: 'library' };
 /** Themes where mansion-style walls and floors (wallpaper, carpet) would look wrong. */
 const ROUGH = new Set(['dungeon', 'cave', 'crypt', 'prison', 'sewer', 'mine']);
 /** Places that are kept up unless the story says otherwise; and words that mean they aren't. */
@@ -1114,28 +1114,173 @@ export function normalizeTownPlan(raw) {
         features: arr(d.features).map(f => str(f).toLowerCase()).filter(Boolean).slice(0, 12),
         buildings,
         fog: d.fog === true,
+        walled: d.walled === true || arr(d.features).some(f => /\bwall|fortif|rampart|fortress town|walled/.test(str(f).toLowerCase())),
     };
 }
+
+/**
+ * A town building's shape on its plot (w wide, d deep; local y = 0 is its front, on the road): an L
+ * (a back corner left as a yard), a front gable over the door, a round corner turret, a rounded bay
+ * window, a wooden porch, or now and then a plain block. Blocks get their own roofs; rounds (the
+ * turret, the bay) are drawn under a cone or a half-dome.
+ */
+function houseShape(r, w, d) {
+    const mid = Math.floor(w / 2);
+    const kind = pickR(r, w >= 6 && d >= 5 ? ['L', 'gable', 'tower', 'bay', 'porch', 'L', 'gable', 'rect'] : ['gable', 'bay', 'porch', 'rect', 'L']);
+    const blocks = [], rounds = [];
+    if (kind === 'L') {
+        const cw = Math.max(2, Math.ceil(w * 0.4)), cd = Math.max(2, Math.ceil(d * 0.45)), cutLeft = r() < 0.5;
+        blocks.push({ x: 0, y: 0, w, h: d - cd }, { x: cutLeft ? cw : 0, y: d - cd, w: w - cw, h: cd });
+    } else if (kind === 'gable') {
+        blocks.push({ x: 0, y: 1, w, h: d - 1 }, { x: Math.max(0, mid - 1), y: 0, w: Math.min(3, w), h: Math.min(3, d) });
+    } else blocks.push({ x: 0, y: 0, w, h: d });
+    if (kind === 'tower') rounds.push({ cx: r() < 0.5 ? 0 : w - 1, cy: 0, rad: 1.3, half: false });
+    if (kind === 'bay') { const bx = mid + (r() < 0.5 ? -2 : 2); if (bx >= 1 && bx <= w - 2) rounds.push({ cx: bx, cy: 0, rad: 1, half: true }); }
+    return { kind, blocks, rounds, door: { x: mid, y: 0 }, porch: kind === 'porch' };
+}
+
+/** How far the town is moved in to fit its walls (2 squares of woods outside, the wall 2 thick, 1 inside). */
+const TOWN_WALL_PAD = 5;
+
+/** Bright town colours: plaster in many tints, and roofs in reds, terracotta, greens, blues and purples. */
+const ROOF_HUES = [4, 12, 20, 28, 120, 140, 200, 215, 265, 330];
+function townLook(r) {
+    return pickR(r, [
+        { wall: 'plaster', wallColor: [pickR(r, [42, 30, 50, 15, 200, 90, 350, 270, 160, 190, 55]), int(r, 28, 48), int(r, 64, 78)] },
+        { wall: 'plaster', wallColor: [pickR(r, [42, 30, 50, 15, 200, 90, 350, 270, 160, 190, 55]), int(r, 28, 48), int(r, 64, 78)] },
+        { wall: 'timber', wallColor: [pickR(r, [38, 30, 45, 50]), int(r, 22, 34), int(r, 60, 74)] },
+        { wall: 'brick', wallColor: [pickR(r, [8, 14, 20, 25]), int(r, 32, 48), int(r, 32, 42)] },
+        { wall: 'stoneblock', wallColor: [pickR(r, [30, 40, 210]), int(r, 6, 12), int(r, 50, 62)] },
+        { wall: 'log', wallColor: [26, int(r, 35, 45), int(r, 28, 36)] },
+    ]);
+}
+
+/**
+ * Put a shaped building on its plot in a town. side "n" = north of the road (its front at the bottom
+ * row of the plot), "s" = south (front at the top row). Returns the door square.
+ */
+function buildHouse(map, set, r, b, x, y, w, d, side) {
+    const shape = houseShape(r, w, d);
+    const toWorld = (lx, ly) => [x + lx, side === 'n' ? y + ly : y + d - 1 - ly];
+    const cells = new Set();
+    for (const bl of shape.blocks) for (let lx = bl.x; lx < bl.x + bl.w; lx++) for (let ly = bl.y; ly < bl.y + bl.h; ly++) cells.add(K(lx, ly));
+    for (const rd of shape.rounds) for (const [lx, ly] of roundTiles(rd)) cells.add(K(lx, ly));
+    for (const k of cells) { const [lx, ly] = k.split(',').map(Number); set(...toWorld(lx, ly), '#'); }
+    const [dx, dy] = toWorld(shape.door.x, shape.door.y);
+    set(dx, dy, '+');
+    // Windows along every stretch of front that faces the street.
+    for (const k of cells) {
+        const [lx, ly] = k.split(',').map(Number);
+        if (cells.has(K(lx, ly - 1)) || Math.abs(lx - shape.door.x) < 2 || (lx + ly) % 2) continue;
+        set(...toWorld(lx, ly), '|');
+    }
+    const hue = pickR(r, ROOF_HUES), sat = int(r, 42, 58);
+    const style = /farm|stable|barn/.test(b.kind) ? 'thatch' : /temple|church|bank|hall|guard/.test(b.kind) ? 'slate' : 'shingle';
+    for (const bl of shape.blocks) {
+        const exposed = [...Array(bl.w).keys()].some(i => !cells.has(K(bl.x + i, bl.y - 1)));
+        const rows = exposed ? bl.h - 1 : bl.h;
+        if (rows <= 0) continue;
+        const wy = side === 'n' ? y + bl.y + (exposed ? 1 : 0) : y + d - bl.y - bl.h;
+        map.roofs.push({ x: x + bl.x, y: wy, w: bl.w, h: rows, shape: rows >= 2 && bl.w >= 2 ? pickR(r, ['hip', 'gable', 'gable']) : 'gable', ridge: bl.w >= rows ? 'h' : 'v', hue, sat, style });
+    }
+    for (const rd of shape.rounds) {
+        const [wcx, wcy] = toWorld(rd.cx, rd.cy);
+        if (rd.half) map.roofs.push({ x: wcx - Math.ceil(rd.rad), w: Math.ceil(rd.rad) * 2 + 1, y: side === 'n' ? wcy - Math.ceil(rd.rad) : wcy + 1, h: Math.ceil(rd.rad), shape: 'apse', up: side !== 'n', hue, sat, style });
+        else map.roofs.push({ x: Math.round(wcx - rd.rad), y: Math.round(wcy - rd.rad), w: Math.round(rd.rad * 2) + 1, h: Math.round(rd.rad * 2) + 1, shape: 'cone', hue, sat, style });
+    }
+    // A wooden porch over the door, on two posts.
+    if (shape.porch) {
+        const py = side === 'n' ? dy - 1 : dy + 1;
+        map.props.push({ x: dx - 1, y: py, type: 'pillar' }, { x: dx + 1, y: py, type: 'pillar' });
+        map.roofs.push({ x: dx - 1, y: py, w: 3, h: 1, shape: 'porch' });
+    }
+    return { dx, dy, porch: shape.porch, cells: [...cells].map(k => toWorld(...k.split(',').map(Number))) };
+}
+
+/**
+ * A town wall: the town moved in from the edges, a curtain wall (battlements) all round it, round
+ * towers at the corners, a gatehouse with two round towers wherever a road goes out, the roads carried
+ * on to the edge, and woods outside. Returns the new grid, or null if it would be too big.
+ */
+function wallTown(place, map, c, r, roads) {
+    const pad = TOWN_WALL_PAD, W = map.w + pad * 2, H = map.h + pad * 2;
+    if (W > MAX_PLACE_SIZE || H > MAX_PLACE_SIZE) return null;
+    const g = [...Array(H)].map(() => Array(W).fill('.'));
+    for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) g[y + pad][x + pad] = c[y][x];
+    const set = (x, y, ch) => { if (x >= 0 && y >= 0 && x < W && y < H) g[y][x] = ch; };
+    const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? g[y][x] : '%');
+    const shift = o => { if (o && typeof o.x === 'number') { o.x += pad; o.y += pad; } };
+    map.props.forEach(shift); map.areas.forEach(shift); map.roofs.forEach(shift);
+    Object.values(place.doors).forEach(shift);
+    Object.values(place.buildings).forEach(b => shift(b.rect));
+    map.w = W; map.h = H;
+    // The wall ring, 2 thick, 2 squares in from the edge.
+    const a = 2, b = 3, x1 = W - 3, x0 = W - 4, y1 = H - 3, y0 = H - 4;
+    const onRing = (x, y) => (x === a || x === b || x === x0 || x === x1) && y >= a && y <= y1 || (y === a || y === b || y === y0 || y === y1) && x >= a && x <= x1;
+    for (let x = a; x <= x1; x++) for (let y = a; y <= y1; y++) if (onRing(x, y)) set(x, y, '#');
+    map.areas.push({ x: 0, y: 0, w: W, h: H, wall: 'stoneblock', building: 'W' });
+    map.roofs.push(
+        { x: a, y: a, w: x1 - a + 1, h: 2, shape: 'battlement' }, { x: a, y: y0, w: x1 - a + 1, h: 2, shape: 'battlement' },
+        { x: a, y: a + 2, w: 2, h: y0 - a - 2, shape: 'battlement' }, { x: x0, y: a + 2, w: 2, h: y0 - a - 2, shape: 'battlement' },
+    );
+    // Gates where the roads go out: the road runs through the wall, a round tower either side.
+    const towersAt = [];
+    for (const rd of roads) {
+        if (rd.axis === 'x') {
+            for (const ry of rd.at) { const yy = ry + pad; for (let x = 0; x < W; x++) if (x < pad || x >= W - pad) set(x, yy, '='); }
+            const lo = Math.min(...rd.at) + pad - 1, hi = Math.max(...rd.at) + pad + 1;
+            for (const gx of [a + 0.5, x0 + 0.5]) towersAt.push([gx, lo - 0.8], [gx, hi + 0.8]);
+        } else {
+            for (const rx of rd.at) { const xx = rx + pad; for (let y = 0; y < H; y++) if (y < pad || y >= H - pad) set(xx, y, '='); }
+            const lo = Math.min(...rd.at) + pad - 1, hi = Math.max(...rd.at) + pad + 1;
+            for (const gy of [a + 0.5, y0 + 0.5]) towersAt.push([lo - 0.8, gy], [hi + 0.8, gy]);
+        }
+    }
+    for (const [cx, cy] of [[a + 0.5, a + 0.5], [x0 + 0.5, a + 0.5], [a + 0.5, y0 + 0.5], [x0 + 0.5, y0 + 0.5]]) towersAt.push([cx, cy, 2.3]);
+    for (const [cx, cy, rad = 1.6] of towersAt) {
+        for (const [x, y] of roundTiles({ cx, cy, rad, half: false })) if (get(x, y) !== '=') set(x, y, '#');
+        const w = Math.round(rad * 2) + 1;
+        map.roofs.push({ x: Math.round(cx - rad), y: Math.round(cy - rad), w, h: w, shape: 'cone', style: 'slate' });
+    }
+    // Woods outside the walls (the roads kept clear).
+    for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
+        const out = x < a || x > x1 || y < a || y > y1;
+        if (out && get(x, y) === '.' && r() < 0.55) set(x, y, 'T');
+    }
+    return { grid: g, pad };
+}
+
 
 /** Build a town: a main road (and a cross road) lined with roofed buildings, signs, a square and greenery. */
 export function generateTown(planIn, seed = 1) {
     const plan = planIn?.normalized ? planIn : normalizeTownPlan(planIn);
     const r = rng(seed);
     const feats = new Set(plan.features);
-    const wantsSquare = ['square', 'market', 'fountain', 'plaza', 'well'].some(f => [...feats].some(x => x.includes(f)));
+    const wantsSquare = plan.walled || ['square', 'market', 'fountain', 'plaza', 'well'].some(f => [...feats].some(x => x.includes(f)));
     const north = [], south = [];
     plan.buildings.forEach((b, i) => (i % 2 ? south : north).push(b));
     const dims = b => { const [w, d] = BUILDING_SIZES[b.size]; return { w: w + int(r, 0, 1), d: d + int(r, 0, 1) }; };
     const sized = new Map(plan.buildings.map(b => [b.id, dims(b)]));
     const cross = plan.layout === 'crossroads';
     const rowWidth = list => list.reduce((n, b) => n + sized.get(b.id).w + 2, 0);
+    // A crowded town: the widest buildings shrink (never below small) until every one fits on its side of the road.
+    const roomFor = MAX_PLACE_SIZE - (plan.walled ? TOWN_WALL_PAD * 2 : 0) - 6 - (cross ? 4 : 0);
+    for (let guard = 0; guard < 60 && Math.max(rowWidth(north) + (wantsSquare ? 9 : 0), rowWidth(south)) > roomFor; guard++) {
+        const row = rowWidth(north) + (wantsSquare ? 9 : 0) >= rowWidth(south) ? north : south;
+        const widest = row.map(b => sized.get(b.id)).sort((a, b2) => b2.w - a.w)[0];
+        if (!widest || widest.w <= 4) break;
+        widest.w -= 1;
+    }
+    const crowded = Math.max(rowWidth(north) + (wantsSquare ? 9 : 0), rowWidth(south)) > roomFor - 6;
     let W = Math.max(26, Math.max(rowWidth(north) + (wantsSquare ? 9 : 0), rowWidth(south)) + 6 + (cross ? 4 : 0));
-    W = Math.min(W, MAX_PLACE_SIZE);
+    // A walled town leaves room for its walls round it.
+    const room = MAX_PLACE_SIZE - (plan.walled ? TOWN_WALL_PAD * 2 : 0);
+    W = Math.min(W, room);
     const dS = Math.max(4, ...south.map(b => sized.get(b.id).d)), dN = Math.max(4, ...north.map(b => sized.get(b.id).d));
     const margin = 3;
     const roadY = margin + dS + 1;
-    const H = Math.min(MAX_PLACE_SIZE, roadY + 2 + 1 + dN + margin);
-    const c = [...Array(H)].map(() => Array(W).fill('.'));
+    const H = Math.min(room, roadY + 2 + 1 + dN + margin);
+    let c = [...Array(H)].map(() => Array(W).fill('.'));
     const set = (x, y, ch) => { if (x >= 0 && y >= 0 && x < W && y < H) c[y][x] = ch; };
     const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
     const crossX = cross ? Math.floor(W / 2) - 1 : -10;
@@ -1166,37 +1311,27 @@ export function generateTown(planIn, seed = 1) {
             if (x + w > W - 2) return;
             const y = side === 'n' ? roadY + 3 : roadY - 1 - d;
             const frontY = side === 'n' ? y : y + d - 1;
-            for (let bx = x; bx < x + w; bx++) for (let by = y; by < y + d; by++) set(bx, by, '#');
-            const dx = x + Math.floor(w / 2);
-            set(dx, frontY, '+');
-            // Windows on the front, a path to the road, a roof over the rest.
-            for (let bx = x + 1; bx < x + w - 1; bx++) if (bx !== dx && Math.abs(bx - dx) % 2 === 0) set(bx, frontY, '|');
+            // Each building its own shape (an L, a front gable, a turret, a bay, a porch) and colours.
+            const house = buildHouse(map, set, r, b, x, y, w, d, side);
+            const dx = house.dx;
             const pathY = side === 'n' ? frontY - 1 : frontY + 1;
             set(dx, pathY, '=');
-            // Each house its own front: plaster in different tints, timber framing, brick, stone or logs.
-            const look = pickR(r, [
-                { wall: 'plaster', wallColor: [pickR(r, [42, 30, 50, 15, 200, 90]), int(r, 18, 35), int(r, 62, 76)] },
-                { wall: 'timber', wallColor: [pickR(r, [38, 30, 45]), int(r, 20, 30), int(r, 56, 70)] },
-                { wall: 'brick', wallColor: [pickR(r, [8, 14, 20, 25]), int(r, 30, 45), int(r, 30, 40)] },
-                { wall: 'stoneblock', wallColor: [pickR(r, [30, 40, 210]), int(r, 6, 12), int(r, 46, 58)] },
-                { wall: 'log', wallColor: [26, int(r, 35, 45), int(r, 26, 34)] },
-            ]);
-            map.areas.push({ x, y, w, h: d, ...look, building: b.id });
-            map.roofs.push({ x, y: side === 'n' ? y + 1 : y, w, h: d - 1, ridge: 'h', hue: pickR(r, [8, 16, 24, 200, 210, 30, 350]), style: /farm|stable|barn/.test(b.kind) ? 'thatch' : /temple|church|bank|hall|guard/.test(b.kind) ? 'slate' : 'shingle' });
+            map.areas.push({ x, y, w, h: d, ...townLook(r), building: b.id });
             const id = `D${++doorN}`;
             place.doors[id] = { id, floor: 'F0', x: dx, y: frontY, kind: 'door', state: 'closed', rooms: [null, null], enter: b.id };
             place.buildings[b.id] = { ...b, door: id, rect: { x, y, w, h: d }, interior: null };
             // A sign for any shop or public building, hanging over the street.
-            if (b.kind !== 'house' || b.sign) {
-                const sx = dx + 1 < x + w - 1 ? dx + 1 : dx - 1;
+            const isWallAt = (wx, wy) => house.cells.some(([cx, cy]) => cx === wx && cy === wy);
+            if ((b.kind !== 'house' || b.sign) && (isWallAt(dx + 1, frontY) || isWallAt(dx - 1, frontY))) {
+                const sx = isWallAt(dx + 1, frontY) ? dx + 1 : dx - 1;
                 set(sx, frontY, '#');
                 map.props.push({ x: sx, y: frontY, type: 'sign', facing: side === 'n' ? 's' : 'n', icon: signIcon(`${b.kind} ${b.sign} ${b.name}`), label: b.sign || b.name });
             }
             // Flowers or barrels by the door.
             const sideX = dx - 1 >= x ? dx - 1 : dx + 1;
-            if (get(sideX, pathY) === '.') map.props.push({ x: sideX, y: pathY, type: /tavern|inn|brew|store|shop|smith/.test(b.kind) ? pickR(r, ['barrel', 'crate']) : 'flowers' });
+            if (!house.porch && get(sideX, pathY) === '.') map.props.push({ x: sideX, y: pathY, type: /tavern|inn|brew|store|shop|smith/.test(b.kind) ? pickR(r, ['barrel', 'crate']) : 'flowers' });
             if (/stable|farm/.test(b.kind)) { map.props.push({ x: x + w, y: pathY, type: 'hay' }); map.props.push({ x: x - 1, y: pathY, type: 'trough' }); }
-            x += w + int(r, 1, 3);
+            x += w + (crowded ? 1 : int(r, 1, 3));
             // Now and then a fence or a bush in the gap.
             if (r() < 0.35 && get(x - 1, y) === '.') map.props.push({ x: x - 1, y: side === 'n' ? y : y, type: 'fence', h: Math.max(1, d - 1) });
         });
@@ -1205,10 +1340,17 @@ export function generateTown(planIn, seed = 1) {
     lay(south, 's');
     // Lampposts along the road, a cart, trees around the edge, a pond or a graveyard if asked for.
     for (let x = 4, i = 0; x < W - 2; x += 7, i++) { const y = i % 2 ? roadY + 2 : roadY - 1; if (get(x, y) === '.') map.props.push({ x, y, type: 'lamppost' }); }
-    if (r() < 0.8) map.props.push({ x: int(r, 2, W - 4), y: roadY, type: 'cart' });
-    if ([...feats].some(f => f.includes('pond') || f.includes('lake'))) {
-        const px = int(r, 2, W - 8), py = H - 3;
-        for (let i = 0; i < 6; i++) for (let j = -1; j <= 0; j++) if (get(px + i, py + j) === '.' && (i > 0 && i < 5 || j === 0)) set(px + i, py + j, '~');
+    // A cart on the road, never in front of anyone's door.
+    if (r() < 0.8) {
+        const doors = Object.values(place.doors).map(d => d.x);
+        const spots = [...Array(W - 6).keys()].map(i => i + 2).filter(x => doors.every(dx => Math.abs(dx - x) > 2) && (!cross || Math.abs(x - crossX) > 3));
+        if (spots.length) map.props.push({ x: pickR(r, spots), y: roadY, type: 'cart' });
+    }
+    // A pond (asked for, or now and then anyway) in the open ground at the edge of town.
+    if ([...feats].some(f => f.includes('pond') || f.includes('lake')) || r() < 0.4) {
+        const spots = [];
+        for (let x = 5; x < W - 5; x++) for (let y = 3; y < H - 3; y++) { let ok = true; for (let i = -4; ok && i <= 4; i++) for (let j = -3; ok && j <= 3; j++) ok = get(x + i, y + j) === '.'; if (ok) spots.push([x, y]); }
+        if (spots.length) addWater(c, W, H, r, 'pond', pickR(r, spots));
     }
     if ([...feats].some(f => f.includes('grave') || f.includes('cemetery'))) {
         const gx = W - 9, gy = 0;
@@ -1221,20 +1363,27 @@ export function generateTown(planIn, seed = 1) {
         if (edge <= 1 && r() < 0.45 && !map.props.some(p => p.x === x && p.y === y)) set(x, y, 'T');
         else if (r() < 0.025 && !map.props.some(p => p.x === x && p.y === y)) map.props.push({ x, y, type: pickR(r, ['bush', 'bush', 'flowers', 'boulder']) });
     }
+    // A walled town: walls, towers and gatehouses round it all, the roads out through the gates.
+    let pad = 0;
+    if (plan.walled) {
+        const walled = wallTown(place, map, c, r, [{ axis: 'x', at: [roadY, roadY + 1] }, ...(cross ? [{ axis: 'y', at: [crossX, crossX + 1] }] : [])]);
+        if (walled) { c = walled.grid; pad = walled.pad; }
+    }
+    const MW = map.w, MH = map.h;
     // The road's ends lead out of town.
-    for (const y of [roadY, roadY + 1]) { place.exits.push({ floor: 'F0', x: 0, y }, { floor: 'F0', x: W - 1, y }); }
-    if (cross) for (const x of [crossX, crossX + 1]) { place.exits.push({ floor: 'F0', x, y: 0 }, { floor: 'F0', x, y: H - 1 }); }
+    for (const y of [roadY + pad, roadY + 1 + pad]) { place.exits.push({ floor: 'F0', x: 0, y }, { floor: 'F0', x: MW - 1, y }); }
+    if (cross) for (const x of [crossX + pad, crossX + 1 + pad]) { place.exits.push({ floor: 'F0', x, y: 0 }, { floor: 'F0', x, y: MH - 1 }); }
     map.rows = c.slice().reverse().map(row => row.join(''));
     ensureIds(place);
-    place.start = { floor: 'F0', x: 1, y: roadY, room: null };
-    place.state.explored.F0 = '1'.repeat(W * H);
+    place.start = { floor: 'F0', x: pad + 1, y: roadY + pad, room: null };
+    place.state.explored.F0 = '1'.repeat(MW * MH);
     return place;
 }
 
 /** What the land around a building looks like, from the words in its plan. */
 function groundsTheme(plan) {
     const w = `${plan.name} ${plan.kind} ${plan.summary}`.toLowerCase();
-    return /snow|winter|frozen|frost|tundra|ice\b/.test(w) ? 'snow' : /desert|dune|sand\b|oasis/.test(w) ? 'desert' : /swamp|marsh|bog|bayou|fen\b/.test(w) ? 'swamp' : /\bcity\b|\btown\b|village|street|market|square/.test(w) ? 'town' : 'forest';
+    return /jungle|rainforest|tropic/.test(w) ? 'jungle' : /snow|winter|frozen|frost|tundra|ice\b/.test(w) ? 'snow' : /desert|dune|sand\b|oasis/.test(w) ? 'desert' : /swamp|marsh|bog|bayou|fen\b/.test(w) ? 'swamp' : /\bcity\b|\btown\b|village|street|market|square/.test(w) ? 'town' : 'forest';
 }
 
 /** What kind of outdoor area a room of the plan is, from its name and type. */
@@ -1251,8 +1400,8 @@ function yardKind(yd) {
 }
 
 /** Building shapes (seen from above) and fronts the plan can ask for. */
-export const SHAPES = ['plain', 'L', 'U', 'H', 'E', 'T', 'tower', 'castle'];
-export const FRONTS = ['flat', 'bay', 'rotunda', 'portico'];
+export const SHAPES = ['plain', 'L', 'gable', 'U', 'H', 'E', 'T', 'tower', 'castle'];
+export const FRONTS = ['flat', 'bay', 'rotunda', 'portico', 'porch'];
 
 /**
  * How a building looks from outside: the plan's "exterior" if it gave one, else what fits its kind.
@@ -1268,11 +1417,11 @@ export function exteriorOf(plan, r = Math.random) {
     const grand = GRAND_KINDS.test(k);
     const shape = SHAPES.includes(e.shape) ? e.shape
         : castle ? 'castle' : /tower|lighthouse|observatory|spire/.test(k) ? 'tower' : grand ? pickR(r, ['U', 'H', 'E', 'U', 'L'])
-            : /temple|church|cathedral|chapel|abbey|monastery/.test(k) ? 'T' : /tavern|inn|lodge|guild|hall|academy|school/.test(k) ? pickR(r, ['L', 'plain']) : 'plain';
+            : /temple|church|cathedral|chapel|abbey|monastery/.test(k) ? 'T' : pickR(r, ['L', 'gable', 'L', 'gable', 'plain']);
     const front = FRONTS.includes(e.front) ? e.front
         : shape === 'castle' || shape === 'tower' ? 'flat' : grand ? pickR(r, ['rotunda', 'portico', 'bay', 'rotunda'])
-            : /temple|church|cathedral|bank|library|academy|museum|hall/.test(k) ? 'portico' : /house|home|cottage|villa/.test(k) ? pickR(r, ['flat', 'flat', 'bay']) : 'flat';
-    const towers = Number.isFinite(Number(e.towers)) && e.towers !== null && e.towers !== '' ? clamp(Math.round(Number(e.towers)), 0, 4) : shape === 'castle' ? 4 : grand ? pickR(r, [0, 2, 2, 4]) : 0;
+            : /temple|church|cathedral|bank|library|academy|museum|hall/.test(k) ? 'portico' : pickR(r, ['porch', 'bay', 'flat', 'porch']);
+    const towers = Number.isFinite(Number(e.towers)) && e.towers !== null && e.towers !== '' ? clamp(Math.round(Number(e.towers)), 0, 4) : shape === 'castle' ? 4 : grand ? pickR(r, [0, 2, 2, 4]) : pickR(r, [0, 0, 0, 1]);
     return {
         shape, front, towers, grand: grand || shape === 'castle',
         wall: typeof e.wall === 'boolean' ? e.wall : shape === 'castle',
@@ -1299,13 +1448,14 @@ function footprint(ext, bw, bd) {
     const wings = { L: [[0, -wd]], U: [[0, -wd], [bw - ww, -wd]], H: [[0, -wd], [bw - ww, -wd], [0, bd], [bw - ww, bd]], E: [[0, -wd], [bw - ww, -wd]] }[ext.shape] ?? [];
     for (const [x, y] of wings) blocks.push({ x, y, w: ww, h: wd });
     if (ext.shape === 'E') { blocks.push({ x: mid - 2, y: -2, w: 5, h: 2 }); door = { x: mid, y: -2 }; }
+    if (ext.shape === 'gable') { const gw = bw >= 9 ? 5 : 3; blocks.push({ x: mid - Math.floor(gw / 2), y: -2, w: gw, h: 3 }); door = { x: mid, y: -2 }; }
     if (ext.shape === 'T') { const ty = Math.max(1, Math.floor(bd / 2) - 2); blocks.push({ x: -3, y: ty, w: 3, h: 4 }, { x: bw, y: ty, w: 3, h: 4 }); }
-    if (ext.front === 'rotunda' && ext.shape !== 'E') {
+    if (ext.front === 'rotunda' && ext.shape !== 'E' && ext.shape !== 'gable') {
         const rad = bw >= 12 ? 3 : 2;
         rounds.push({ cx: mid, cy: 0, rad, half: true });
         door = { x: mid, y: -rad };
     }
-    if (ext.front === 'bay' && ext.shape !== 'E') {
+    if (ext.front === 'bay' && ext.shape !== 'E' && ext.shape !== 'gable') {
         const off = Math.max(3, Math.floor(bw / 4));
         for (const bx of [mid - off, mid + off]) {
             const clear = !wings.some(([wx, wy]) => wy < 0 && bx >= wx - 1 && bx <= wx + ww);
@@ -1399,7 +1549,7 @@ export function generateGrounds(plan, inside, seed = 1) {
         if ((x + y) % 3 === 0) set(x, y, '|');
     }
     const wall = { mansion: 'stoneblock', castle: 'stoneblock', temple: 'stoneblock', prison: 'brick', cabin: 'log', tavern: 'timber', house: 'timber', library: 'stoneblock' }[plan.theme] ?? (grand ? 'stoneblock' : 'plaster');
-    const hue = pickR(r, [8, 16, 24, 200, 210, 30, 350]);
+    const hue = pickR(r, grand ? [8, 16, 24, 200, 210, 30, 350] : ROOF_HUES);
     const style = grand || /castle|temple|prison|library|mansion/.test(plan.theme) ? 'slate' : /cabin|barn|farm/.test(`${plan.theme} ${plan.kind}`) ? 'thatch' : 'shingle';
     for (const b of fp.blocks) {
         const x = b.x + ox, y = b.y + oy;
@@ -1413,7 +1563,11 @@ export function generateGrounds(plan, inside, seed = 1) {
         if (rd.half) map.roofs.push({ x, y: rd.cy + oy - Math.ceil(rd.rad), w, h: Math.ceil(rd.rad), shape: 'apse', hue, style });
         else map.roofs.push({ x, y: Math.round(rd.cy - rd.rad) + oy, w, h: w, shape: 'cone', hue, style });
     }
-    // A columned porch over the door.
+    // A wooden porch over the door on two posts, or a columned portico.
+    if (ext.front === 'porch') {
+        put(dx - 1, dy - 1, 'pillar'); put(dx + 1, dy - 1, 'pillar');
+        map.roofs.push({ x: dx - 1, y: dy - 1, w: 3, h: 1, shape: 'porch' });
+    }
     if (ext.front === 'portico') {
         for (const px of [dx - 2, dx + 2]) for (const py of [dy - 1, dy - 2]) put(px, py, 'pillar');
         map.roofs.push({ x: dx - 2, y: dy - 2, w: 5, h: 2, shape: 'portico' });
@@ -1428,7 +1582,7 @@ export function generateGrounds(plan, inside, seed = 1) {
         if (get(fx, fy) === '.' && get(fx + 1, fy + 1) === '.' && !isWall(fx, fy + 2)) put(fx, fy, 'fountain', { w: 2, h: 2 });
         const hedgeY = oy + minY - 1;
         for (let x = ox + minX; x <= ox + maxX; x++) if ((x < dx - 2 || x > dx + 3) && !isWall(x, hedgeY)) put(x, hedgeY, 'bush');
-    } else {
+    } else if (ext.front !== 'porch') {
         put(dx - 1, dy - 1, /tavern|inn|shop|store/.test(plan.kind) ? 'barrel' : 'flowers');
         put(dx + 1, dy - 1, 'flowers');
     }
@@ -1458,7 +1612,7 @@ export function generateGrounds(plan, inside, seed = 1) {
     const inGrounds = (x, y) => fenced ? x > fx0 && x < fx1 && y > 1 && y < fy1 : x > 1 && x < W - 2 && y > 1 && y < H - 2;
     const keep = (x, y) => (x >= bx0 - 1 && x <= bx1 + 1 && y >= by0 - 1 && y <= by1 + 1) || Math.abs(x - dx) <= 2 && y < dy
         || Object.values(place.rooms).some(rm => x >= rm.rect.x - 1 && x <= rm.rect.x + rm.rect.w && y >= rm.rect.y - 1 && y <= rm.rect.y + rm.rect.h);
-    wilds(map, { get, set, put, taken }, r, theme, W, H, inGrounds, keep, grand);
+    wilds(map, c, { get, set, put, taken }, r, theme, W, H, inGrounds, keep, grand);
     outsidePeople(place, plan, r, get, taken, dx, dy);
     map.rows = c.slice().reverse().map(row => row.join(''));
     ensureIds(place);
@@ -1504,12 +1658,24 @@ function layYards(place, map, { set, get, put, taken }, r, slots, gate, rects, W
 }
 
 /** Trees, bushes and rocks: thick outside the grounds, now and then on the lawn. */
-function wilds(map, { get, set, put, taken }, r, theme, W, H, inGrounds, keep, grand) {
-    const wild = theme === 'forest' ? 0.5 : theme === 'swamp' ? 0.35 : theme === 'town' ? 0.08 : theme === 'snow' ? 0.3 : 0.06;
+function wilds(map, c, { get, set, put, taken }, r, theme, W, H, inGrounds, keep, grand) {
+    // Outside the grounds: the land, grown thick for its setting (towns: a few trees).
+    if (theme === 'town') {
+        for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) if (get(x, y) === '.' && !keep(x, y) && !taken(x, y) && !inGrounds(x, y) && r() < 0.08) set(x, y, 'T');
+    } else growWilds(map, c, W, H, r, theme, (x, y) => inGrounds(x, y) || keep(x, y) || taken(x, y));
+    // On the lawn: a garden pond now and then, a bush or rock or flowers here and there.
+    if (theme !== 'desert' && theme !== 'snow' && r() < 0.55) {
+        const spots = [];
+        for (let x = 3; x < W - 3; x++) for (let y = 3; y < H - 3; y++) {
+            let ok = inGrounds(x, y);
+            for (let i = -2; ok && i <= 2; i++) for (let j = -2; ok && j <= 2; j++) ok = get(x + i, y + j) === '.' && !keep(x + i, y + j) && !taken(x + i, y + j) && inGrounds(x + i, y + j);
+            if (ok) spots.push([x, y]);
+        }
+        if (spots.length) addWater(c, W, H, r, 'pool', pickR(r, spots));
+    }
     for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
-        if (get(x, y) !== '.' || keep(x, y) || taken(x, y)) continue;
-        if (!inGrounds(x, y)) { if (r() < wild) set(x, y, 'T'); else if (r() < 0.06) put(x, y, theme === 'desert' ? 'boulder' : pickR(r, ['bush', 'boulder', 'log'])); }
-        else if (r() < (grand ? 0.012 : 0.03)) put(x, y, theme === 'desert' ? 'boulder' : pickR(r, ['bush', 'flowers', 'boulder']));
+        if (get(x, y) !== '.' || keep(x, y) || taken(x, y) || !inGrounds(x, y)) continue;
+        if (r() < (grand ? 0.012 : 0.03)) put(x, y, theme === 'desert' ? 'boulder' : pickR(r, ['bush', 'flowers', 'boulder', 'tallgrass']));
     }
 }
 
@@ -1609,11 +1775,202 @@ function castleGrounds(plan, ext, theme, bw, bd, slots, gate, r, seed) {
     // Outside the walls: woods (or scrub) thick at the edges, the road kept clear.
     const inside = (x, y) => x >= wx0 - (ext.moat ? 4 : 2) && x <= wx1 + (ext.moat ? 4 : 2) && y >= wy0 - (ext.moat ? 4 : 2) && y <= wy1 + (ext.moat ? 4 : 2);
     const keep = (x, y) => Math.abs(x - gx - 0.5) <= 2 && y < wy0;
-    wilds(map, { get, set, put, taken }, r, theme, W, H, inside, keep, true);
+    wilds(map, c, { get, set, put, taken }, r, theme, W, H, inside, keep, true);
     outsidePeople(place, plan, r, get, taken, kd, ky);
     map.rows = c.slice().reverse().map(row => row.join(''));
     ensureIds(place);
     place.start = { floor: 'F0', x: gx, y: 0, room: gate?.id ?? null };
+    place.state.explored.F0 = '1'.repeat(W * H);
+    return place;
+}
+
+// ---------- wild places: jungles, forests, swamps, clearings ----------
+
+/** Kinds of place that are land, not a building: built as clearings joined by trails. */
+export const WILD_KINDS = /jungle|rainforest|forest|woods|\bwood\b|grove|glade|clearing|swamp|marsh|bog|meadow|wilderness|wilds|valley|canyon|oasis|beach|coast|riverbank|river|lakeshore|lake|waterfall|camp|grassland|plains|savanna/;
+
+/** Smooth noise over the map (-1..1), for thickets and clearings that feel natural. */
+function smoothNoise(seed, scale = 6) {
+    const v = (a, b) => { const h = Math.sin(a * 127.1 + b * 311.7 + seed * 0.013) * 43758.5453; return (h - Math.floor(h)) * 2 - 1; };
+    return (x, y) => {
+        const sx = x / scale, sy = y / scale, ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+        const u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy);
+        const a = v(ix, iy) * (1 - u) + v(ix + 1, iy) * u, b = v(ix, iy + 1) * (1 - u) + v(ix + 1, iy + 1) * u;
+        return a * (1 - w) + b * w;
+    };
+}
+
+/** What land a wild place is, from its words. */
+function wildTheme(plan) {
+    const w = `${plan.name} ${plan.kind} ${plan.summary} ${plan.theme}`.toLowerCase();
+    return /jungle|rainforest|tropic/.test(w) ? 'jungle' : /swamp|marsh|bog|bayou|fen\b/.test(w) ? 'swamp' : /snow|winter|frozen|tundra|ice\b/.test(w) ? 'snow' : /desert|dune|oasis|sand\b|canyon/.test(w) ? 'desert' : 'forest';
+}
+
+/**
+ * Lay a river (a meandering band: deep water in the middle, shallows along the banks) or a pond (a
+ * soft blob) onto the grid. Returns the squares of water.
+ */
+function addWater(c, W, H, r, kind, at = null) {
+    const water = [];
+    const set = (x, y, ch) => { if (x >= 0 && y >= 0 && x < W && y < H && c[y][x] === '.') { c[y][x] = ch; water.push([x, y]); } };
+    if (kind === 'river') {
+        const across = r() < 0.5, len = across ? W : H, span = across ? H : W;
+        const base = span * (0.3 + r() * 0.4), amp = span * (0.08 + r() * 0.1), freq = (1 + r() * 1.5) * Math.PI / len, ph = r() * 6, width = 2 + Math.floor(r() * 2);
+        for (let t = 0; t < len; t++) {
+            const mid = base + Math.sin(t * freq + ph) * amp + Math.sin(t * freq * 3.1 + ph) * amp * 0.25;
+            for (let k = -width - 1; k <= width + 1; k++) {
+                const p = Math.round(mid + k), ch = Math.abs(k) <= width - 1 ? 'w' : '~';
+                if (across) set(t, p, ch); else set(p, t, ch);
+            }
+        }
+    } else {
+        const [cx, cy] = at ?? [Math.floor(W * (0.25 + r() * 0.5)), Math.floor(H * (0.25 + r() * 0.5))];
+        const rad = kind === 'pool' ? 2 + r() * 1.5 : 3 + r() * 3, n = smoothNoise(Math.floor(r() * 1e6), 3);
+        for (let x = Math.floor(cx - rad - 2); x <= cx + rad + 2; x++) for (let y = Math.floor(cy - rad - 2); y <= cy + rad + 2; y++) {
+            const d = Math.hypot(x - cx, (y - cy) * 1.2) / (rad * (1 + n(x, y) * 0.3));
+            if (d < 0.6) set(x, y, rad > 3 ? 'w' : '~'); else if (d < 1) set(x, y, '~');
+        }
+    }
+    return water;
+}
+
+/**
+ * Grow the land: thickets of trees where the noise is high (thick in a jungle, open in a desert), great
+ * trees, palms by water in a jungle or desert, and undergrowth (ferns, tall grass, bushes, flowers,
+ * mushrooms, logs, rocks), reeds on the banks and lily pads on still water. keep(x, y) = leave clear.
+ */
+function growWilds(map, c, W, H, r, theme, keep, density = 1) {
+    const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
+    const taken = new Set((map.props || []).flatMap(p => { const out = []; for (let i = 0; i < (p.w || 1); i++) for (let j = 0; j < (p.h || 1); j++) out.push(K(p.x + i, p.y + j)); return out; }));
+    const put = (x, y, type, extra = {}) => { const w = extra.w || 1, h = extra.h || 1; for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) if (taken.has(K(x + i, y + j)) || get(x + i, y + j) !== '.' || keep(x + i, y + j)) return false; map.props.push({ x, y, type, ...extra }); for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) taken.add(K(x + i, y + j)); return true; };
+    const n = smoothNoise(Math.floor(r() * 1e6), 6), fine = smoothNoise(Math.floor(r() * 1e6), 2.5);
+    const base = { jungle: 0.62, forest: 0.45, swamp: 0.3, snow: 0.32, desert: 0.05 }[theme] * density;
+    const nearWater = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]].some(([dx, dy]) => '~w'.includes(get(x + dx, y + dy)));
+    const hue = { jungle: [105, 135], forest: [88, 125], swamp: [70, 95], snow: [130, 150], desert: [80, 100] }[theme];
+    // Great trees first (they need room), in the thick of the woods.
+    for (let x = 1; x < W - 2; x++) for (let y = 1; y < H - 2; y++) {
+        if (n(x, y) > 0.15 && r() < (theme === 'jungle' ? 0.05 : theme === 'forest' ? 0.03 : 0.012) * density) put(x, y, 'bigtree', { w: 2, h: 2, hue: Math.round(hue[0] + r() * (hue[1] - hue[0])), ...(theme === 'jungle' && r() < 0.3 ? { blossom: pickR(r, ['#ff5d8f', '#ffb347', '#f5f05a']) } : {}) });
+    }
+    for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
+        if (get(x, y) === '~' && !keep(x, y) && r() < 0.12 && (theme === 'jungle' || theme === 'swamp' || theme === 'forest')) { map.props.push({ x, y, type: 'lilypad' }); continue; }
+        if (get(x, y) !== '.' || keep(x, y) || taken.has(K(x, y))) continue;
+        const thick = base + n(x, y) * 0.35 + fine(x, y) * 0.1;
+        const wet = nearWater(x, y);
+        if (wet && r() < 0.4) { put(x, y, (theme === 'jungle' || theme === 'desert') && r() < 0.35 ? 'palm' : 'reeds'); continue; }
+        if (r() < thick) { c[y][x] = 'T'; continue; }
+        const under = r();
+        if (theme === 'jungle') { if (under < 0.22) put(x, y, 'fern'); else if (under < 0.32) put(x, y, 'tallgrass'); else if (under < 0.36) put(x, y, 'palm'); else if (under < 0.4) put(x, y, 'bush'); else if (under < 0.42) put(x, y, 'flowers'); }
+        else if (theme === 'forest') { if (under < 0.08) put(x, y, 'fern'); else if (under < 0.16) put(x, y, 'tallgrass'); else if (under < 0.2) put(x, y, 'bush'); else if (under < 0.22) put(x, y, 'mushroom'); else if (under < 0.24) put(x, y, 'log'); else if (under < 0.26) put(x, y, 'boulder'); else if (under < 0.29) put(x, y, 'flowers'); }
+        else if (theme === 'swamp') { if (under < 0.15) put(x, y, 'reeds'); else if (under < 0.22) put(x, y, 'tallgrass'); else if (under < 0.26) put(x, y, 'mushroom'); else if (under < 0.29) put(x, y, 'log'); }
+        else if (theme === 'snow') { if (under < 0.04) put(x, y, 'boulder'); else if (under < 0.06) put(x, y, 'bush'); }
+        else if (theme === 'desert') { if (under < 0.03) put(x, y, 'boulder'); else if (under < 0.05) put(x, y, 'bush'); }
+    }
+}
+
+/**
+ * A wild place (a jungle, a forest, a swamp, a riverbank, a camp): its "rooms" are spots on the land
+ * (a clearing, a waterfall pool, a ruined shrine, a camp), each a clearing, joined by winding trails;
+ * a river (bridged where a trail crosses) or ponds; and the land grown thick around them. Traps,
+ * hidden things and people of the plan go in their spots. All outdoors: no fog, no walls, no exits.
+ */
+export function generateWilds(planIn, seed = 1) {
+    const plan = planIn?.normalized ? planIn : normalizePlan(planIn);
+    const r = rng(seed);
+    const theme = wildTheme(plan);
+    const spots = plan.rooms.slice(0, 9);
+    const W = clamp(30 + spots.length * 4, 32, 56), H = clamp(26 + spots.length * 3, 28, 50);
+    const c = [...Array(H)].map(() => Array(W).fill('.'));
+    const map = { w: W, h: H, rows: [], theme, props: [], areas: [], roofs: [], seed };
+    const place = {
+        version: 1, kind: plan.kind || 'wilds', name: plan.name, theme, fog: false, seed, summary: plan.summary,
+        floors: [{ id: 'F0', name: plan.name, level: 0, map }], rooms: {}, doors: {}, stairs: [], traps: {}, items: {}, guards: {}, exits: [], buildings: {},
+        start: null, state: { positions: {}, explored: {}, visited: [], floor: 'F0' },
+    };
+    // Water: a river through it or a pond (or a few pools in a swamp, an oasis in a desert).
+    const words = `${plan.name} ${plan.summary} ${spots.map(s => s.name).join(' ')}`.toLowerCase();
+    const wantsRiver = /river|stream|creek|brook|ford|rapids/.test(words), wantsPond = /pond|lake|pool|lagoon|spring|oasis|waterfall/.test(words);
+    if (wantsRiver || (!wantsPond && (theme === 'jungle' ? r() < 0.6 : theme === 'forest' ? r() < 0.45 : false))) addWater(c, W, H, r, 'river');
+    if (wantsPond || theme === 'desert' || (theme !== 'snow' && r() < 0.5)) addWater(c, W, H, r, 'pond');
+    if (theme === 'swamp') for (let i = 0; i < 4 + Math.floor(r() * 3); i++) addWater(c, W, H, r, 'pool');
+    // The spots: clearings spread over the land, each sized to what it is.
+    const centers = [];
+    for (const sp of spots) {
+        const rad = sp.size === 'huge' || sp.size === 'large' ? 5 : sp.size === 'small' || sp.size === 'tiny' ? 3 : 4;
+        let best = null;
+        for (let tries = 0; tries < 80; tries++) {
+            const x = int(r, rad + 2, W - rad - 3), y = int(r, rad + 2, H - rad - 3);
+            const room = Math.min(...centers.map(cc => Math.hypot(cc.x - x, cc.y - y) - cc.rad - rad), 99);
+            let wet = 0; for (let i = -rad; i <= rad; i++) for (let j = -rad; j <= rad; j++) if ('~w'.includes(c[y + j]?.[x + i])) wet++;
+            const score = Math.min(room, 6) * 3 - wet;
+            if (!best || score > best.score) best = { x, y, rad, score };
+        }
+        centers.push({ ...best, sp });
+    }
+    // Trails between them (each to its nearest already joined), winding a little; bridges over water.
+    const trail = new Set();
+    const carve = (a, b) => {
+        let x = a.x, y = a.y;
+        for (let steps = 0; steps < 400 && (x !== b.x || y !== b.y); steps++) {
+            if (r() < 0.25) { x += pickR(r, [-1, 1]); } else if (Math.abs(b.x - x) > Math.abs(b.y - y) || (Math.abs(b.x - x) && r() < 0.5)) x += Math.sign(b.x - x); else y += Math.sign(b.y - y);
+            x = clamp(x, 1, W - 2); y = clamp(y, 1, H - 2);
+            trail.add(K(x, y));
+            c[y][x] = '~w'.includes(c[y][x]) || c[y][x] === 'b' ? 'b' : ':';
+        }
+    };
+    const joined = [centers[0]];
+    for (const cc of centers.slice(1)) {
+        const near = joined.slice().sort((p, q) => Math.hypot(p.x - cc.x, p.y - cc.y) - Math.hypot(q.x - cc.x, q.y - cc.y))[0];
+        carve(near, cc);
+        joined.push(cc);
+    }
+    // Clearings: open ground (dirt for a camp), named so the map knows where you are.
+    const inClearing = (x, y) => centers.some(cc => Math.hypot(x - cc.x, (y - cc.y) * 1.1) <= cc.rad);
+    for (const cc of centers) {
+        for (let x = cc.x - cc.rad; x <= cc.x + cc.rad; x++) for (let y = cc.y - cc.rad; y <= cc.y + cc.rad; y++) {
+            if (Math.hypot(x - cc.x, (y - cc.y) * 1.1) > cc.rad || c[y]?.[x] === undefined) continue;
+            if (c[y][x] === '.' || c[y][x] === 'T') c[y][x] = /camp/.test(`${cc.sp.type} ${cc.sp.name}`.toLowerCase()) ? ':' : '.';
+        }
+        place.rooms[cc.sp.id] = { id: cc.sp.id, name: cc.sp.name, type: cc.sp.type, floor: 'F0', rect: { x: cc.x - cc.rad, y: cc.y - cc.rad, w: cc.rad * 2 + 1, h: cc.rad * 2 + 1 }, lit: true, description: cc.sp.description, exit: false };
+    }
+    // The ground: a darker floor under the trees, sunnier glades where the spots are.
+    const floorDark = { jungle: [118, 46, 16], forest: [105, 34, 22], swamp: [78, 26, 18] }[theme];
+    if (floorDark) {
+        for (const cc of centers) map.areas.push({ x: cc.x - cc.rad, y: cc.y - cc.rad, w: cc.rad * 2 + 1, h: cc.rad * 2 + 1, floor: 'grass', floorC: theme === 'jungle' ? [100, 44, 30] : theme === 'swamp' ? [80, 30, 26] : [96, 36, 32], room: cc.sp.id });
+        map.areas.push({ x: 0, y: 0, w: W, h: H, floor: 'grass', floorC: floorDark });
+    }
+    const taken = new Set();
+    const put = (x, y, type, extra = {}) => { if (c[y]?.[x] === undefined || !'.:'.includes(c[y][x]) || taken.has(K(x, y)) || trail.has(K(x, y))) return false; map.props.push({ x, y, type, ...extra }); taken.add(K(x, y)); return true; };
+    const freeIn = cc => { for (let tries = 0; tries < 40; tries++) { const x = int(r, cc.x - cc.rad + 1, cc.x + cc.rad - 1), y = int(r, cc.y - cc.rad + 1, cc.y + cc.rad - 1); if (c[y]?.[x] && '.:'.includes(c[y][x]) && !taken.has(K(x, y)) && Math.hypot(x - cc.x, y - cc.y) < cc.rad - 0.5) return [x, y]; } return null; };
+    // What's in each spot: its plan props, and what fits its name.
+    for (const cc of centers) {
+        const nm = `${cc.sp.type} ${cc.sp.name}`.toLowerCase();
+        const dress = /camp/.test(nm) ? ['campfire', 'tent', 'tent', 'log', 'crate']
+            : /shrine|temple|altar|ruin|idol|statue|monolith/.test(nm) ? ['altar', 'statue', 'pillar', 'pillar']
+                : /waterfall|pool|spring|pond|lagoon/.test(nm) ? [] : /grave|tomb|barrow/.test(nm) ? ['tombstone', 'tombstone', 'tombstone']
+                    : /nest|lair|den/.test(nm) ? ['bones', 'skull', 'boulder'] : ['flowers', 'log', 'boulder'];
+        if (/waterfall|pool|spring|pond|lagoon/.test(nm)) addWater(c, W, H, r, 'pool', [cc.x, cc.y + Math.max(1, cc.rad - 2)]);
+        if (/ruin/.test(nm)) for (let i = 0; i < 4; i++) { const p = freeIn(cc); if (p) c[p[1]][p[0]] = '^'; }
+        for (const type of [...dress, ...cc.sp.props.flatMap(p => Array(p.count || 1).fill(p.type))]) { if (!PROPS[type]) continue; const p = freeIn(cc); if (p) put(p[0], p[1], type); }
+        // Traps (hidden until searched or stepped on) and hidden things in this spot.
+        cc.sp.traps.forEach(t => { const p = freeIn(cc); if (!p) return; const id = `T${Object.keys(place.traps).length + 1}`; place.traps[id] = { id, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], kind: t.kind, dc: t.dc, save: t.save, effect: t.effect, state: t.hidden ? 'hidden' : 'found' }; map.props.push({ x: p[0], y: p[1], type: 'trap', hidden: t.hidden, trap: id, label: t.kind }); taken.add(K(...p)); });
+        cc.sp.items.forEach(it => { const p = freeIn(cc); if (!p) return; const id = `I${Object.keys(place.items).length + 1}`; place.items[id] = { id, name: it.name, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], hidden: it.hidden, note: it.note, state: 'here' }; });
+    }
+    // The land around, grown thick; the clearings and trails stay open.
+    growWilds(map, c, W, H, r, theme, (x, y) => inClearing(x, y) || trail.has(K(x, y)));
+    // The people of the plan, in their spots.
+    for (const g of plan.guards) {
+        const cc = centers.find(x => x.sp.id === g.room) ?? centers[0];
+        const p = freeIn(cc) ?? [cc.x, cc.y];
+        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: cc.sp.id, patrol: g.patrol.length ? g.patrol : [cc.sp.id], step: 0, floor: 'F0', x: p[0], y: p[1], state: 'patrol' };
+    }
+    ensureIds(place);
+    // Start on dry ground in the starting spot.
+    const start = centers.find(cc => cc.sp.id === plan.start) ?? centers[0];
+    const dry = (x, y) => '.:='.includes(c[y]?.[x] ?? '#') && !map.props.some(p => PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
+    let sx = start.x, sy = start.y;
+    for (let d = 0; d < 8 && !dry(sx, sy); d++) for (let i = -d; i <= d && !dry(sx, sy); i++) for (let j = -d; j <= d; j++) if (dry(start.x + i, start.y + j)) { sx = start.x + i; sy = start.y + j; break; }
+    place.start = { floor: 'F0', x: sx, y: sy, room: start.sp.id };
+    map.rows = c.slice().reverse().map(row => row.join(''));
     place.state.explored.F0 = '1'.repeat(W * H);
     return place;
 }

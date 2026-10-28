@@ -38,7 +38,7 @@ export const TERRAIN = Object.freeze({
 });
 
 /** Map themes: they set the palette and what "." and "#" look like. */
-export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'mansion', 'cabin', 'town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'ship']);
+export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'mansion', 'cabin', 'town', 'forest', 'jungle', 'camp', 'swamp', 'snow', 'desert', 'ship']);
 
 /**
  * Things placed on top of the terrain: "blocks" = can't stand there; "light" = radius in squares;
@@ -69,7 +69,10 @@ export const PROPS = Object.freeze({
     kennel: { name: 'kennel', blocks: true, cover: true }, petbed: { name: 'pet bed' }, bowl: { name: 'food bowl' },
     // Town and outdoors
     sign: { name: 'sign', wall: true }, lamppost: { name: 'lamppost', blocks: true, light: 3 }, fence: { name: 'fence', blocks: true },
-    flowers: { name: 'flower bed' }, hay: { name: 'hay bales', blocks: true, cover: true }, trough: { name: 'trough', blocks: true },
+    flowers: { name: 'flower bed' }, hay: { name: 'hay bales', blocks: true, cover: true },
+    // Greenery
+    bigtree: { name: 'great tree', blocks: true, cover: true, size: [2, 2] }, palm: { name: 'palm tree', blocks: true, cover: true }, fern: { name: 'ferns' },
+    tallgrass: { name: 'tall grass', cover: true }, reeds: { name: 'reeds', cover: true }, lilypad: { name: 'lily pads', decal: true }, trough: { name: 'trough', blocks: true },
     tombstone: { name: 'gravestone', blocks: true, cover: true }, stall: { name: 'market stall', blocks: true, cover: true, size: [2, 2] },
     // Marks on the floor
     debris: { name: 'broken pieces', decal: true },
@@ -82,6 +85,7 @@ export const PROPS = Object.freeze({
 export const HIDE = Object.freeze({
     wardrobe: 'in', barrel: 'in', chest: 'in', coffin: 'in', cabinet: 'in', hay: 'in', tent: 'in', kennel: 'in', bush: 'in', cart: 'under', trough: 'behind',
     bed: 'under', table: 'under', desk: 'under', counter: 'behind', workbench: 'under', pew: 'under', stall: 'behind',
+    tallgrass: 'in', reeds: 'in', fern: 'in', bigtree: 'behind', palm: 'behind',
     bookshelf: 'behind', statue: 'behind', pillar: 'behind', crate: 'behind', boulder: 'behind', altar: 'behind', throne: 'behind', sofa: 'behind',
     dresser: 'behind', armor: 'behind', piano: 'behind', clock: 'behind', tombstone: 'behind', cauldron: 'behind', fireplace: 'behind', stalagmite: 'behind', fountain: 'behind', well: 'behind', plant: 'behind', anvil: 'behind',
 });

@@ -25,6 +25,7 @@ const THEME_STYLE = {
     cabin: { floor: 'planks', floorC: [28, 40, 32], wall: 'log', wallC: [26, 42, 28], dark: 0.15, moss: 0 },
     town: { floor: 'grass', floorC: [100, 32, 32], wall: 'plaster', wallC: [40, 25, 66], dark: 0, moss: 0.02 },
     forest: { floor: 'grass', floorC: [100, 35, 30], wall: 'hedge', wallC: [120, 35, 16], dark: 0.05, moss: 0 },
+    jungle: { floor: 'grass', floorC: [112, 44, 24], wall: 'hedge', wallC: [125, 45, 13], dark: 0.12, moss: 0.15 },
     camp: { floor: 'dirt', floorC: [32, 30, 30], wall: 'hedge', wallC: [120, 30, 16], dark: 0.3, moss: 0 },
     swamp: { floor: 'mud', floorC: [70, 25, 20], wall: 'hedge', wallC: [95, 30, 13], dark: 0.2, moss: 0.2 },
     snow: { floor: 'snow', floorC: [210, 30, 88], wall: 'rock', wallC: [215, 10, 45], dark: 0, moss: 0 },
@@ -40,7 +41,7 @@ const WALL_MATERIAL = {
     brick: [25, 7, 28], stoneblock: [30, 8, 36], wallpaper: [350, 30, 26], panel: [24, 35, 18], log: [26, 42, 28], timber: [38, 22, 54],
     plaster: [40, 25, 66], rock: [24, 14, 20], hedge: [120, 35, 16], sandstone: [32, 45, 48],
 };
-const OUTDOOR = new Set(['forest', 'camp', 'swamp', 'snow', 'desert', 'town']);
+const OUTDOOR = new Set(['forest', 'jungle', 'camp', 'swamp', 'snow', 'desert', 'town']);
 /** Terrain that is drawn on top of a floor: its ground comes from the squares around it. */
 const OVERLAY = new Set(['T', '+', '/', 'D', '<', '>', 'o', '^', 'I', 'J', 'j']);
 const PLAIN = { '.': true, ',': true, ':': true, '_': true, '=': true };
@@ -129,8 +130,10 @@ const FLOOR = {
         ctx.fillStyle = 'rgba(30,20,10,0.6)';
         for (let i = 0; i < 4; i++) ctx.fillRect(x + s * 0.06, y + (i + 0.5) * s / 4 - 1, 2, 2);
     },
-    grass(ctx, r, x, y, s, st) {
-        ctx.fillStyle = tone(st.floorC, r, 4, 6); ctx.fillRect(x, y, s, s);
+    grass(ctx, r, x, y, s, st, gx = 0, gy = 0) {
+        const [h, sat, l] = st.floorC, n = fieldNoise(gx, gy);
+        ctx.fillStyle = hsl(h + n * 8 + between(r, -3, 3), sat + n * 6, Math.max(8, l + n * 7 + between(r, -2, 2))); ctx.fillRect(x, y, s, s);
+        if (r() < 0.35) for (let i = 0; i < 3; i++) { const lx = x + r() * s, ly = y + r() * s; for (let k = 0; k < 3; k++) ellipse(ctx, lx + Math.cos(k * 2.1) * s * 0.025, ly + Math.sin(k * 2.1) * s * 0.025, s * 0.025, s * 0.025, hsl(h + 10, sat + 10, l + 8, 0.7)); }
         for (let i = 0; i < 4; i++) blob(ctx, x + r() * s, y + r() * s, s * between(r, 0.2, 0.5), r() < 0.5 ? 'rgba(20,40,10,0.2)' : 'rgba(200,220,120,0.10)');
         ctx.lineWidth = s / 90;
         for (let i = 0; i < 46; i++) {
@@ -363,12 +366,48 @@ function rubble(ctx, r, x, y, s) {
         ctx.fill();
     }
 }
-function tree(ctx, r, x, y, s) {
+/** Low-frequency noise over the map (0-1 smooth, -1..1), so grass has soft patches across squares. */
+function fieldNoise(x, y) {
+    const v = (a, b) => { const h = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return (h - Math.floor(h)) * 2 - 1; };
+    const sx = x / 5, sy = y / 5, ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+    const u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy);
+    const a = v(ix, iy) * (1 - u) + v(ix + 1, iy) * u, b = v(ix, iy + 1) * (1 - u) + v(ix + 1, iy + 1) * u;
+    return a * (1 - w) + b * w;
+}
+
+/** A tree on its square, by the land: round leafy trees and pines in a forest, palms and broadleaf canopy in a jungle, drooping willows in a swamp, snowy pines in snow, palms in a desert. */
+function tree(ctx, r, x, y, s, theme = 'forest') {
     const cx = x + s / 2, cy = y + s / 2;
+    const kind = theme === 'jungle' ? pick(r, ['broad', 'broad', 'broad', 'broad', 'broad', 'palm']) : theme === 'snow' ? 'pine' : theme === 'desert' ? 'palm' : theme === 'swamp' ? pick(r, ['willow', 'willow', 'round']) : pick(r, ['round', 'round', 'pine']);
+    if (kind === 'palm') return PROP_ART.palm(ctx, r, cx, cy, s);
+    if (kind === 'pine') {
+        shadow(ctx, cx + s * 0.12, cy + s * 0.16, s * 0.44, s * 0.3);
+        for (let i = 0; i < 3; i++) {
+            const rad = s * (0.46 - i * 0.12), pts = [];
+            for (let k = 0; k < 16; k++) { const a = k / 16 * Math.PI * 2, rr = k % 2 ? rad * 0.62 : rad; pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]); }
+            ctx.beginPath(); pts.forEach(([px, py], k) => (k ? ctx.lineTo(px, py) : ctx.moveTo(px, py))); ctx.closePath();
+            ctx.fillStyle = hsl(140 + between(r, -8, 8), 35, 16 + i * 6); ctx.fill();
+        }
+        if (theme === 'snow') for (let i = 0; i < 6; i++) ellipse(ctx, cx + between(r, -0.25, 0.25) * s, cy + between(r, -0.25, 0.25) * s, s * 0.07, s * 0.05, 'rgba(240,245,255,0.85)');
+        return;
+    }
+    if (kind === 'willow') {
+        shadow(ctx, cx + s * 0.12, cy + s * 0.16, s * 0.52, s * 0.36);
+        for (let i = 0; i < 9; i++) { const a = i / 9 * Math.PI * 2; ctx.strokeStyle = hsl(85, 30, between(r, 22, 34)); ctx.lineWidth = s / 14; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.quadraticCurveTo(cx + Math.cos(a) * s * 0.3, cy + Math.sin(a) * s * 0.2, cx + Math.cos(a) * s * 0.48, cy + Math.sin(a) * s * 0.48); ctx.stroke(); }
+        ellipse(ctx, cx, cy, s * 0.22, s * 0.22, hsl(88, 30, 26));
+        return;
+    }
     shadow(ctx, cx + s * 0.12, cy + s * 0.16, s * 0.5, s * 0.34);
     ellipse(ctx, cx, cy + s * 0.05, s * 0.08, s * 0.08, '#4a3020');
+    if (kind === 'broad') {
+        // Jungle canopy: big, dark, glossy leaves layered over each other.
+        for (let i = 0; i < 11; i++) { const a = r() * Math.PI * 2, d = s * between(r, 0.1, 0.36), rad = s * between(r, 0.26, 0.42); ellipse(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, rad, rad * 0.85, hsl(between(r, 110, 140), 50, between(r, 13, 25))); }
+        for (let i = 0; i < 6; i++) ellipse(ctx, cx + between(r, -0.3, 0.2) * s, cy + between(r, -0.3, 0.2) * s, s * 0.1, s * 0.06, 'rgba(180,255,150,0.14)');
+        if (r() < 0.25) for (let i = 0; i < 3; i++) ellipse(ctx, cx + between(r, -0.3, 0.3) * s, cy + between(r, -0.3, 0.3) * s, s * 0.035, s * 0.035, pick(r, ['#ff5d8f', '#ffb347', '#f5f05a']));
+        return;
+    }
     const hue = between(r, 95, 130);
-    for (let i = 0; i < 7; i++) { const a = r() * Math.PI * 2, d = s * between(r, 0.05, 0.22), rad = s * between(r, 0.18, 0.3); ellipse(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, rad, rad, hsl(hue + between(r, -10, 10), 40, between(r, 18, 30))); }
+    for (let i = 0; i < 9; i++) { const a = r() * Math.PI * 2, d = s * between(r, 0.06, 0.3), rad = s * between(r, 0.22, 0.38); ellipse(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, rad, rad, hsl(hue + between(r, -10, 10), 40, between(r, 18, 30))); }
     for (let i = 0; i < 4; i++) ellipse(ctx, cx - s * between(r, 0.02, 0.2), cy - s * between(r, 0.02, 0.2), s * 0.1, s * 0.08, 'rgba(200,255,150,0.10)');
 }
 function pillarTile(ctx, r, x, y, s) { PROP_ART.pillar(ctx, r, x + s / 2, y + s / 2, s); }
@@ -391,6 +430,118 @@ function stairs(ctx, r, x, y, s, up) {
     ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = `${s * 0.32}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(up ? '▲' : '▼', x + s / 2, y + s / 2);
 }
+/** Water colours by setting: [shallow, mid, deep] as [r, g, b]. */
+const WATER_TINTS = {
+    jungle: [[70, 190, 175], [30, 135, 140], [16, 70, 95]],
+    desert: [[90, 205, 200], [35, 150, 170], [20, 80, 120]],
+    swamp: [[70, 112, 88], [42, 80, 64], [22, 48, 40]],
+    snow: [[175, 215, 235], [110, 165, 205], [55, 95, 150]],
+    sewer: [[80, 95, 70], [55, 68, 50], [32, 40, 30]],
+    cave: [[60, 120, 140], [30, 75, 105], [14, 38, 68]],
+    default: [[80, 170, 190], [40, 115, 160], [18, 52, 108]],
+};
+
+/**
+ * All the water on the map in one go, so it looks like water and not tiles: shallows near the shore
+ * shading to deep in the middle (a smooth colour field from each square's distance to land), soft
+ * rounded edges, a damp darker bank on the land around it, foam along the shore, and ripples, glints
+ * and the light-web of caustics in the shallows. Bridges count as water (it flows under them).
+ */
+function paintWater(ctx, map, tile, at) {
+    const W = map.w, H = map.h;
+    const wet = ch => ch === '~' || ch === 'w' || ch === 'b';
+    const tiles = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (wet(at(x, y)) && (at(x, y) !== 'b' || [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => at(x + dx, y + dy) === '~' || at(x + dx, y + dy) === 'w'))) tiles.push([x, y]);
+    if (!tiles.length) return;
+    const isWater = new Set(tiles.map(([x, y]) => y * W + x));
+    // How far each square is from land (0 = on the shore).
+    const depth = new Map();
+    const queue = [];
+    for (const [x, y] of tiles) if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => !isWater.has((y + dy) * W + x + dx) && at(x + dx, y + dy) !== '%')) { depth.set(y * W + x, 0); queue.push([x, y]); }
+    for (let qi = 0; qi < queue.length; qi++) {
+        const [x, y] = queue[qi], d = depth.get(y * W + x);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const k = (y + dy) * W + x + dx; if (isWater.has(k) && !depth.has(k)) { depth.set(k, d + 1); queue.push([x + dx, y + dy]); } }
+    }
+    const tint = WATER_TINTS[map.theme] ?? WATER_TINTS.default;
+    const mixc = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    const colorAt = (x, y) => {
+        let d = depth.get(y * W + x) ?? 3;
+        if (at(x, y) === 'w') d = Math.max(d, 2);
+        return d <= 0 ? tint[0] : d === 1 ? mixc(tint[0], tint[1], 0.7) : d === 2 ? mixc(tint[1], tint[2], 0.5) : tint[2];
+    };
+    // A colour field, one pixel a square, smoothed up to full size.
+    const field = document.createElement('canvas'); field.width = W; field.height = H;
+    const fctx = field.getContext('2d'), img = fctx.createImageData(W, H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const o = ((H - 1 - y) * W + x) * 4, c = isWater.has(y * W + x) ? colorAt(x, y) : tint[0]; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; }
+    fctx.putImageData(img, 0, 0);
+    // The shape of the water, a few pixels a square, softened into rounded edges.
+    const k = 4, maskSmall = document.createElement('canvas'); maskSmall.width = W * k; maskSmall.height = H * k;
+    const ms = maskSmall.getContext('2d'); ms.fillStyle = '#fff';
+    for (const [x, y] of tiles) ms.fillRect(x * k, (H - 1 - y) * k, k, k);
+    const full = (blur, src) => { const cv = document.createElement('canvas'); cv.width = W * tile; cv.height = H * tile; const c = cv.getContext('2d'); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = 'high'; c.filter = `blur(${blur}px)`; c.drawImage(src, 0, 0, W * tile, H * tile); c.filter = 'none'; return cv; };
+    // A damp, darker bank on the land around the water.
+    const bank = full(tile * 0.45, maskSmall), bctx = bank.getContext('2d');
+    bctx.globalCompositeOperation = 'source-in'; bctx.fillStyle = map.theme === 'snow' ? 'rgba(120,140,160,0.45)' : 'rgba(38,30,16,0.5)'; bctx.fillRect(0, 0, bank.width, bank.height);
+    ctx.drawImage(bank, 0, 0);
+    // The water itself: the smooth colour field, cut to the soft shape.
+    const water = full(tile * 0.7, field), wctx = water.getContext('2d');
+    const shape = full(tile * 0.45, maskSmall);
+    wctx.globalCompositeOperation = 'destination-in'; wctx.drawImage(shape, 0, 0);
+    ctx.drawImage(water, 0, 0);
+    // On the surface: caustics in the shallows, ripples, glints, foam along the shore.
+    ctx.save();
+    ctx.beginPath(); for (const [x, y] of tiles) ctx.rect(x * tile, (H - 1 - y) * tile, tile, tile); ctx.clip();
+    for (const [x, y] of tiles) {
+        const r = rngFor(map.seed, x, y, 77), px = x * tile, py = (H - 1 - y) * tile, d = depth.get(y * W + x) ?? 3;
+        if (d <= 1 && map.theme !== 'swamp') {
+            ctx.strokeStyle = 'rgba(255,255,255,0.09)'; ctx.lineWidth = Math.max(1, tile / 40);
+            for (let i = 0; i < 3; i++) { ctx.beginPath(); const sx = px + r() * tile, sy = py + r() * tile; ctx.moveTo(sx, sy); ctx.bezierCurveTo(sx + between(r, -0.3, 0.3) * tile, sy + between(r, -0.3, 0.3) * tile, sx + between(r, -0.3, 0.3) * tile, sy + between(r, -0.3, 0.3) * tile, sx + between(r, -0.4, 0.4) * tile, sy + between(r, -0.4, 0.4) * tile); ctx.stroke(); }
+        }
+        ctx.strokeStyle = `rgba(255,255,255,${d >= 2 ? 0.07 : 0.13})`; ctx.lineWidth = Math.max(1, tile / 50);
+        for (let i = 0; i < 2; i++) { const cx = px + r() * tile, cy = py + r() * tile; ctx.beginPath(); ctx.arc(cx, cy, tile * between(r, 0.08, 0.16), Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); }
+        if (r() < 0.18) ellipse(ctx, px + r() * tile, py + r() * tile, tile * 0.05, tile * 0.012, 'rgba(255,255,255,0.35)');
+        // Foam where the water meets the shore.
+        if (d === 0 && map.theme !== 'swamp') {
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                if (isWater.has((y + dy) * W + x + dx)) continue;
+                ctx.strokeStyle = 'rgba(240,250,255,0.32)'; ctx.lineWidth = Math.max(1.2, tile / 28);
+                ctx.beginPath();
+                for (let i = 0; i <= 4; i++) {
+                    const t = i / 4, wob = Math.sin(t * 6 + x + y) * tile * 0.04;
+                    const fx = dx ? px + (dx > 0 ? tile * 0.86 : tile * 0.14) + wob : px + t * tile;
+                    const fy = dy ? py + (dy > 0 ? tile * 0.14 : tile * 0.86) + wob : py + t * tile;
+                    if (i) ctx.lineTo(fx, fy); else ctx.moveTo(fx, fy);
+                }
+                ctx.stroke();
+            }
+        }
+    }
+    ctx.restore();
+}
+
+/** Dirt trails as soft, winding paths (not one-square steps): a blurred shape filled with earth, worn lighter down the middle. */
+function paintTrails(ctx, map, tile, trails) {
+    if (!trails.length) return;
+    const W = map.w, H = map.h, k = 4;
+    const small = document.createElement('canvas'); small.width = W * k; small.height = H * k;
+    const sc = small.getContext('2d'); sc.fillStyle = '#fff';
+    for (const [x, y] of trails) sc.fillRect(x * k, (H - 1 - y) * k, k, k);
+    const soft = (blur, color) => { const cv = document.createElement('canvas'); cv.width = W * tile; cv.height = H * tile; const c = cv.getContext('2d'); c.imageSmoothingEnabled = true; c.filter = `blur(${blur}px)`; c.drawImage(small, 0, 0, W * tile, H * tile); c.filter = 'none'; c.globalCompositeOperation = 'source-in'; c.fillStyle = color; c.fillRect(0, 0, cv.width, cv.height); return cv; };
+    const earth = map.theme === 'snow' ? 'rgba(150,140,130,0.85)' : map.theme === 'desert' ? 'rgba(170,135,90,0.85)' : map.theme === 'swamp' ? 'rgba(70,55,35,0.85)' : 'rgba(110,80,50,0.88)';
+    ctx.drawImage(soft(tile * 0.28, earth), 0, 0);
+    ctx.drawImage(soft(tile * 0.6, 'rgba(255,230,190,0.08)'), 0, 0);
+    for (const [x, y] of trails) { const r = rngFor(map.seed, x, y, 13); for (let i = 0; i < 5; i++) ellipse(ctx, x * tile + r() * tile, (H - 1 - y) * tile + r() * tile, tile * 0.025, tile * 0.02, `rgba(${r() < 0.5 ? '40,30,20' : '200,180,150'},0.35)`); }
+}
+
+/** Planks over water (or a drop): the deck only. */
+function bridgeDeck(ctx, r, x, y, s, horizontal) {
+    ctx.save(); ctx.translate(x + s / 2, y + s / 2); if (!horizontal) ctx.rotate(Math.PI / 2);
+    shadow(ctx, s * 0.06, s * 0.08, s * 0.5, s * 0.34);
+    for (let i = 0; i < 5; i++) { ctx.fillStyle = hsl(28, 35, between(r, 26, 36)); ctx.fillRect(-s / 2 + i * s / 5 + 1, -s * 0.3, s / 5 - 2, s * 0.6); }
+    ctx.fillStyle = hsl(28, 30, 20); ctx.fillRect(-s / 2, -s * 0.33, s, s * 0.04); ctx.fillRect(-s / 2, s * 0.29, s, s * 0.04);
+    ctx.restore();
+}
+
 function bridge(ctx, r, x, y, s, horizontal, overWater = true) {
     if (overWater) water(ctx, r, x, y, s, true);
     else { ctx.fillStyle = '#060606'; ctx.fillRect(x, y, s, s); blob(ctx, x + s / 2, y + s / 2, s * 0.7, 'rgba(255,120,40,0.12)'); }
@@ -539,9 +690,10 @@ function hipRoof(ctx, r, rf, px, py, w, h, base, tile) {
 
 /** A round tower's cone (or, with half: true, the half-dome over a round front): segments meeting at a finial. */
 function coneRoof(ctx, r, rf, px, py, w, h, base, tile, half = false) {
-    const cx = px + w / 2, cy = half ? py : py + h / 2, rad = half ? Math.min(w / 2, h) : Math.min(w, h) / 2;
+    const up = half && rf.up;
+    const cx = px + w / 2, cy = half ? (up ? py + h : py) : py + h / 2, rad = half ? Math.min(w / 2, h) : Math.min(w, h) / 2;
     const n = half ? 8 : 12;
-    const a0 = half ? 0 : -Math.PI / 2, span = half ? Math.PI : Math.PI * 2;
+    const a0 = half ? (up ? Math.PI : 0) : -Math.PI / 2, span = half ? Math.PI : Math.PI * 2;
     for (let i = 0; i < n; i++) {
         const a = a0 + span * i / n, b = a0 + span * (i + 1) / n;
         const light = Math.cos((a + b) / 2 + Math.PI * 0.75);
@@ -572,6 +724,13 @@ function battlementRoof(ctx, r, rf, px, py, w, h, tile) {
     ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, w - 2, h - 2);
 }
 
+/** A wooden porch roof: planks with a darker edge. */
+function porchRoof(ctx, r, rf, px, py, w, h, tile) {
+    rrect(ctx, px, py, w, h, 2, hsl(28, 38, 36), hsl(28, 40, 16), 2);
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 1;
+    for (let x = px + tile * 0.25; x < px + w; x += tile * 0.25) { ctx.beginPath(); ctx.moveTo(x, py + 2); ctx.lineTo(x, py + h - 2); ctx.stroke(); }
+}
+
 /** A portico: a pale stone roof on columns over the front door, with a pediment line. */
 function porticoRoof(ctx, r, rf, px, py, w, h, tile) {
     rrect(ctx, px, py, w, h, 2, hsl(40, 14, 78), hsl(40, 10, 40), 2);
@@ -585,7 +744,7 @@ function roof(ctx, rf, tile, mapH, seed) {
     const px = rf.x * tile, py = (mapH - rf.y - rf.h) * tile, w = rf.w * tile, h = rf.h * tile;
     const ridgeAlong = rf.ridge ?? (rf.w >= rf.h ? 'h' : 'v');
     const hue = rf.hue ?? pick(r, [8, 18, 25, 200, 30, 350]);
-    const base = rf.style === 'thatch' ? [40, 45, 42] : rf.style === 'slate' ? [215, 12, 30] : [hue, 38, 34];
+    const base = rf.style === 'thatch' ? [40, 45, 42] : rf.style === 'slate' ? [215, 12, 30] : [hue, rf.sat ?? 38, rf.light ?? 34];
     // Shadow on the ground (the sun is up-left).
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     if (rf.shape === 'cone') { ctx.beginPath(); ctx.arc(px + w / 2 + tile * 0.18, py + h / 2 + tile * 0.22, Math.min(w, h) / 2, 0, Math.PI * 2); ctx.fill(); }
@@ -596,6 +755,7 @@ function roof(ctx, rf, tile, mapH, seed) {
     if (rf.shape === 'apse') return coneRoof(ctx, r, rf, px, py, w, h, base, tile, true);
     if (rf.shape === 'battlement') return battlementRoof(ctx, r, rf, px, py, w, h, tile);
     if (rf.shape === 'portico') return porticoRoof(ctx, r, rf, px, py, w, h, tile);
+    if (rf.shape === 'porch') return porchRoof(ctx, r, rf, px, py, w, h, tile);
     const halves = ridgeAlong === 'h'
         ? [[px, py, w, h / 2, 8], [px, py + h / 2, w, h / 2, -10]]
         : [[px, py, w / 2, h, 8], [px + w / 2, py, w / 2, h, -10]];
@@ -651,6 +811,8 @@ function styleFor(st, area) {
     if (area.floor && FLOOR[area.floor]) { out.floor = area.floor; out.floorC = area.hue !== undefined && ['carpet', 'tiles'].includes(area.floor) ? [area.hue, area.floor === 'carpet' ? 45 : 12, area.floor === 'carpet' ? 26 : 72] : (MATERIAL[area.floor] ?? st.floorC); }
     if (area.wall) { out.wall = area.wall; out.wallC = area.wallColor ?? (area.wallHue !== undefined && area.wall === 'wallpaper' ? [area.wallHue, 30, 26] : (WALL_MATERIAL[area.wall] ?? st.wallC)); }
     if (area.grime !== undefined) out.grime = area.grime;
+    // A patch of ground in its own colour (a dark forest floor, a sunny glade).
+    if (area.floorC) out.floorC = area.floorC;
     return out;
 }
 
@@ -678,6 +840,12 @@ export function paintMapBase(map, tile) {
         return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '.';
     };
     const kinds = new Array(map.w * map.h).fill(null);
+    // Trees outdoors are drawn after all the ground, top to bottom, so their canopies overlap.
+    const trees = [];
+    // Bridges over water go on after the water is painted.
+    const decks = [];
+    // Dirt trails outdoors are painted as one soft path after the ground.
+    const trails = [];
 
     for (let y = 0; y < map.h; y++) {
         for (let x = 0; x < map.w; x++) {
@@ -689,10 +857,20 @@ export function paintMapBase(map, tile) {
             if (ch === '%') { voidTile(ctx, r, px, py, tile); continue; }
             if (ch === '#') { wall(ctx, r, px, py, tile, st, open, x, y); continue; }
             if (ch === '|' || ch === 'H' || ch === 'U') { windowTile(ctx, r, px, py, tile, st, isWall(at(x - 1, y)) || isWall(at(x + 1, y)), x, y, open, ch === 'H' ? 'barred' : ch === 'U' ? 'broken' : 'glass'); continue; }
-            if (ch === '~' || ch === 'w') { water(ctx, r, px, py, tile, ch === 'w'); continue; }
+            if (ch === ':' && outdoor) {
+                (FLOOR[st.floor] ?? FLOOR.grass)(ctx, r, px, py, tile, st, x, y);
+                trails.push([x, y]);
+                continue;
+            }
+            if (ch === '~' || ch === 'w') {
+                const under = FLOOR[floorKind(groundChar(x, y), st)] ?? FLOOR[st.floor] ?? FLOOR.stone;
+                under(ctx, r, px, py, tile, st, x, y);
+                continue;
+            }
             if (ch === 'L') { lava(ctx, r, px, py, tile); continue; }
             if (ch === 'b') {
                 const overWater = [[0, 1], [0, -1], [1, 0], [-1, 0]].some(([dx, dy]) => at(x + dx, y + dy) === '~' || at(x + dx, y + dy) === 'w');
+                if (overWater) { decks.push([r, px, py, isWater(at(x, y + 1)) || isWater(at(x, y - 1))]); continue; }
                 bridge(ctx, r, px, py, tile, isWater(at(x, y + 1)) || isWater(at(x, y - 1)) || at(x, y + 1) === 'o' || at(x, y - 1) === 'o' || at(x, y + 1) === 'L' || at(x, y - 1) === 'L', overWater);
                 continue;
             }
@@ -711,7 +889,7 @@ export function paintMapBase(map, tile) {
             }
             if (ch === 'o') pit(ctx, r, px, py, tile);
             else if (ch === '^') rubble(ctx, r, px, py, tile);
-            else if (ch === 'T') (outdoor ? tree : pillarTile)(ctx, r, px, py, tile);
+            else if (ch === 'T') { if (outdoor) trees.push([r, px, py]); else pillarTile(ctx, r, px, py, tile); }
             else if (ch === '+' || ch === '/' || ch === 'D') door(ctx, r, px, py, tile, ch === '/' ? 'open' : ch === 'D' ? 'locked' : 'closed', isWall(at(x - 1, y)) || isWall(at(x + 1, y)));
             else if (ch === '<' || ch === '>') stairs(ctx, r, px, py, tile, ch === '<');
             else if (ch === 'I' || ch === 'J' || ch === 'j') {
@@ -739,6 +917,10 @@ export function paintMapBase(map, tile) {
             }
         }
     }
+    paintTrails(ctx, map, tile, trails);
+    paintWater(ctx, map, tile, at);
+    for (const [dr, px, py, horiz] of decks) bridgeDeck(ctx, dr, px, py, tile, horiz);
+    for (const [tr, px, py] of trees) tree(ctx, tr, px, py, tile, map.theme);
     // Carpeted rooms get a border along their edges.
     for (const a of map.areas || []) {
         if (a.floor !== 'carpet') continue;
@@ -758,7 +940,7 @@ export function paintMapBase(map, tile) {
     // Roofs over town buildings.
     for (const rf of map.roofs || []) roof(ctx, rf, tile, map.h, map.seed);
     // Props: floor marks, then rugs, then furniture, then things hanging from the ceiling.
-    const layer = p => (PROPS[p.type]?.decal ? 0 : p.type === 'rug' ? 1 : PROPS[p.type]?.ceiling ? 3 : 2);
+    const layer = p => (PROPS[p.type]?.decal ? 0 : p.type === 'rug' ? 1 : PROPS[p.type]?.ceiling || p.type === 'bigtree' ? 3 : 2);
     const props = (map.props || []).filter(p => !p.hidden).sort((a, b) => layer(a) - layer(b));
     for (const p of props) {
         const art = PROP_ART[p.type];

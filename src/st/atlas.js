@@ -10,7 +10,7 @@ import { readJson, writeLater, flushWrites, deleteFile } from './storage.js';
 import { statsForName } from './sheets.js';
 import { postNarration, postNote } from './messages.js';
 import { slug, nameKey } from '../core/text.js';
-import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, clearDoorways, ensureIds } from '../core/layout.js';
+import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, generateWilds, WILD_KINDS, clearDoorways, ensureIds } from '../core/layout.js';
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
@@ -647,7 +647,9 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         await sleep(300);
         const seed = Math.floor(Math.random() * 1e9);
         const plan = town ? null : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
-        const place = town ? generateTown(normalizeTownPlan(raw), seed) : generatePlace(plan, seed);
+        // A wild place (a jungle, a forest, a swamp, a camp) is land: clearings joined by trails, not rooms.
+        const wild = !town && !plan.building && WILD_KINDS.test(`${plan.kind} ${plan.name}`.toLowerCase());
+        const place = town ? generateTown(normalizeTownPlan(raw), seed) : wild ? generateWilds(plan, seed) : generatePlace(plan, seed);
         anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
         const key = placeKey(place.name || req.name);

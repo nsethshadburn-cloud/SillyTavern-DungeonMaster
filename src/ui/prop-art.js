@@ -282,5 +282,61 @@ export const PROP_ART = {
         for (let i = 0; i < 18; i++) ellipse(ctx, cx + between(r, -0.32, 0.32) * s, cy + between(r, -0.24, 0.26) * s, s * 0.014, s * 0.014, `rgba(190,185,178,${between(r, 0.3, 0.7)})`);
         if (r() < 0.6) ellipse(ctx, cx + between(r, -0.15, 0.15) * s, cy + between(r, -0.1, 0.1) * s, s * 0.022, s * 0.016, 'rgba(230,90,30,0.7)');
     },
+    bigtree(ctx, r, cx, cy, s, w = 2, h = 2, prop = {}) {
+        // A great tree: a wide canopy over two squares and more, layered leaves, sunlit on top.
+        const hue = prop.hue ?? between(r, 95, 128), rad = Math.min(w, h) * s * 0.62;
+        shadow(ctx, cx + s * 0.3, cy + s * 0.36, rad * 1.05, rad * 0.75);
+        ellipse(ctx, cx + s * 0.05, cy + s * 0.12, s * 0.16, s * 0.16, '#3d2817');
+        for (let i = 0; i < 16; i++) { const a = r() * Math.PI * 2, d = rad * between(r, 0.1, 0.62), cr = rad * between(r, 0.3, 0.46); ellipse(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d, cr, cr * 0.9, hsl(hue + between(r, -12, 12), 42, between(r, 16, 28))); }
+        for (let i = 0; i < 10; i++) { const a = r() * Math.PI * 2, d = rad * between(r, 0.05, 0.5); ellipse(ctx, cx - rad * 0.15 + Math.cos(a) * d, cy - rad * 0.18 + Math.sin(a) * d, rad * 0.16, rad * 0.12, `hsla(${hue + 10},55%,45%,0.22)`); }
+        if (prop.blossom) for (let i = 0; i < 8; i++) ellipse(ctx, cx + between(r, -0.8, 0.8) * rad, cy + between(r, -0.8, 0.8) * rad, s * 0.04, s * 0.04, prop.blossom);
+    },
+    palm(ctx, r, cx, cy, s) {
+        // A palm: a leaning trunk and long fronds fanning out from the top.
+        const tx = cx + between(r, -0.12, 0.12) * s, ty = cy - s * 0.08;
+        shadow(ctx, cx + s * 0.16, cy + s * 0.18, s * 0.5, s * 0.3);
+        line(ctx, cx, cy + s * 0.3, tx, ty, '#6b4a2b', s * 0.09);
+        for (let i = 0; i < 8; i++) {
+            const a = i / 8 * Math.PI * 2 + between(r, -0.15, 0.15), len = s * between(r, 0.42, 0.56);
+            const ex = tx + Math.cos(a) * len, ey = ty + Math.sin(a) * len * 0.8;
+            ctx.strokeStyle = hsl(between(r, 95, 125), 48, between(r, 24, 34)); ctx.lineWidth = s * 0.07; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.quadraticCurveTo((tx + ex) / 2, (ty + ey) / 2 - s * 0.08, ex, ey); ctx.stroke();
+            ctx.strokeStyle = 'rgba(200,255,160,0.25)'; ctx.lineWidth = 1; ctx.stroke();
+        }
+        ctx.lineCap = 'butt';
+        for (let i = 0; i < 3; i++) ellipse(ctx, tx + between(r, -0.06, 0.06) * s, ty + between(r, -0.04, 0.06) * s, s * 0.045, s * 0.045, '#5a3d1e');
+    },
+    fern(ctx, r, cx, cy, s) {
+        for (let i = 0; i < 7; i++) {
+            const a = i / 7 * Math.PI * 2 + between(r, -0.2, 0.2), len = s * between(r, 0.28, 0.4), ex = cx + Math.cos(a) * len, ey = cy + Math.sin(a) * len;
+            ctx.strokeStyle = hsl(between(r, 100, 130), 50, between(r, 26, 36)); ctx.lineWidth = s / 40;
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke();
+            for (let k = 1; k < 6; k++) { const t = k / 6, px = cx + (ex - cx) * t, py = cy + (ey - cy) * t, l = s * 0.07 * (1 - t * 0.6); line(ctx, px, py, px + Math.cos(a + 1.2) * l, py + Math.sin(a + 1.2) * l, hsl(115, 48, 32), s / 60); line(ctx, px, py, px + Math.cos(a - 1.2) * l, py + Math.sin(a - 1.2) * l, hsl(115, 48, 32), s / 60); }
+        }
+    },
+    tallgrass(ctx, r, cx, cy, s) {
+        ctx.lineCap = 'round';
+        for (let i = 0; i < 34; i++) {
+            const bx = cx + between(r, -0.45, 0.45) * s, by = cy + between(r, -0.35, 0.45) * s, lean = between(r, -0.12, 0.12) * s, len = between(r, 0.2, 0.42) * s;
+            ctx.strokeStyle = hsl(between(r, 70, 100), 45, between(r, 28, 46)); ctx.lineWidth = s / 36;
+            ctx.beginPath(); ctx.moveTo(bx, by); ctx.quadraticCurveTo(bx + lean / 2, by - len / 2, bx + lean, by - len); ctx.stroke();
+        }
+        ctx.lineCap = 'butt';
+    },
+    reeds(ctx, r, cx, cy, s) {
+        for (let i = 0; i < 12; i++) {
+            const bx = cx + between(r, -0.35, 0.35) * s, by = cy + between(r, -0.2, 0.35) * s, len = between(r, 0.3, 0.5) * s;
+            line(ctx, bx, by, bx + between(r, -0.05, 0.05) * s, by - len, hsl(80, 35, between(r, 30, 42)), s / 30);
+            if (i % 3 === 0) ellipse(ctx, bx, by - len, s * 0.035, s * 0.08, hsl(25, 45, 28));
+        }
+    },
+    lilypad(ctx, r, cx, cy, s) {
+        for (let i = 0; i < 3; i++) {
+            const x = cx + between(r, -0.3, 0.3) * s, y = cy + between(r, -0.3, 0.3) * s, rad = s * between(r, 0.1, 0.16), a = r() * Math.PI * 2;
+            ctx.fillStyle = hsl(between(r, 100, 125), 45, between(r, 30, 38));
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, rad, a + 0.35, a + Math.PI * 2 - 0.35); ctx.closePath(); ctx.fill();
+        }
+        if (r() < 0.5) { const x = cx + between(r, -0.2, 0.2) * s, y = cy + between(r, -0.2, 0.2) * s; for (let k = 0; k < 5; k++) ellipse(ctx, x + Math.cos(k * 1.26) * s * 0.03, y + Math.sin(k * 1.26) * s * 0.03, s * 0.03, s * 0.02, '#f6c1d6'); ellipse(ctx, x, y, s * 0.015, s * 0.015, '#f5d64a'); }
+    },
     stain(ctx, r, cx, cy, s) { for (let i = 0; i < 4; i++) blob(ctx, cx + between(r, -0.15, 0.15) * s, cy + between(r, -0.15, 0.15) * s, s * between(r, 0.2, 0.4), `rgba(${pick(r, ['50,35,20', '30,40,20', '60,20,20'])},0.45)`); },
 };
