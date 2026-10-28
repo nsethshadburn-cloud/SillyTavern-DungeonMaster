@@ -646,26 +646,27 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         anim.step(town ? 'Building the town' : 'Building the floors');
         await sleep(300);
         const seed = Math.floor(Math.random() * 1e9);
-        const plan = town ? null : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
+        // (Not 'plan': that's the ready plan this was called with, read above.)
+        const placePlan = town ? null : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
         // A wild place (a jungle, a forest, a swamp, a camp) is land: clearings joined by trails, not rooms.
-        const wild = !town && !plan.building && WILD_KINDS.test(`${plan.kind} ${plan.name}`.toLowerCase());
-        const place = town ? generateTown(normalizeTownPlan(raw), seed) : wild ? generateWilds(plan, seed) : generatePlace(plan, seed);
+        const wild = !town && !placePlan.building && WILD_KINDS.test(`${placePlan.kind} ${placePlan.name}`.toLowerCase());
+        const place = town ? generateTown(normalizeTownPlan(raw), seed) : wild ? generateWilds(placePlan, seed) : generatePlace(placePlan, seed);
         anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
         const key = placeKey(place.name || req.name);
         // A building is two maps: its grounds outside (with the front door) and its inside. The front
         // door goes between them; the party starts outside when they're arriving (or out in the yard).
         let enterKey = key, outside = null;
-        if (plan?.building) {
+        if (placePlan?.building) {
             anim.step('Laying out the grounds');
-            outside = generateGrounds(plan, place, seed + 1);
+            outside = generateGrounds(placePlan, place, seed + 1);
             const insideKey = `${key}--b1`;
             place.parent = { key, door: outside.buildings.B1.door };
             outside.buildings.B1.interior = insideKey;
             storePlace(c, key, outside, { size: big ? 'big' : 'small' });
             storePlace(c, insideKey, place, { size: big ? 'big' : 'small', parent: key });
             const startRoom = place.rooms[place.start?.room];
-            if (!plan.startOutside && !(startRoom?.exit && /arriv|approach|outside|walk up|reach|come to|knock/i.test(`${req.why} ${req.start}`))) enterKey = insideKey;
+            if (!placePlan.startOutside && !(startRoom?.exit && /arriv|approach|outside|walk up|reach|come to|knock/i.test(`${req.why} ${req.start}`))) enterKey = insideKey;
         } else storePlace(c, key, place, { size: big ? 'big' : 'small' });
         await flushWrites();
         const summary = town
