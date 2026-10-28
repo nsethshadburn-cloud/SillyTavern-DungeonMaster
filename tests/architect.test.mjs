@@ -174,3 +174,18 @@ test('a companion taken away inside the place is put in a real room to find: nam
     assert.equal(heldRoom(place, 'waiting back at the camp by the road', from), null, 'somewhere else: off this map');
     assert.equal(heldRoom(place, 'went to think', from), null, 'nowhere in particular: off the map');
 });
+
+test('a new campaign that starts with Judy caged elsewhere in the prison: she is in a cage room away from the player', async () => {
+    const { heldRoom } = await import('../src/core/explore.js');
+    const { BIBLE_INSTRUCTIONS } = await import('../src/core/protocol.js');
+    assert.match(BIBLE_INSTRUCTIONS, /"start_place"/);
+    assert.match(BIBLE_INSTRUCTIONS, /"party_start"/);
+    for (const seed of [1, 2, 3, 4]) {
+        const place = build({ name: 'Saltmarsh Gaol', kind: 'prison', size: 'medium', start: 'locked in a cell' }, seed);
+        const spot = heldRoom(place, 'locked in a cage elsewhere in the prison', place.start);
+        assert.ok(spot?.caged, 'in a cage');
+        assert.notEqual(spot.roomId, place.start.room, `seed ${seed}: not the player's cell`);
+        const rm = place.rooms[spot.roomId];
+        assert.ok(['cell', 'kennel'].includes(rm.type), `seed ${seed}: a cell or kennel (${rm.type})`);
+    }
+});

@@ -343,7 +343,8 @@ export async function askPlaceBrief(req, { signal = null } = {}) {
     const s = settings();
     const local = (s.mapBrief ?? 'local') === 'local' && s.useHelper;
     const context = [
-        '# THE STORY', c.docs.story ? trimToTokens(c.docs.story, local ? 600 : 1200, true) : '(just begun)',
+        '# THE STORY', c.docs.story ? trimToTokens(c.docs.story, local ? 600 : 1200, true) : c.docs.bible ? `(just begun) The campaign: ${trimToTokens(c.docs.bible, local ? 500 : 1000, true)}` : '(just begun)',
+        req.context ? `\n# AT THE START\n${trimToTokens(req.context, 400, true)}` : '',
         '', '# DM NOTES (secrets)', c.docs.notes ? trimToTokens(c.docs.notes, local ? 500 : 1500, true) : '(none)',
         '', '# PEOPLE MET', c.docs.npcs?.length ? trimToTokens(rosterSummary(c.docs.npcs), local ? 300 : 800, true) : '(none yet)',
         '', '# RECENT CHAT (oldest first)', transcript(local ? 8 : 16) || '(empty)',

@@ -384,6 +384,8 @@ export async function setWaiting(name, wait, { why = '', quiet = false } = {}) {
     const room = p ? roomAt(place, p.floor, p.x, p.y) : null;
     if (wait) {
         place.state.waiting[name] = true;
+        place.state.leftAt ??= {};
+        place.state.leftAt[name] = { turn: c.meta.turn, seen: place.state.visited.length };
         applyPresence(c.docs.world, c.meta.party.map(m => m.name), { [name]: `stayed behind in ${room?.name ?? 'a passage'} (${place.name})` }, []);
         if (!quiet) await postNote(`🚶 ${name} stays in ${room?.name ?? 'the passage'}${why ? `: ${why}` : ''}.`);
     } else {
@@ -691,7 +693,7 @@ let building = false;
  * @param {{name:string, size:'big'|'small', kind:string, why?:string}} req
  * @param {{plan?: object}} [o] plan = a ready plan (skips asking Claude; used for testing)
  */
-export async function requestBuild(req, { status = null, signal = null, plan = null, confirm = true } = {}) {
+export async function requestBuild(req, { status = null, signal = null, plan = null, confirm = true, ask = false, quiet = false } = {}) {
     const c = campaign();
     if (!c || !req?.name) return null;
     const existing = atlasEntry(req.name, c);
@@ -703,7 +705,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     const big = req.size === 'big';
     const town = /town|village|hamlet|city|outpost|settlement/.test(String(req.kind || '').toLowerCase());
     const byClaude = settings().mapBuilder === 'claude';
-    if (big && confirm) {
+    if ((big || ask) && confirm) {
         const ok = await ST.callGenericPopup(
             `<h3>Build ${escape(req.name)}?</h3><p>Claude wants to build <b>${escape(req.name)}</b> as a full map${req.why ? `: ${escape(req.why)}` : ''}.</p><p>Every room on every floor is made once and kept for the rest of the campaign (${byClaude ? 'Claude plans it: about $0.15–0.30, a minute or so' : 'built by the map algorithm from a short brief: a few seconds, nearly free'}).</p>`,
             ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Build it', cancelButton: 'Not now' });
@@ -757,7 +759,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
             ? `🗺️ **${place.name}** is ready: ${Object.keys(place.buildings).length} buildings. Their insides are built when you walk in.`
             : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} rooms${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
         await anim.finish(summary);
-        await enterPlace(enterKey);
+        await enterPlace(enterKey, { quiet });
         return place;
     } catch (error) {
         await anim.fail(String(error?.message || error));
@@ -947,6 +949,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
     let event = null, handoff = null, newRoom = null;
+    const greet = []; // companions you came back to or walked away from: they may speak
     try {
         for (const [x, y] of path) {
             const d = doorAt(place, floorId, x, y);
@@ -988,13 +991,38 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         if (nowIn && !seenBefore.has(nowIn.id)) newRoom = nowIn.id;
         const here = roomAt(place, lead.floor, lead.x, lead.y);
         // Coming back into their room (or right up to them in a corridor) brings them along again;
-        // never on the same walk they decided to stay.
+        // never on the same walk they decided to stay. Someone locked up (caged, in a cell) can't come,
+        // but they're with you now: they can hear and talk to you until you leave again.
         for (const [n, w] of Object.entries(place.state.waiting || {})) {
             const p = place.state.positions[n];
-            if (!w || !p || p.floor !== lead.floor || refused.has(n) || lockedReason(c, n)) continue;
+            if (!w || !p || p.floor !== lead.floor || refused.has(n)) continue;
             const theirs = roomAt(place, p.floor, p.x, p.y);
             const near = !theirs && !here && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 2;
-            if (near || (here && theirs?.id === here.id)) { if (place.state.held?.[n]) delete place.state.held[n]; await setWaiting(n, false); }
+            if (!near && !(here && theirs?.id === here.id)) continue;
+            if (fromRoom && theirs?.id === fromRoom.id) continue; // they were with you already
+            const since = place.state.visited.slice(place.state.leftAt?.[n]?.seen ?? place.state.visited.length).map(id => place.rooms[id]?.name).filter(Boolean);
+            if (lockedReason(c, n)) {
+                if (isAway(c.docs.world, n)) { applyPresence(c.docs.world, c.meta.party.map(m => m.name), {}, [n]); saveDoc('world'); }
+                greet.push({ name: n, kind: 'held', room: theirs?.name ?? '', why: place.state.held?.[n] ?? '' });
+                continue;
+            }
+            if (place.state.held?.[n]) delete place.state.held[n];
+            await setWaiting(n, false, { quiet: true });
+            greet.push({ name: n, kind: 'back', room: theirs?.name ?? '', since, turns: c.meta.turn - (place.state.leftAt?.[n]?.turn ?? c.meta.turn) });
+        }
+        // Walking out on someone who's staying (or can't come): they're away again, and may say something as you go.
+        if (fromRoom && fromRoom.id !== here?.id) {
+            for (const [n, w] of Object.entries(place.state.waiting || {})) {
+                const p = place.state.positions[n];
+                if (!w || !p || p.floor !== floorId || roomAt(place, p.floor, p.x, p.y)?.id !== fromRoom.id) continue;
+                const locked = Boolean(lockedReason(c, n));
+                if (!isAway(c.docs.world, n)) {
+                    const heldText = place.state.held?.[n];
+                    await setWaiting(n, true, { quiet: true });
+                    if (heldText) place.state.held[n] = c.docs.world.away[n];
+                }
+                greet.push({ name: n, kind: locked ? 'left-held' : 'left', room: fromRoom.name, refused: refused.has(n) });
+            }
         }
         if (handoff?.stairs) {
             const s = handoff.stairs;
@@ -1042,6 +1070,9 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         walked = 0;
         const { runTurn } = await import('./orchestrator.js');
         await runTurn({ moved: true });
+    } else if (greet.length && !handoff) {
+        const { companionsSeeYou } = await import('./orchestrator.js');
+        await companionsSeeYou(c, greet);
     } else if (newRoom && !handoff) {
         const { companionCuriosity } = await import('./orchestrator.js');
         await companionCuriosity(c, newRoom);

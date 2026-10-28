@@ -660,6 +660,52 @@ export async function companionCuriosity(c, roomId) {
     }
 }
 
+/**
+ * You came back to a companion you'd left (or walked in on one who's locked up), or walked away
+ * from one who's staying. Each one decides, in character, whether they'd say anything right now
+ * (local model; often they won't); if so they speak, all locally (no Claude call): asking what you
+ * found, begging to be let out, telling you to be careful.
+ * list: [{name, kind: 'back' | 'held' | 'left' | 'left-held', room, since?, turns?, why?, refused?}]
+ */
+export async function companionsSeeYou(c, list) {
+    const s = settings();
+    if (running || !s.useHelper || c.docs.world.combat || !list.length) return;
+    running = true;
+    const player = c.meta.persona.name;
+    const status = beginTurn('Your companions');
+    try {
+        for (const g of list.slice(0, 2)) {
+            const member = c.meta.party.find(p => p.name === g.name);
+            if (!member) continue;
+            const moment = g.kind === 'back' ? `${player} just came back to ${g.room || 'where you were'}, where you stayed behind${g.turns > 0 ? ` (${g.turns} turn${g.turns > 1 ? 's' : ''} ago)` : ''}${g.since?.length ? `; since leaving you they went through ${g.since.slice(-4).join(', ')}` : ''}. You're coming along with them again.`
+                : g.kind === 'held' ? `${player} just walked into ${g.room || 'the room'} where you are locked up${g.why ? ` (${g.why.replace(/\s*\(on the map:.*\)$/, '')})` : ''}. You can't get out by yourself.`
+                    : g.kind === 'left-held' ? `${player} is walking out of ${g.room || 'the room'} and leaving you here, still locked up.`
+                        : `${player} is walking out of ${g.room || 'the room'}; you're staying here${g.refused ? ' (your choice)' : ''}.`;
+            // Would they say anything? Often not.
+            const decide = [
+                `${g.name}: ${trimToTokens(member.summary || '', 200)}`,
+                c.meta.standing ? `Right now: ${c.meta.standing}` : '',
+                `Moment: ${moment}`,
+                `Would ${g.name}, being who they are, say something to ${player} right now? Only if it fits: someone left alone a short while may just nod; someone trapped and desperate will call out. Reply JSON: {"speak": true or false, "what": "a few words: what they'd want to say"}`,
+            ].filter(Boolean).join('\n');
+            const pick = extractJson(await callLocal({ system: 'You decide one thing about a character in a roleplay. Reply with JSON only.', messages: [{ role: 'user', content: decide }], maxTokens: 60, profileId: s.helperProfileId })) || {};
+            if (!(pick.speak === true || pick.speak === 'true')) { status.note(`${g.name} says nothing`); continue; }
+            const brief = g.kind === 'back' ? `${moment} React in a line or two, in character${g.since?.length ? ': ask what they found or what happened, if you would' : ''}. You want to say: ${String(pick.what || '').slice(0, 100)}.`
+                : g.kind === 'held' ? `${moment} React in character, a line or two: plead with ${player} to get you out, tell them anything you know that would help (who has the key, how the lock works). You want to say: ${String(pick.what || '').slice(0, 100)}.`
+                    : `${moment} Say one short line as they go, in character. You want to say: ${String(pick.what || '').slice(0, 100)}.`;
+            const step = status.step(`${g.name} speaks`);
+            await makeSpeak(g.name, brief, { signal: new AbortController().signal, length: 'short' });
+            step.done();
+        }
+        status.finish('');
+    } catch (error) {
+        console.warn('[Dungeon Master] companion reaction failed', error);
+        status.finish('');
+    } finally {
+        running = false;
+    }
+}
+
 /** Rewrite a companion's sheet for a new level and keep their HP in step. */
 export async function levelUp(c, member, level, status = null) {
     const step = status?.step(`Rewriting ${member.name}'s sheet for level ${level}`);

@@ -9,6 +9,8 @@ import { createWorldState, ensureParty } from '../core/world.js';
 import { guessSetting } from '../core/deck.js';
 import { extractJson, escapeHtml, shortId, trimToTokens } from '../core/text.js';
 import { beginTurn } from './status.js';
+import { mapsOn, modelFor } from '../st/settings.js';
+import { applyPresence } from '../core/world.js';
 
 const TONES = ['adventure', 'mystery', 'horror', 'political intrigue', 'survival', 'heist', 'war', 'romance-adjacent drama', 'dark fantasy', 'comedy'];
 
@@ -352,8 +354,57 @@ async function buildCampaign(form) {
             world_next: json.world_next,
         });
         const { runOpening } = await import('../st/orchestrator.js');
-        const { loadForCurrentChat } = await import('../st/campaign.js');
+        const { loadForCurrentChat, campaign, saveDoc } = await import('../st/campaign.js');
         await loadForCurrentChat();
+        const c = campaign();
+        // Where each companion starts: anyone not with the player is away from the start (and, on a
+        // map, put where the setup says, like a cage elsewhere in the prison).
+        const away = {};
+        for (const ch of partyChars) {
+            const where = Object.entries(json.party_start || {}).find(([k]) => k.toLowerCase() === ch.name.toLowerCase())?.[1];
+            // "with the player", "beside Amber", "together": with them. Anything else (a cage elsewhere,
+            // locked in a cell, waiting at the inn) is somewhere else.
+            const together = /^\s*(with|beside|next to|alongside|together|right by)\b/i.test(String(where)) && !/\b(cage|caged|cell|locked|elsewhere|separat|captive|held|prisoner|away)\b/i.test(String(where));
+            if (where && !together) away[ch.name] = String(where).slice(0, 120);
+        }
+        if (c && Object.keys(away).length) { applyPresence(c.docs.world, partyChars.map(p => p.name), away, []); saveDoc('world'); }
+        // The map first (asked every time, unless maps are off), so the DM opens the story on it.
+        let built = null;
+        const sp = json.start_place && typeof json.start_place === 'object' && String(json.start_place.name || '').trim() ? json.start_place : null;
+        if (c && sp && mapsOn()) {
+            const { requestBuild, placeHeld } = await import('../st/atlas.js');
+            const context = [json.opening, Object.entries(away).map(([n, w]) => `${n}: ${w}`).join('; ')].filter(Boolean).join('\n');
+            try {
+                built = await requestBuild({ name: String(sp.name).slice(0, 80), kind: String(sp.kind || '').slice(0, 40), size: sp.size === 'big' ? 'big' : 'small', start: String(sp.start || '').slice(0, 200), why: String(sp.why || 'where the story starts').slice(0, 200), context }, { ask: true, quiet: true });
+            } catch (error) {
+                toastr.error(`The map couldn't be built: ${error?.message || error}. The story starts without it.`, 'Dungeon Master');
+            }
+            if (built) placeHeld(c);
+        }
+        if (built) {
+            // The DM has read the map now: it writes the opening to match it (rooms, doors, who is where).
+            const { askDm } = await import('../st/dm.js');
+            const step2 = beginTurn('Opening scene');
+            const s2 = step2.step('The DM reads the map and writes the opening');
+            try {
+                const draft = `The campaign starts now, on this map. The campaign design's draft opening is below: write the opening scene from it, matched exactly to the map (the room the party is in, what's in it, its doors; who is where: anyone not with the player is where WHERE THINGS STAND and the map put them). Use "positions" or "place_changes" only if the map truly needs a fix.\nDraft: ${json.opening}`;
+                const r = await askDm({ reasons: ['opening'], placeEvent: draft }, { model: modelFor(['opening']) });
+                const t = r.turn;
+                const names = new Set((t.new_npcs || []).map(n => n.name.toLowerCase()));
+                for (const n of opening.new_npcs) if (!names.has(n.name.toLowerCase())) t.new_npcs.push(n);
+                if (!t.narration) t.narration = opening.narration;
+                if (!t.scene) t.scene = opening.scene;
+                if (!t.standing_direction) t.standing_direction = opening.standing_direction;
+                if (!t.directions.length) t.directions = opening.directions;
+                s2.done('', r.usd);
+                step2.finish('Ready');
+                await runOpening(t);
+                return;
+            } catch (error) {
+                s2.fail(error);
+                step2.finish('Using the first draft');
+            }
+        }
         await runOpening(opening);
     } catch (error) {
         console.error('[Dungeon Master] Build failed', error);

@@ -213,6 +213,8 @@ Return ONE JSON object and nothing else:
   "table_rules": ["0-5 things the player's premise says must always stay true, in plain words (who stays together, what must or must not happen)"],
   "knowledge": {"<each party member's exact name>": "what they know when the story starts: who they are in this story, how they got into this situation, what they've been told or accused of, who they know here, what they suspect. 4-8 plain sentences, only things they would actually know (no secrets kept from them), with clear times (tonight, a week ago)."},
   "objective": "<=15 words: the party's immediate goal at the start",
+  "start_place": {"name": "the place the story starts in, when it is somewhere to explore on a map (a prison, a mansion, a dungeon, a town, a camp, a forest); null for a road or an open-ended scene", "kind": "prison|mansion|castle|dungeon|town|forest|...", "size": "small|big", "start": "where the player is in it right now: outside the gate | locked in a cell | in the great hall", "why": "one line: what the place is in this story"},
+  "party_start": {"<each party member's exact name>": "with the player | where they are instead, as the premise says (locked in a cage elsewhere in the prison, waiting at the inn)"},
   "directions": [{"speaker": "party member name", "direction": "optional brief for an opening line: only what they need to know and want, never their words", "length": "short|normal"}],
   "new_npcs": [{"name": "every NPC who appears in the opening", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile"}],
   "tension": 2,
