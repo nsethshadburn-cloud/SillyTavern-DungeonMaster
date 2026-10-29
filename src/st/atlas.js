@@ -18,7 +18,8 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS } from '../core/explore.js';
+import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
+import { ensureClock, weatherAmbience } from '../core/clock.js';
 import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
 import { inferStanding, setStanding, standingOf, standingFor, trespassOf } from '../core/access.js';
@@ -736,7 +737,7 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
     const prevKey = c.docs.world.place?.key;
     if (prevKey && prevKey !== key) pruneAware(c, places.get(`${c.meta.id}:${prevKey}`));
     c.docs.world.place = { key, floor: lead.floor };
-    syncNight(c, { key, place });
+    syncSky(c, { key, place });
     // Inside a place the location is the place itself; rooms are tracked by the map, not by a name the DM picks each turn.
     c.docs.world.location = place.name;
     saveDoc('world');
@@ -819,16 +820,29 @@ async function callDm(placeEvent) {
 const NIGHTLIFE = /tavern|\binn\b|\bpub\b|alehouse|brothel|gambling|\bden\b|club|dock|harbou?r|guardhouse|barracks|watch|garrison|prison|jail|gaol|temple|shrine|hospital|infirmary|hideout|lair|camp/i;
 
 /**
- * Night and day on the map, from the world's time of day (the DM's scene.time). Dark outside from
- * evening on; at night residents go to sleep (on a bed if their room has one), shops and homes in
- * town lock their doors, and night guards carry lanterns. Morning undoes it all. Returns true if
- * anything changed.
+ * The sky over the map, from the world's clock and weather: dark outside from evening on; at night
+ * residents go to sleep (on a bed if their room has one), shops and homes in town lock their doors,
+ * and night guards carry lanterns; morning undoes it all. The weather shows outdoors (rain, snow,
+ * mist on the map) and shortens sight in fog. Returns true if anything changed.
  */
-export function syncNight(c = campaign(), cur = currentPlace(c)) {
+export function syncSky(c = campaign(), cur = currentPlace(c)) {
     if (!c || !cur) return false;
     const { key, place } = cur;
-    const night = isNight(c.docs.world.time), late = isLate(c.docs.world.time);
-    if (place.state.night === night && place.state.late === late) return false;
+    const w = c.docs.world;
+    ensureClock(w);
+    const night = isNight(w.time), late = isLate(w.time);
+    let changed = false;
+    if (place.state.weather !== w.weather) {
+        place.state.weather = w.weather;
+        for (const f of place.floors) {
+            if (!OUTDOOR.has(f.map.theme)) continue;
+            const amb = weatherAmbience(w.weather, f.map.theme);
+            if (amb) f.map.ambience = amb; else delete f.map.ambience;
+            f.map.version = (f.map.version || 0) + 1;
+        }
+        changed = true;
+    }
+    if (place.state.night === night && place.state.late === late) { if (changed) savePlace(key, c); return changed; }
     place.state.night = night;
     place.state.late = late;
     const upLate = NIGHTLIFE.test(`${place.kind || ''} ${place.hostKind || ''} ${place.name || ''}`);

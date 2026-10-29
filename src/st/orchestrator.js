@@ -18,7 +18,8 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncNight } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky } from './atlas.js';
+import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
@@ -156,6 +157,25 @@ export async function runTurn(opts = {}) {
     }
 }
 
+/** The climate where the party is: the world's setting and the map's theme. */
+function climateHere(c) {
+    const here = currentPlace(c);
+    return climateOf(c.docs.world.setting, here ? floorById(here.place, here.place.state.positions[c.meta.persona.name]?.floor ?? here.place.state.floor).map.theme : '');
+}
+
+/** Minutes pass on the world's clock; the weather may turn; the map follows (night, rain). */
+async function tickClock(c, minutes, status) {
+    const w = c.docs.world;
+    const { weather } = passTime(w, minutes, { climate: climateHere(c) });
+    if (weather) {
+        status?.note(`The weather turns: ${WEATHER_WORDS[weather]}`);
+        await postDiceCard(`🌦️ The weather turns: ${WEATHER_WORDS[weather]}.`, { state: true });
+    }
+    syncSky(c);
+    refreshMap();
+    saveDoc('world');
+}
+
 async function turnBody(c, opts, status, signal) {
     const s = settings();
     const meta = c.meta;
@@ -188,6 +208,8 @@ async function turnBody(c, opts, status, signal) {
     } else if (opts.force !== 'manual' && opts.force !== 'opening') {
         meta.turn++;
         pacing.localTurnsSinceDM++;
+        // The clock ticks by turn: a few minutes of story each; a minute a round in a fight.
+        await tickClock(c, pacing.inCombat ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
         const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat });
         triage = { ...triage, ...rule };
         let engaged = null;
@@ -494,6 +516,7 @@ async function mapSync(c, fromIndex) {
 async function movedTurn(c, status, signal) {
     const meta = c.meta, pacing = meta.pacing;
     status.note('You moved a good way: the world moves too');
+    await tickClock(c, 2, status);
     let placeEvent = '';
     const burned = await fireTurn(c, status);
     if (burned) placeEvent = burned;
@@ -1078,6 +1101,20 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         saveDoc('npcs');
     }
 
+    // The clock and the weather are the code's: the DM moves them only on purpose (a time skip, a change in the story).
+    ensureClock(world);
+    if (t.clock) {
+        const before = clockText(world);
+        const r = t.clock.set ? skipTo(world, t.clock.set, { climate: climateHere(c) }) : t.clock.advance ? passTime(world, parseDuration(t.clock.advance) ?? 0, { climate: climateHere(c) }) : null;
+        if (r) {
+            status.note(`Clock: ${before} → ${clockText(world)}`);
+            await postDiceCard(`🕰️ ${t.clock.set ? `Time passes until ${t.clock.set}` : `${t.clock.advance} pass${/^(a|an|one)\b/.test(t.clock.advance) ? 'es' : ''}`}: ${clockText(world)}.${r.weather ? ` The weather turns: ${WEATHER_WORDS[r.weather]}.` : ''}`, { state: true });
+        } else status.note(`Clock: couldn't read "${t.clock.set || t.clock.advance}"`);
+    }
+    if (t.weather) {
+        const kind = parseWeather(t.weather);
+        if (kind && kind !== world.weather) { world.weather = kind; status.note(`Weather: ${WEATHER_WORDS[kind]}`); await postDiceCard(`🌦️ The weather turns: ${WEATHER_WORDS[kind]}.`, { state: true }); }
+    }
     // Scene.
     const prevLocation = world.location;
     // Inside a built place the location IS the place: a room name the DM sends would make every NPC
@@ -1087,11 +1124,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (t.scene.location && stayingInside && nameKey(t.scene.location) !== nameKey(world.location)) { status.note(`Location stays ${world.location} (the map tracks the room)`); t.scene.location = world.location; }
         if (t.scene.location) world.location = t.scene.location;
         if (t.scene.setting) world.setting = guessSetting(world.location, t.scene.setting);
-        if (t.scene.time) {
-            if (/morning|dawn/.test(t.scene.time) && /night|evening/.test(world.time || '')) world.day = (world.day || 1) + 1;
-            world.time = t.scene.time;
-            syncNight(c);
-        }
+        // The time of day is the clock's, not the scene's: a DM that says "morning" at night is ignored (it skips time with "clock").
+        if (t.scene.time && !new RegExp(String(world.time), 'i').test(t.scene.time)) status.note(`Time stays ${world.time} (the clock keeps it; use "clock" to skip ahead)`);
     }
     // A new place: the old scene card no longer applies. A new scene: NPCs forget the last one.
     const newPlace = Boolean(t.scene?.location && prevLocation && nameKey(t.scene.location) !== nameKey(prevLocation));
@@ -1221,7 +1255,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // A rest: HP, hit dice, spell slots and abilities in code (the DM only says it happened).
     if (t.rest) {
         const rested = takeRest(world, t.rest, [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))], n => statsForName(n, meta), roll);
-        if (rested.length) await postDiceCard(`📜 ${t.rest === 'long' ? 'Long rest' : 'Short rest'}: ${rested.join(' · ')}`, { state: true });
+        // A rest takes its time: an hour, or the night.
+        const r = passTime(world, t.rest === 'long' ? 8 * 60 : 60, { climate: climateHere(c) });
+        await postDiceCard(`📜 ${t.rest === 'long' ? 'Long rest' : 'Short rest'}${rested.length ? `: ${rested.join(' · ')}` : ''} · now ${clockText(world)}${r.weather ? ` · the weather turns: ${WEATHER_WORDS[r.weather]}` : ''}`, { state: true });
+    }
+    syncSky(c);
+    // Time that passed just now (a skip, a rest) ends what has run out.
+    if (t.clock || t.rest) {
+        const ended = expireConditions(world, { turn: meta.turn, round: world.combat?.round ?? null });
+        if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
     }
     // Spell slots, hit dice and limited abilities spent this turn.
     if (t.state_changes?.spend && typeof t.state_changes.spend === 'object') {

@@ -170,6 +170,7 @@ function panelHtml() {
 
       <h4>Pacing</h4>
       <div class="dm-grid2">
+        <label>Clock: minutes of story that pass each turn (the map's clock; a minute a round in fights, an hour or a night for rests)<input id="dm-minutes" type="number" min="1" max="120" class="text_pole" value="${s.minutesPerTurn ?? 10}"></label>
         <label>World pace: the world moves on its own every N turns (faster when people are actively doing things to you)<input id="dm-checkin" type="number" min="1" max="20" class="text_pole" value="${s.checkinEvery}"></label>
         <label>Usual session length (min)<input id="dm-session" type="number" min="15" max="600" class="text_pole" value="${s.usualSessionMinutes}"></label>
         <label>Chat messages sent to the DM<input id="dm-recent" type="number" min="6" max="80" class="text_pole" value="${s.recentMessages}"></label>
@@ -399,6 +400,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindCheck('dm-caching', 'cachingEnabled');
     bindNumber('dm-think', 'thinkingAllowance');
     bindNumber('dm-checkin', 'checkinEvery');
+    bindNumber('dm-minutes', 'minutesPerTurn');
     bindNumber('dm-session', 'usualSessionMinutes');
     bindNumber('dm-recent', 'recentMessages');
     bindNumber('dm-inject', 'injectionMaxTokens');

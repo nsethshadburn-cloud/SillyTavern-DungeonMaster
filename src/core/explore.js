@@ -7,8 +7,9 @@ import { doorChar, ensureIds } from './layout.js';
 import { nameKey, matchName } from './text.js';
 import { lockDc } from './locks.js';
 import { grantAccess, trespassOf, accessSummary, zoneOf, placeClass } from './access.js';
+import { WEATHER_WORDS } from './clock.js';
 
-const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'jungle']);
+export const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'jungle']);
 /** Squares you can't see through. Windows and open doors are see-through. */
 const OPAQUE = new Set(['#', '%', '+', 'D', 'T']);
 const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
@@ -144,6 +145,8 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
     const z = zones(place, floorId);
     const open = OUTDOOR.has(map.theme) || !z.rooms.length;
     const through = barLinks(map, z);
+    // Fog outdoors: nobody sees more than a few squares.
+    const reach = OUTDOOR.has(map.theme) && place.state?.weather === 'fog' ? Math.min(radius, FOG_SIGHT) : radius;
     for (const v of viewers) {
         const own = z.grid[v.y * map.w + v.x];
         const room = own ? z.rooms[own - 1] : null;
@@ -152,8 +155,8 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
             const r = room.rect;
             for (let x = r.x - 1; x <= r.x + r.w; x++) for (let y = r.y - 1; y <= r.y + r.h; y++) if (x >= 0 && y >= 0 && x < map.w && y < map.h) vis[y * map.w + x] = 1;
         }
-        for (let x = Math.max(0, v.x - radius); x <= Math.min(map.w - 1, v.x + radius); x++) {
-            for (let y = Math.max(0, v.y - radius); y <= Math.min(map.h - 1, v.y + radius); y++) {
+        for (let x = Math.max(0, v.x - reach); x <= Math.min(map.w - 1, v.x + reach); x++) {
+            for (let y = Math.max(0, v.y - reach); y <= Math.min(map.h - 1, v.y + reach); y++) {
                 const i = y * map.w + x;
                 if (vis[i]) continue;
                 const d = Math.max(Math.abs(x - v.x), Math.abs(y - v.y));
@@ -170,6 +173,9 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
     }
     return vis;
 }
+
+/** How far anyone sees outdoors in fog. */
+export const FOG_SIGHT = 4;
 
 /** How far a lantern lights around whoever carries it. */
 export const LANTERN_RADIUS = 3;
@@ -1393,6 +1399,7 @@ export function placeView(place, partyNames) {
     const floor = floorById(place, lead?.floor ?? st.floor);
     const room = lead ? roomAt(place, floor.id, lead.x, lead.y) : null;
     const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `in a corridor at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
+    if (OUTDOOR.has(floor.map.theme) && st.weather && st.weather !== 'clear') lines.push(`Weather here: ${WEATHER_WORDS[st.weather] ?? st.weather}${st.weather === 'fog' ? ` (nobody sees past ${FOG_SIGHT} squares)` : st.weather === 'storm' ? ' (sound carries half as far; tracks wash out)' : st.weather === 'snow' ? ' (tracks show; slow going)' : st.weather === 'rain' ? ' (tracks wash out; torches gutter)' : ''}.`);
     if (st.night) lines.push(`It is ${st.late ? 'NIGHT' : 'DARK out (evening)'}: outdoors is dark; a room is lit only with someone awake in it or a light burning; ${st.late ? 'residents are asleep and shops and homes are shut (taverns, inns, guardhouses and jails are up); ' : ''}in the dark people see two squares, lantern-bearers three around them.`);
     if (st.visited.length) lines.push(`Rooms the party has been in: ${st.visited.join(', ')}.`);
     const changed = Object.values(place.doors).filter(d => (d.kind === 'locked' && d.state !== 'locked') || (d.kind === 'secret' && d.state !== 'hidden') || d.state === 'open' || d.state === 'broken').map(d => `${d.id} ${d.state === 'closed' && d.kind === 'locked' ? 'unlocked' : d.state === 'closed' && d.kind === 'secret' ? 'found' : d.state}`);
@@ -1407,11 +1414,12 @@ export function placeView(place, partyNames) {
     // hears footsteps or smells lamp oil from across the map.
     const viewers = partyNames.filter(n => !st.held?.[n]).map(n => st.positions[n]).filter(p => p && p.floor === floor.id);
     const seen = viewers.length ? computeVisible(place, floor.id, viewers) : null;
+    const ear = st.weather === 'storm' && OUTDOOR.has(floor.map.theme) ? Math.ceil(EARSHOT / 2) : EARSHOT;
     const sense = g => {
         if (g.floor !== floor.id || !viewers.length) return 'on another floor: the party can\'t see, hear or smell them';
         const d = Math.min(...viewers.map(v => Math.max(Math.abs(v.x - g.x), Math.abs(v.y - g.y))));
         const inSight = seen?.[g.y * floor.map.w + g.x];
-        return `${d} squares away, ${inSight ? 'IN SIGHT' : d <= EARSHOT ? 'out of sight but within earshot (only loud noise or talking carries)' : 'FAR: the party can\'t see, hear or smell them'}`;
+        return `${d} squares away, ${inSight ? 'IN SIGHT' : d <= ear ? 'out of sight but within earshot (only loud noise or talking carries)' : 'FAR: the party can\'t see, hear or smell them'}`;
     };
     const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name}${g.hostile === true ? '' : g.role === 'guard' ? ' [guard, not an enemy: keeps order, challenges trespassers]' : g.role ? ` [${g.role}, not an enemy]` : ''}${g.lantern ? ' [carries a lantern]' : ''} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.down ? ` (${DOWN_WORDS[g.down].toUpperCase()}: notices nothing and goes nowhere until place_changes.guards says "awake" or "free")` : g.state === 'alert' ? ' (ALERT)' : ''}${g.fought ? ' [fought the party and survived; not an enemy now unless you set an intent]' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it; describe only what the party can sense of each, as noted): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');

@@ -11,8 +11,15 @@ import { matchName } from './text.js';
 const BRIEF = /^(frightened|charmed|stunned|dazed|blinded|deafened|incapacitated|paralyzed|paralysed|slowed|hasted|blessed|baned|confused|reeling|winded|staggered|off balance)$/i;
 /** Lingering ones that a long rest clears (or that fade over a good while). */
 const LINGERING = /^(poisoned|groggy|sick|nauseous|nauseated|drunk|tipsy|hungover|dizzy|weakened|shaken|feverish|bleeding|sore|tired|drowsy|drained|cold|soaked|burned|singed)$/i;
-/** Turns that "a while" outside a fight lasts: a player turn is a few minutes of story. */
+/** Turns that "a while" outside a fight lasts when there is no clock to go by: a player turn is a few minutes of story. */
 const TURNS_PER_HOUR = 6;
+const MINUTES_PER_TURN = 10;
+
+/** The world's clock as one number (minutes since the campaign's day 1), or null without a clock. */
+function clockNow(world) {
+    const c = world?.clock;
+    return c && Number.isFinite(c.minutes) ? (Number(c.day) || 1) * 1440 + c.minutes : null;
+}
 
 /**
  * A condition as the DM wrote it, with an optional duration: "poisoned (1 hour)", "frightened
@@ -38,8 +45,8 @@ export function untilFrom(spec) {
     if (/fight|combat|battle|encounter/.test(s)) return { combat: true };
     const n = Number((/(\d+)/.exec(s) || [])[1]) || 1;
     if (/round|turn of combat/.test(s)) return { rounds: n };
-    if (/minute/.test(s)) return { turns: Math.max(1, Math.ceil(n / 5)) };
-    if (/hour/.test(s)) return { turns: n * TURNS_PER_HOUR };
+    if (/minute/.test(s)) return { minutes: n };
+    if (/hour/.test(s)) return { minutes: n * 60 };
     if (/day|dawn|morning|tomorrow/.test(s)) return { rest: 'long' };
     if (/turn/.test(s)) return { turns: n };
     return null;
@@ -49,7 +56,7 @@ export function untilFrom(spec) {
 export function defaultUntil(name, inCombat = false) {
     const n = String(name || '').trim();
     if (BRIEF.test(n)) return inCombat ? { combat: true } : { turns: 3 };
-    if (LINGERING.test(n)) return { rest: 'long', turns: 4 * TURNS_PER_HOUR };
+    if (LINGERING.test(n)) return { rest: 'long', minutes: 4 * 60 };
     if (/^exhaust/i.test(n)) return { rest: 'long' };
     return null; // tied up, unconscious, caged, cursed: until something in the story ends it
 }
@@ -58,12 +65,14 @@ export function defaultUntil(name, inCombat = false) {
  * Remember when a condition someone just got ends. world.condUntil["name|cond"] =
  * {turn (expires at that player turn), round (in a fight), rest, combat}.
  */
-export function noteUntil(world, who, cond, until, { turn = 0, round = null } = {}) {
+export function noteUntil(world, who, cond, until, { turn = 0, round = null, now = clockNow(world) } = {}) {
     world.condUntil ??= {};
     const k = `${String(who).toLowerCase()}|${String(cond).toLowerCase()}`;
     if (!until) { delete world.condUntil[k]; return; }
     const rec = {};
     if (until.turns) rec.turn = turn + until.turns;
+    // Hours and minutes go by the world's clock (a night's sleep or a time skip ages them); in turns only without one.
+    if (until.minutes) { if (now !== null) rec.minute = now + until.minutes; else rec.turn = turn + Math.max(1, Math.ceil(until.minutes / MINUTES_PER_TURN)); }
     if (until.rounds) { if (round !== null) rec.round = round + until.rounds; else rec.turn = turn + 1; }
     if (until.rest) rec.rest = until.rest;
     if (until.combat) rec.combat = true;
@@ -76,12 +85,13 @@ export function forgetUntil(world, who, cond) {
 }
 
 /** "until a long rest", "for 2 more turns": how long a condition has left, for the DM. */
-export function untilWords(world, who, cond, { turn = 0, round = null } = {}) {
+export function untilWords(world, who, cond, { turn = 0, round = null, now = clockNow(world) } = {}) {
     const rec = world.condUntil?.[`${String(who).toLowerCase()}|${String(cond).toLowerCase()}`];
     if (!rec) return '';
     const bits = [];
     if (rec.round !== undefined && round !== null) bits.push(`${Math.max(0, rec.round - round)} more round${rec.round - round === 1 ? '' : 's'}`);
     if (rec.turn !== undefined) bits.push(`${Math.max(0, rec.turn - turn)} more turn${rec.turn - turn === 1 ? '' : 's'}`);
+    if (rec.minute !== undefined && now !== null) { const left = Math.max(0, rec.minute - now); bits.push(left >= 90 ? `about ${Math.round(left / 60)} more hours` : left >= 60 ? 'about an hour more' : `${left} more minutes`); }
     if (rec.combat) bits.push('until the fight ends');
     if (rec.rest) bits.push(`until a ${rec.rest} rest`);
     return bits.join(' or ');
@@ -91,10 +101,11 @@ export function untilWords(world, who, cond, { turn = 0, round = null } = {}) {
  * Take off what has run out: by turn, by round, at the end of a fight, or with a rest (a long rest
  * ends short-rest ones too). Returns plain lines ("Amber is no longer poisoned").
  */
-export function expireConditions(world, { turn = null, round = null, combatOver = false, rest = null } = {}) {
+export function expireConditions(world, { turn = null, round = null, combatOver = false, rest = null, now = clockNow(world) } = {}) {
     const log = [];
     for (const [k, rec] of Object.entries(world.condUntil ?? {})) {
         const ends = (turn !== null && rec.turn !== undefined && turn >= rec.turn)
+            || (now !== null && rec.minute !== undefined && now >= rec.minute)
             || (round !== null && rec.round !== undefined && round >= rec.round)
             || (combatOver && rec.combat)
             || (rest && rec.rest && (rest === 'long' || rec.rest === 'short'));

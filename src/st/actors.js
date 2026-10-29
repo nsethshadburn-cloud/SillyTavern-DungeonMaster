@@ -15,6 +15,7 @@ import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '..
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
 import { roomBrief, currentPlace } from './atlas.js';
+import { personByName, isOut, EARSHOT } from '../core/explore.js';
 
 const KEY_NOTE = 'DM_NOTE';
 const LEGACY_KEYS = ['DM_DIRECTION', 'DM_STANDING'];
@@ -230,7 +231,17 @@ export async function markSceneStart(messageId = ST.chat.length - 1) {
 export function speakerCandidates() {
     const c = campaign();
     if (!c) return [];
-    const npcsHere = (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location)).map(n => n.name);
+    // On a map, someone who is on it answers only from within reach: the same floor, within earshot, and awake
+    // (a warden two floors up, or a jailer asleep at his desk, is not in the conversation).
+    const here = currentPlace(c);
+    const lead = here?.place.state.positions[c.meta.persona.name];
+    const inReach = name => {
+        const g = here && personByName(here.place, name);
+        if (!g || !lead) return true;
+        if (isOut(g) && g.down !== 'bound') return false;
+        return g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
+    };
+    const npcsHere = (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && inReach(n.name)).map(n => n.name);
     return [...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n)), ...npcsHere];
 }
 

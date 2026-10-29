@@ -5,9 +5,9 @@
 import { campaign, saveDoc } from './campaign.js';
 import { mapsOn } from './settings.js';
 import { currentPlace, savePlace } from './atlas.js';
-import { floorById, roomAt, setDoorState } from '../core/explore.js';
+import { floorById, roomAt, setDoorState, OUTDOOR } from '../core/explore.js';
 import { parseCoord, toCoord } from '../core/grid.js';
-import { ignite, extinguish, addEffect, clearEffects, tickFire, tickEffects, fireAt, FIRE_DAMAGE, AMBIENCES, EFFECT_TYPES } from '../core/fire.js';
+import { ignite, extinguish, addEffect, clearEffects, tickFire, tickEffects, fireAt, dampen, FIRE_DAMAGE, AMBIENCES, EFFECT_TYPES } from '../core/fire.js';
 import { roll } from '../core/dice.js';
 import { changeHp } from '../core/world.js';
 import { postNote } from './messages.js';
@@ -98,7 +98,12 @@ export async function fireTurn(c, status = null) {
     const map = board?.map;
     if (!map || (!Object.keys(map.fire || {}).length && !map.effects?.length)) return '';
     const wasBurning = Object.keys(map.fire || {}).length;
-    const r = tickFire(map);
+    // Weather outdoors: rain damps a fire down and nothing catches; a storm drowns it; snow smothers it slowly.
+    const weather = c.docs.world.weather;
+    const wet = OUTDOOR.has(map.theme) && ['rain', 'storm', 'snow'].includes(weather) ? (weather === 'storm' ? 2 : 1) : 0;
+    const doused = wet ? dampen(map, wet) : [];
+    const r = tickFire(map, wet ? { rng: () => 1 } : {});
+    if (doused.length) status?.note(`The ${weather} puts out ${doused.length} burning square${doused.length > 1 ? 's' : ''}`);
     const ended = tickEffects(map);
     // Doors that burned away: open doorways now.
     if (board.place) {

@@ -52,6 +52,7 @@ export const DEFAULTS = Object.freeze({
     cacheTtlMinutes: 5,         // 5, or 60 with claude.extendedTTL: true
 
     // Pacing
+    minutesPerTurn: 10,         // the world's clock: minutes of story that pass each player turn (a minute a round in a fight)
     checkinEvery: 5,            // the world's normal pace: it acts on its own every N player turns (the DM goes faster when people are actively doing things)
     usualSessionMinutes: 90,
     eventBase: 0.04,

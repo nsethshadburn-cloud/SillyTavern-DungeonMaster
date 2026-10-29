@@ -203,6 +203,23 @@ export function tickFire(map, { rng = Math.random } = {}) {
     return result;
 }
 
+/**
+ * Rain, snow or a storm on an outdoor map: every fire loses `amount` heat (out when it has none),
+ * and nothing catches this turn (call tickFire with a rng that never spreads). Returns the squares
+ * that went out.
+ */
+export function dampen(map, amount = 1) {
+    const out = [];
+    for (const [k, f] of Object.entries(map.fire || {})) {
+        f.heat -= amount;
+        if (f.heat > 0) continue;
+        delete map.fire[k];
+        out.push(k);
+    }
+    if (out.length) bump(map);
+    return out;
+}
+
 /** Put a spell or hazard effect on the map. lightning/thunder only flash once. */
 export function addEffect(map, type, x, y, { radius = 2, turns = 3 } = {}) {
     if (!EFFECT_TYPES.includes(type)) return false;

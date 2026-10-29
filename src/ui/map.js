@@ -24,6 +24,7 @@ import { drawFigure } from './sprite-render.js';
 import { figureFor } from '../st/figures.js';
 import { setBubbleStage, clearBubbleStage } from './bubbles.js';
 import { nameKey } from '../core/text.js';
+import { ensureClock, clockText, hhmm, timeIcon, WEATHER_ICON, WEATHER_WORDS } from '../core/clock.js';
 
 let panel = null;
 let selection = { move: '', target: '' };
@@ -220,6 +221,14 @@ function tileFor(map) {
     return map.w > 20 || map.h > 20 ? 48 : 64;
 }
 
+/** The clock in the map's corner: time of day, the hour, the day, and the weather. */
+function clockChip(c) {
+    const w = c.docs.world;
+    const clock = ensureClock(w);
+    const weather = WEATHER_WORDS[w.weather] ?? w.weather;
+    return `<span class="dm-map-clock" title="${escapeHtml(`${clockText(w)} · ${weather}`)}">${timeIcon(clock.minutes)} ${hhmm(clock.minutes)} <i>day ${clock.day}</i> ${WEATHER_ICON[w.weather] ?? ''}</span>`;
+}
+
 function renderMap(center = false) {
     const c = campaign();
     const b = c ? board(c) : null;
@@ -253,7 +262,7 @@ function renderMap(center = false) {
     panel.style.setProperty('--dm-form-h', `${document.getElementById('form_sheld')?.offsetHeight || 100}px`);
     panel.innerHTML = `
 <div class="dm-map-head">
-  <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>${b.trespass ? `<span class="dm-map-trespass" title="${escapeHtml(`You're not allowed in ${b.trespass.room}: ${b.trespass.why === 'escaped' ? 'you are an escaped prisoner' : b.trespass.why}. Anyone who belongs here will object.`)}">⚠ ${b.trespass.why === 'escaped' ? 'ESCAPED' : 'TRESPASSING'}</span>` : ''}
+  <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>${clockChip(c)}${b.trespass ? `<span class="dm-map-trespass" title="${escapeHtml(`You're not allowed in ${b.trespass.room}: ${b.trespass.why === 'escaped' ? 'you are an escaped prisoner' : b.trespass.why}. Anyone who belongs here will object.`)}">⚠ ${b.trespass.why === 'escaped' ? 'ESCAPED' : 'TRESPASSING'}</span>` : ''}
   ${floors.length > 1 ? `<select class="dm-map-floor text_pole" title="Look at another floor you've explored">${floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === b.floor.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>` : ''}
   ${map.w > 16 || map.h > 16 ? '<span class="dm-map-btn fa-solid fa-magnifying-glass-minus" data-act="out" title="Zoom out"></span><span class="dm-map-btn fa-solid fa-magnifying-glass-plus" data-act="in" title="Zoom in"></span>' : ''}
   <span class="dm-map-btn fa-solid fa-cloud-rain ${settings().mapAmbience === false ? 'dm-map-off' : ''}" data-act="ambience" title="Weather and ambient particles: on/off (fire and spells always show)"></span>

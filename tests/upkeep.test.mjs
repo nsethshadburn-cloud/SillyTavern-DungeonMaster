@@ -12,7 +12,7 @@ import { normalizeDmTurn } from '../src/core/protocol.js';
 const party = () => ({ party: { Amber: { hp: 20, hp_max: 30, conditions: [] }, 'Judy Hopps': { hp: 12, hp_max: 24, conditions: [] } } });
 
 test('conditions wear off: the DM\'s duration, or a sensible default', () => {
-    assert.deepEqual(parseCondition('poisoned (1 hour)'), { name: 'poisoned', until: { turns: 6 } });
+    assert.deepEqual(parseCondition('poisoned (1 hour)'), { name: 'poisoned', until: { minutes: 60 } });
     assert.deepEqual(parseCondition('frightened (until the end of the fight)'), { name: 'frightened', until: { combat: true } });
     assert.deepEqual(parseCondition('restrained (rope)'), { name: 'restrained (rope)', until: null }, 'a kind of restraint, not a duration');
     assert.deepEqual(untilFrom('until a long rest'), { rest: 'long' });

@@ -16,6 +16,7 @@ import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
+import { ensureClock, clockText, WEATHER_WORDS } from '../core/clock.js';
 import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/state.js';
 import { modelLabel } from '../core/models.js';
 import { untilWords, resourcesLine } from '../core/upkeep.js';
@@ -189,7 +190,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const sessionMinutes = (Date.now() - (c.meta.session?.startedAt || Date.now())) / 60000;
 
     sections.push('# WHERE THINGS STAND');
-    sections.push(`Location: ${w.location || 'unknown'} (${w.setting || 'any'}), time: ${w.time || '?'}, day ${w.day ?? 1}.`);
+    ensureClock(w);
+    sections.push(`Location: ${w.location || 'unknown'} (${w.setting || 'any'}). Clock: ${clockText(w)}. Weather: ${WEATHER_WORDS[w.weather] ?? w.weather}. (The code keeps both: time passes about ${Number(s.minutesPerTurn) || 10} minutes a turn and the weather drifts; skip ahead with "clock", turn the weather with "weather".)`);
     const lasts = (n, cond) => untilWords(w, n, cond, { turn: c.meta.turn, round: w.combat?.round ?? null });
     sections.push(`Party HP: ${Object.entries(w.party).map(([n, p]) => `${n} ${p.hp}/${p.hp_max}${p.conditions?.length ? ` [${p.conditions.map(x => (lasts(n, x) ? `${x}, ${lasts(n, x)}` : x)).join('; ')}]` : ''}${p.hp <= 0 && p.death ? ` DYING: ${p.death.s} death-save successes, ${p.death.f} failures (the code rolls them)` : ''}`).join('; ') || 'unknown'}.`);
     const resources = [c.meta.persona.name, ...c.meta.party.map(p => p.name)].map(n => { const line = resourcesLine(w, n, statsForName(n, c.meta)); return line ? `${n}: ${line}` : ''; }).filter(Boolean);

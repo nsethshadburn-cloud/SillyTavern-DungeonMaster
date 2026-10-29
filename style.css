@@ -303,3 +303,8 @@
 
 /* Night on the map: the board goes dim (bubbles and chips stay readable). */
 .dm-map-night .dm-map-canvas { filter: brightness(0.7) saturate(0.8); }
+
+/* The clock in the map's corner. */
+.dm-map-clock { flex-shrink: 0; margin-left: 6px; padding: 1px 7px; border-radius: 9px; background: rgba(0, 0, 0, 0.35); font-size: 0.78em; white-space: nowrap; cursor: default; }
+.dm-map-clock i { font-style: normal; opacity: 0.7; }
+@media (max-width: 700px) { .dm-map-head .dm-map-clock { font-size: 0.72em; padding: 1px 5px; } .dm-map-head .dm-map-clock i { display: none; } }

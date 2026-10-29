@@ -3,13 +3,16 @@
 import { abilityModifier, roll } from './dice.js';
 import { nameKey, matchName } from './text.js';
 import { parseCondition, defaultUntil, noteUntil, forgetUntil, hurtWhileDown, clearDeath } from './upkeep.js';
+import { weatherFlags } from './clock.js';
 
 export function createWorldState() {
     return {
         location: '',
         setting: 'any',
-        time: 'morning',
+        time: 'morning',  // the time of day in a word (kept in step with the clock)
         day: 1,
+        clock: null,      // {day, minutes since midnight} (see core/clock.js); made from `time` the first time it's needed
+        weather: 'clear', // clear | overcast | rain | storm | fog | snow | wind
         gold: 0,
         items: [],
         party: {},        // name -> {hp, hp_max, conditions: []}
@@ -207,6 +210,8 @@ export function worldFlags(world) {
     const time = String(world.time || '').toLowerCase();
     if (/night|evening|dusk|midnight/.test(time)) flags.add('night');
     else flags.add('day');
+    if (/dawn|morning|afternoon|evening/.test(time)) flags.add(time);
+    for (const f of weatherFlags(world.weather)) flags.add(f);
     if ((Number(world.gold) || 0) > 0) flags.add('has_gold');
     if (Object.values(world.party || {}).some(p => p.hp_max && p.hp < p.hp_max * 0.6)) flags.add('injured');
     if (world.items?.some(i => /\b(horse|mount|pony|wagon|cart|mule)\b/i.test(i))) flags.add('has_mounts');
