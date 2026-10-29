@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { generatePlace } from '../src/core/layout.js';
-import { tickGuards, placeView, roomAt, floorById, PATROL_STEPS } from '../src/core/explore.js';
+import { tickGuards, placeView, roomAt, floorById, PATROL_STEPS, inTheFight, FIGHT_REACH } from '../src/core/explore.js';
 import { sameLocation, isHere } from '../src/core/world.js';
 import { DM_RULES } from '../src/core/protocol.js';
 import { MANOR_PLAN } from './fixtures/manor-plan.mjs';
@@ -59,4 +59,28 @@ test('location names match loosely, so a room name inside a place does not make 
     assert.ok(isHere({ name: 'Brask', lastSeen: 'anywhere' }, ''), 'no location known: everyone counts');
     assert.match(DM_RULES, /"scene\.location" is the place itself/);
     assert.match(DM_RULES, /"positions" never moves the player/);
+});
+
+test('a companion caged across the place is not in a fight that breaks out around the player', () => {
+    const place = generatePlace(MANOR_PLAN, 4);
+    const start = place.start;
+    const startRoom = roomAt(place, start.floor, start.x, start.y);
+    const far = Object.values(place.rooms).filter(r => r.floor === start.floor && r.id !== startRoom?.id)
+        .sort((a, b) => Math.abs(b.rect.x - start.x) + Math.abs(b.rect.y - start.y) - Math.abs(a.rect.x - start.x) - Math.abs(a.rect.y - start.y))[0];
+    place.state.positions = { Amber: { floor: start.floor, x: start.x, y: start.y }, 'Judy Hopps': center(far) };
+    place.state.waiting = { 'Judy Hopps': true };
+    place.state.held = { 'Judy Hopps': 'caged somewhere in the manor' };
+    assert.equal(inTheFight(place, 'Amber', 'Judy Hopps'), false, 'held elsewhere: not in it');
+    // Freed and right beside the player: in it.
+    delete place.state.held['Judy Hopps'];
+    place.state.positions['Judy Hopps'] = { floor: start.floor, x: start.x + 1, y: start.y };
+    assert.equal(inTheFight(place, 'Amber', 'Judy Hopps'), true);
+    // Free but far across the floor and out of sight: not in it.
+    place.state.positions['Judy Hopps'] = center(far);
+    const d = Math.max(Math.abs(center(far).x - start.x), Math.abs(center(far).y - start.y));
+    if (d > FIGHT_REACH) assert.equal(inTheFight(place, 'Amber', 'Judy Hopps'), false, 'out of reach and out of sight');
+    // On another floor: never.
+    place.state.positions['Judy Hopps'] = { floor: 'zz', x: start.x, y: start.y };
+    assert.equal(inTheFight(place, 'Amber', 'Judy Hopps'), false);
+    assert.match(DM_RULES, /Only companions with the player are in the fight/);
 });

@@ -965,6 +965,25 @@ export function visibleGuards(place, floorId, visible) {
     return Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId && visible[g.y * map.w + g.x]);
 }
 
+/** How close (squares) a companion has to be to the player to be in a fight that breaks out, when out of sight. */
+export const FIGHT_REACH = 10;
+
+/**
+ * Is this companion part of a fight that starts around the player, on the map? With them: not held
+ * somewhere else, on the same floor, and in the player's sight or within FIGHT_REACH squares. A
+ * companion caged across the dungeon is not in it (and never gets dragged next to the player).
+ */
+export function inTheFight(place, playerName, name) {
+    const st = place.state;
+    if (st.held?.[name]) return false;
+    const lead = st.positions[playerName], p = st.positions[name];
+    if (!lead || !p || p.floor !== lead.floor) return false;
+    const d = Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y));
+    if (d <= FIGHT_REACH) return true;
+    const map = floorById(place, lead.floor).map;
+    return Boolean(computeVisible(place, lead.floor, [lead])[p.y * map.w + p.x]);
+}
+
 /** What people on the map can be set on doing, besides standing about or walking their rounds. */
 export const INTENTS = ['attack', 'follow', 'flee', 'stay', 'wander'];
 

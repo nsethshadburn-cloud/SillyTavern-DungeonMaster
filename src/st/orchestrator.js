@@ -15,7 +15,7 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
-import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed } from '../core/explore.js';
+import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
 import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
@@ -520,6 +520,44 @@ async function movedTurn(c, status, signal) {
         step.fail(error);
         if (error instanceof BudgetError) throw error;
     }
+}
+
+/**
+ * The companions in a fight around the player: with them (not away, not held somewhere else) and, on
+ * a map, on the same floor and in sight or close by. A companion caged across the dungeon, or waiting
+ * two floors up, is not in it: no initiative, no square beside the player, no turns.
+ */
+export function fighters(c) {
+    const w = c.docs.world, here = currentPlace(c);
+    return c.meta.party.map(p => p.name).filter(n => !isAway(w, n) && (!here || inTheFight(here.place, c.meta.persona.name, n)));
+}
+
+/** The party members in the current fight (the player first). */
+function fightParty(c) {
+    return [c.meta.persona.name, ...(c.docs.world.combat?.party ?? c.meta.party.map(p => p.name))];
+}
+
+/**
+ * Each round: a companion who wasn't in the fight but is now (freed from her cage, came down the
+ * stairs, caught up) joins it: the code rolls her initiative and she takes her square. Returns lines.
+ */
+function joinLateFighters(c) {
+    const w = c.docs.world, meta = c.meta;
+    if (!w.combat) return [];
+    w.combat.party ??= meta.party.map(p => p.name).filter(n => w.combat.order.some(o => o.name === n));
+    const lines = [];
+    for (const name of fighters(c)) {
+        if (w.combat.party.includes(name)) continue;
+        const mod = lookupModifier(statsForName(name, meta), { kind: 'initiative', skill: 'initiative', ability: 'DEX' }).mod;
+        const r = roll(`1d20${mod >= 0 ? '+' : ''}${mod}`);
+        addToInitiative(w, name, r?.total ?? 10);
+        w.combat.party.push(name);
+        const here = currentPlace(c);
+        const p = here?.place.state.positions[name];
+        if (w.combat.map && p && w.combat.inPlace && p.floor === w.combat.inPlace.floor) w.combat.positions[name] = toCoord(p.x, p.y);
+        lines.push(`${name} joins the fight: initiative **${r?.total ?? 10}**`);
+    }
+    return lines;
 }
 
 /** Who an attack is at: the DM's target, or someone its own words name, or (an enemy attacking) the player. */
@@ -1078,8 +1116,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
     }
     if (t.start_combat && !world.combat) {
-        const companions = meta.party.map(p => ({ name: p.name, stats: statsForName(p.name, meta) }));
+        // Only companions with the player are in it: not one caged elsewhere, away, or out of reach.
+        const inFight = fighters(c);
+        const left = meta.party.map(p => p.name).filter(n => !inFight.includes(n));
+        if (left.length) status.note(`Not in the fight (elsewhere or out of reach): ${left.join(', ')}`);
+        const companions = inFight.map(n => ({ name: n, stats: statsForName(n, meta) }));
         const combat = startCombat(world, t.start_combat, companions);
+        combat.party = inFight;
         // Inside a place the fight is always on the place's own map, where everyone already stands
         // (never a new battle map). Elsewhere: a mapped room becomes the battle map unless the DM sent one.
         const here = currentPlace(c);
@@ -1088,7 +1131,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const floorId = here.place.state.positions[meta.persona.name]?.floor ?? here.place.state.floor;
             combat.map = JSON.parse(JSON.stringify(floorById(here.place, floorId).map));
             combat.inPlace = { key: here.key, floor: floorId };
-            combat.positions = Object.fromEntries(Object.entries(here.place.state.positions).filter(([, p]) => p.floor === floorId).map(([n, p]) => [n, toCoord(p.x, p.y)]));
+            combat.positions = Object.fromEntries(Object.entries(here.place.state.positions).filter(([n, p]) => p.floor === floorId && (n === meta.persona.name || inFight.includes(n))).map(([n, p]) => [n, toCoord(p.x, p.y)]));
             // The place's people on this floor join the board where they stand: the enemies among
             // them, and anyone the party can see (bystanders stay on the map during the fight).
             const seen = computeVisible(here.place, floorId, Object.values(here.place.state.positions).filter(p => p.floor === floorId));
@@ -1105,11 +1148,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         initiativeCard = `⚔️ **Initiative**\n${combat.order.map(o => `- ${o.name}: **${o.init}**`).join('\n')}\n*(${meta.persona.name}: roll your own initiative when asked)*`;
     }
     if (world.combat?.map) {
-        const friends = [meta.persona.name, ...meta.party.map(p => p.name)];
+        const friends = fightParty(c);
         const foes = Object.keys(world.combat.enemies || {});
         // The party moves at most their speed each round (twice that when dashing), around walls.
         const moves = { ...(t.positions || {}) };
-        for (const name of [meta.persona.name, ...meta.party.map(p => p.name)]) {
+        for (const name of friends) {
             const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
             if (!from || !to || t.start_combat) continue;
             const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== name && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
@@ -1137,6 +1180,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // Each DM combat turn is a new round (a roll's result finishes the round it was asked in).
     if (world.combat && !t.start_combat && reasons.includes('combat_round') && !reasons.includes('roll_result')) {
         world.combat.round = (world.combat.round || 1) + 1;
+        const joined = joinLateFighters(c);
+        if (joined.length) await postDiceCard(`⚔️ ${joined.join(' · ')}`, { combat: true });
         const ended = expireConditions(world, { round: world.combat.round });
         if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
         await deathSaves(c);
