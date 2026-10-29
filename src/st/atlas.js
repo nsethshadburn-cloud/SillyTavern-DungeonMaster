@@ -8,7 +8,9 @@ import { ST, sleep } from './st.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { readJson, writeLater, flushWrites, deleteFile } from './storage.js';
 import { statsForName } from './sheets.js';
-import { postNarration, postNote } from './messages.js';
+import { postNarration, postNote, postDiceCard } from './messages.js';
+import { lockDc, lockWords, pickModifier, notePickFailure, keyFor } from '../core/locks.js';
+import { roll } from '../core/dice.js';
 import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, generateWilds, WILD_KINDS, clearDoorways, ensureIds } from '../core/layout.js';
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
@@ -16,7 +18,7 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
+import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
@@ -515,6 +517,86 @@ export async function approachSpot(spot, redraw = () => { }, { inTurn = false } 
     await walkTo({ x: best.x, y: best.y }, redraw, { inTurn });
     const now = place.state.positions[c.meta.persona.name];
     return near(now.x, now.y);
+}
+
+/** What the party carries (everyone's and the shared pack), for keys. */
+function carriedItems(c) {
+    const w = c.docs.world;
+    return [...Object.values(w.inventory ?? {}).flat(), ...(w.items ?? [])].map(String);
+}
+
+/** A locked door at a square, and what can be done about it: its lock in words, a key you carry. */
+export function lockedDoorInfo(c, door) {
+    const cur = currentPlace(c);
+    if (!cur || !door) return null;
+    const dc = lockDc(cur.place, door);
+    return { words: lockWords(dc), key: keyFor(door, carriedItems(c)) };
+}
+
+/**
+ * Pick a locked door's lock: walk up to it, then the code rolls d20 + Sleight of Hand (or Thieves'
+ * Tools if they're better) against the door's own DC, on an open dice card. Success opens it. Two or
+ * three failures in a row (or a natural 1) call the DM to decide whether anyone heard. No Claude
+ * call otherwise.
+ */
+export async function pickLock(doorId, redraw = () => { }) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    const door = cur?.place.doors[doorId];
+    if (!door || door.state !== 'locked') return;
+    const { isRunning } = await import('./orchestrator.js');
+    if (isRunning()) { toastr.info('The DM is busy. Try the lock when the turn is done.', 'Map', { timeOut: 2500 }); return; }
+    if (stuck(c)) return;
+    if (!(await approachSpot({ x: door.x, y: door.y }, redraw))) return;
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const dc = lockDc(place, door);
+    const { mod, skill } = pickModifier(statsForName(player, c.meta));
+    const die = roll('1d20');
+    const natural = die?.natural ?? die?.total ?? 10;
+    const total = natural + mod;
+    const ok = natural !== 1 && (natural === 20 || total >= dc);
+    const what = door.kind === 'cell' ? 'the cell door' : 'the lock';
+    c.docs.rolls_log.push({ at: new Date().toISOString(), who: player, what: `${skill} (picking ${door.id})`, kind: 'check', natural, mod, total, dc, success: ok });
+    saveDoc('rolls_log');
+    if (ok) {
+        setDoorState(place, door, 'open');
+        delete door.picks;
+        await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✔ · it clicks open.`, { roll: { who: player, what: skill, natural, total, success: true } });
+        look(c, key, place);
+        savePlace(key, c);
+        redraw();
+        return;
+    }
+    const { count, alarm } = notePickFailure(door, player, natural);
+    savePlace(key, c);
+    await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✘${natural === 1 ? ' · the pick snaps with a loud scrape.' : ` · it won't give (${count} tr${count > 1 ? 'ies' : 'y'}).`}`, { roll: { who: player, what: skill, natural, total, success: false } });
+    if (!alarm) return;
+    // Enough noise and time: does anyone notice? The DM decides (Haiku), told who could hear.
+    const listeners = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === door.floor && Math.max(Math.abs(g.x - door.x), Math.abs(g.y - door.y)) <= EARSHOT)
+        .map(g => `${g.name} (${Math.max(Math.abs(g.x - door.x), Math.abs(g.y - door.y))} squares away)`);
+    const rooms = door.rooms.map(id => place.rooms[id]?.name).filter(Boolean).join(' / ');
+    const { runTurn } = await import('./orchestrator.js');
+    await runTurn({ force: 'explore', placeEvent: `${player} has been working at the lock of ${door.id} (${rooms || 'a door'}) and failed ${natural === 1 ? 'badly: the pick snapped with a loud scrape' : `${count} times in a row: it's taking time and making noise`}. ${listeners.length ? `Within earshot: ${listeners.join(', ')}. Decide whether any of them notices (roll their Perception with "spot" against ${player}'s Stealth, or decide it's too quiet) and what they do.` : 'Nobody on the map is close enough to hear. Something else may happen, or nothing (a short line is fine).'} The lock is still shut; ${player} can keep trying.` });
+}
+
+/** Unlock a door with the key someone in the party carries: walk up, it opens. No roll. */
+export async function unlockWithKey(doorId, redraw = () => { }) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    const door = cur?.place.doors[doorId];
+    if (!door || door.state !== 'locked') return;
+    const item = keyFor(door, carriedItems(c));
+    if (!item) return;
+    const { isRunning } = await import('./orchestrator.js');
+    if (isRunning()) { toastr.info('The DM is busy. Try the lock when the turn is done.', 'Map', { timeOut: 2500 }); return; }
+    if (stuck(c)) return;
+    if (!(await approachSpot({ x: door.x, y: door.y }, redraw))) return;
+    setDoorState(cur.place, door, 'open');
+    await postNote(`🔑 ${c.meta.persona.name} unlocks the door with the ${item}.`);
+    look(c, cur.key, cur.place);
+    savePlace(cur.key, c);
+    redraw();
 }
 
 /** Shove something light one square (free). Heavy things go to the DM for a roll instead. */

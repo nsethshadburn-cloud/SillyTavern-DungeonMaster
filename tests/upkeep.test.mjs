@@ -115,3 +115,31 @@ test('map sync: only what the story says, the same creature isn\'t added twice, 
     assert.match(user, /I3 = ledger \(hidden, not found yet\), Study/);
     assert.match(user, /only heard or sensed/);
 });
+
+test('locks: a difficulty per door by the place and what it guards; picking uses the better of Sleight of Hand and Thieves\' Tools; a few failures call for attention; keys you carry', async () => {
+    const { lockDc, lockWords, pickModifier, notePickFailure, keyFor } = await import('../src/core/locks.js');
+    const door = (id, rooms, kind = 'locked') => ({ id, rooms, kind, state: 'locked', key: '' });
+    const cottage = { kind: 'cottage', name: 'Cottage', seed: 1, rooms: { A: { type: 'parlor' }, B: { type: 'bedroom' } } };
+    const bank = { kind: 'bank', name: 'Coin Exchange', seed: 1, rooms: { A: { type: 'foyer' }, V: { type: 'vault' } } };
+    const easy = lockDc(cottage, door('D1', ['A', 'B']));
+    const hard = lockDc(bank, door('D1', ['A', 'V']));
+    assert.ok(easy >= 8 && easy <= 12, `a cottage door is easy (${easy})`);
+    assert.ok(hard >= 18, `a bank vault is hard (${hard})`);
+    const d = door('D7', ['A', 'B']);
+    assert.equal(lockDc(cottage, d), lockDc(cottage, d), 'a door\'s lock never changes');
+    assert.equal(lockWords(10), 'a simple lock');
+    assert.equal(lockWords(21), 'a masterwork lock');
+    assert.deepEqual(pickModifier({ skills: { 'Sleight of Hand': 3 }, tools: { "Thieves' Tools": 7 } }), { mod: 7, skill: "Thieves' Tools" });
+    assert.deepEqual(pickModifier({ skills: { 'Sleight of Hand': 5 }, tools: {} }), { mod: 5, skill: 'Sleight of Hand' });
+    const f = door('D9', []);
+    const first = notePickFailure(f, 'Amber', 8);
+    assert.deepEqual(first, { count: 1, alarm: false });
+    let n = first;
+    while (!n.alarm) n = notePickFailure(f, 'Amber', 8);
+    assert.ok(n.count === 2 || n.count === 3, 'two or three failures in a row');
+    assert.equal(f.picks.Amber, 0, 'counting starts over after the DM is called');
+    assert.equal(notePickFailure(door('D10', []), 'Amber', 1).alarm, true, 'a natural 1 snaps the pick');
+    assert.equal(keyFor({ key: 'Copper key' }, ['rope', 'copper key']), 'copper key');
+    assert.equal(keyFor({ key: 'Copper key' }, ['iron key']), null);
+    assert.equal(keyFor({ key: '' }, ['iron key']), null);
+});

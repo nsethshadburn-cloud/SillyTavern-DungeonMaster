@@ -324,6 +324,10 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.27 (picking locks from the map)
+- :  (PLACE_DC by kind, ROOM_DC by what the door guards, +2 for a cell door, -1 ruined, ±2 from a hash of the seed and door id; stored as door.lockDc, also shown to the DM as the pick DC), ,  (Thieves' Tools when listed and better, else Sleight of Hand),  (per picker; alarm after 2 or 3 in a row, decided per door, or a natural 1), .
+- atlas  /  / : approach the door, roll in code (logged), open on success; on an alarm, runTurn explore with who is within EARSHOT of the door. map.js:  returns locked doors; their menu has Unlock (with the key) and Pick the lock.
+
 ### v0.26.1 (the map before the opening; companions notice you)
 - Campaign design returns `start_place` and `party_start`. The wizard marks companions who aren't with the player as away, builds the start place first (`requestBuild` with `ask`: always asks; `quiet`: no room narration; `req.context` reaches the brief, which also sees the bible when there's no story yet), `placeHeld` puts them in their rooms, then the DM writes the opening with reason 'opening' (main model) on the map, from the design's draft; without a map, the draft is used as before.
 - walkTo collects `greet`: waiting companions you reach (free: they rejoin quietly, 'back' with the rooms you went through since `leftAt`; locked: they're no longer away so they can talk, 'held') and ones you walk away from ('left' / 'left-held': away again, held text kept). `companionsSeeYou` (orchestrator, local only): the companion decides in character whether to speak at all, then speaks a short line from a brief.

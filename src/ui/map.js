@@ -10,7 +10,7 @@ import { campaign } from '../st/campaign.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt } from '../st/atlas.js';
+import { currentPlace, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
 import { conditionsOf } from '../core/world.js';
 import { restraintOf } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
@@ -790,8 +790,10 @@ function showPerson(ev, c, b, who) {
 
 // ---------- the tap menu for things: furniture and windows ----------
 
-/** Something you can act on at a square: a window, or furniture that's in the way. */
+/** Something you can act on at a square: a locked door, a window, or furniture that's in the way. */
 function thingAt(b, sq) {
+    const door = doorAt(b.place, b.floor.id, sq.x, sq.y);
+    if (door && door.state === 'locked') return { kind: 'door', door, name: door.kind === 'cell' ? 'locked cell door' : 'locked door', spot: { x: door.x, y: door.y } };
     const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
     if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
     const prop = propAt(b.map, sq.x, sq.y);
@@ -808,6 +810,15 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
     const where = toCoord(thing.spot.x, thing.spot.y);
     const near = () => approachSpot(thing.spot, redraw);
     let actions;
+    if (thing.kind === 'door') {
+        const info = lockedDoorInfo(c, thing.door);
+        actions = [
+            ...(info?.key ? [[`Unlock it (${info.key})`, 'fa-key', async () => { await unlockWithKey(thing.door.id, redraw); done(); }]] : []),
+            ['Pick the lock', 'fa-unlock', async () => { await pickLock(thing.door.id, redraw); done(); }],
+        ];
+        showMenu(ev, thing.name, info ? `${info.words}${info.key ? '; you have the key' : ''}` : '', actions);
+        return;
+    }
     if (thing.kind === 'window') {
         const w = thing.win;
         actions = w.state === 'broken'
