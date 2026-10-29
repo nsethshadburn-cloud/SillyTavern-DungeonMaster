@@ -215,6 +215,19 @@ export function worldFlags(world) {
 
 // ---------- NPC roster ----------
 
+/** Two location names mean the same place: the same words, or one inside the other ("Blackmoor Prison" ~ "Blackmoor Prison, cell block"). */
+export function sameLocation(a, b) {
+    const x = nameKey(a), y = nameKey(b);
+    if (!x || !y) return false;
+    return x === y || x.includes(y) || y.includes(x);
+}
+
+/** Is this NPC here right now: alive, and last seen where the party is (loosely matched)? With no location known, everyone counts. */
+export function isHere(npc, location) {
+    if (!npc || npc.dead) return false;
+    return !location || sameLocation(npc.lastSeen, location);
+}
+
 export function addNpcs(roster, newNpcs, scene = '') {
     const added = [];
     for (const npc of newNpcs || []) {

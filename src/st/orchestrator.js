@@ -27,7 +27,7 @@ import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPromp
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed } from '../core/world.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere } from '../core/world.js';
 import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
@@ -578,7 +578,7 @@ async function bookkeep(c, fromIndex) {
     const story = trimToTokens(said.map(m => `${m.name}: ${m.mes}`).join('\n\n'), 1200, true);
     const w = c.docs.world;
     const party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
-    const present = (c.docs.npcs || []).filter(n => n.lastSeen && n.lastSeen === w.location && !n.dead).map(n => n.name);
+    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location)).map(n => n.name);
     const own = n => w.inventory?.[matchName(n, Object.keys(w.inventory || {})) ?? ''] ?? [];
     const { system, user } = bookkeeperPrompt({
         status: party.map(n => ({ name: n, hp: w.party[n] ? `${w.party[n].hp}/${w.party[n].hp_max}` : '', conditions: conditionsOf(w, n), items: own(n) })),
@@ -1032,7 +1032,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
 
     // Scene.
     const prevLocation = world.location;
+    // Inside a built place the location IS the place: a room name the DM sends would make every NPC
+    // "elsewhere" and wipe the scene card. Rooms are tracked by the map. Leaving or moving on still counts.
+    const stayingInside = Boolean(currentPlace(c)) && !t.leave_place && !t.build_place && !t.enter_place;
     if (t.scene) {
+        if (t.scene.location && stayingInside && nameKey(t.scene.location) !== nameKey(world.location)) { status.note(`Location stays ${world.location} (the map tracks the room)`); t.scene.location = world.location; }
         if (t.scene.location) world.location = t.scene.location;
         if (t.scene.setting) world.setting = guessSetting(world.location, t.scene.setting);
         if (t.scene.time) {
@@ -1228,6 +1232,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 }
                 const member = partyNames.find(n => nameKey(n) === nameKey(name));
                 if (member) {
+                    // Outside a fight the party moves itself (the map, or the sync walking them): the DM
+                    // only moves someone who can't move on their own (carried, dragged).
+                    if (!lockedReason(c, member)) { missed.push(`${name} → ${coord} (they move themselves; only someone restrained can be moved)`); continue; }
                     const pt = parseCoord(coord, map);
                     const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
                     if (spot) { place.state.positions[member] = { floor: floorId, ...spot }; if (place.state.hidden?.[member]) delete place.state.hidden[member]; if (place.state.pose?.[member]) delete place.state.pose[member]; }

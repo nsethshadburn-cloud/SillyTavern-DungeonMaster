@@ -912,13 +912,48 @@ export function adoptStrays(place, partyNames) {
     return n;
 }
 
-/** Guards on patrol walk to their next room now and then. Returns who moved where. */
-export function tickGuards(place, r = Math.random, chance = 0.5) {
+/** Squares a guard walks in one turn on patrol. */
+export const PATROL_STEPS = 6;
+
+/**
+ * Guards on patrol walk their rounds: now and then one sets off for the next room of their patrol
+ * and walks there, a few squares a turn, through doors, around furniture and people (never a jump
+ * from room to room: someone watching the hallway sees them go). Returns who moved where.
+ */
+export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_STEPS) {
     const moved = [];
     for (const g of Object.values(place.guards)) {
-        if (g.state === 'gone' || g.state === 'dead' || g.patrol.length < 2 || (g.intent && g.intent !== 'wander') || r() > chance) continue;
-        g.step = ((g.step ?? 0) + 1) % g.patrol.length;
-        moveGuardTo(place, g, g.patrol[g.step], r);
+        if (g.state === 'gone' || g.state === 'dead' || g.patrol.length < 2 || (g.intent && g.intent !== 'wander')) continue;
+        if (!g.walk) {
+            if (r() > chance) continue;
+            const next = ((g.step ?? 0) + 1) % g.patrol.length;
+            const rm = place.rooms[g.patrol[next]];
+            if (!rm || rm.floor !== g.floor) { g.step = next; if (rm) moveGuardTo(place, g, rm.id, r); continue; }
+            const at = freeInRoom(place, rm, r);
+            g.walk = { step: next, x: at.x, y: at.y };
+        }
+        const busy = new Set([
+            ...Object.values(place.state?.positions || {}).filter(p => p && p.floor === g.floor).map(p => `${p.x},${p.y}`),
+            ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.state !== 'dead' && o.floor === g.floor).map(o => `${o.x},${o.y}`),
+        ]);
+        const path = findPath(place, g.floor, g, g.walk, { knownOnly: false, blocked: busy });
+        if (!path) {
+            // No way through right now (someone in the doorway): wait a turn; give up after a few.
+            g.walk.stuck = (g.walk.stuck ?? 0) + 1;
+            if (g.walk.stuck >= 3) delete g.walk;
+            continue;
+        }
+        for (const [x, y] of path.slice(0, steps)) {
+            const d = doorAt(place, g.floor, x, y);
+            if (d && d.state === 'closed') setDoorState(place, d, 'open');
+            Object.assign(g, { x, y });
+        }
+        g.room = roomAt(place, g.floor, g.x, g.y)?.id ?? g.room;
+        if (g.x === g.walk.x && g.y === g.walk.y) {
+            g.step = g.walk.step;
+            g.room = g.patrol[g.step];
+            delete g.walk;
+        }
         moved.push({ name: g.name, room: g.room });
     }
     return moved;
@@ -1159,7 +1194,7 @@ export function placeView(place, partyNames) {
     if (bodies.length) lines.push(`Bodies on the floor (dead; cleared away after a few turns): ${bodies.join('; ')}.`);
     // How far each one is from the party and what the party could possibly sense of them, so nobody
     // hears footsteps or smells lamp oil from across the map.
-    const viewers = partyNames.map(n => st.positions[n]).filter(p => p && p.floor === floor.id);
+    const viewers = partyNames.filter(n => !st.held?.[n]).map(n => st.positions[n]).filter(p => p && p.floor === floor.id);
     const seen = viewers.length ? computeVisible(place, floor.id, viewers) : null;
     const sense = g => {
         if (g.floor !== floor.id || !viewers.length) return 'on another floor: the party can\'t see, hear or smell them';

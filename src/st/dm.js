@@ -13,7 +13,7 @@ import { activeBoard } from './fire-turn.js';
 import { fireSummary } from '../core/fire.js';
 import { GRAND_KINDS } from '../core/layout.js';
 import { pacingReport } from '../core/pacing.js';
-import { rosterSummary, combatSummary, isAway, awareSummary } from '../core/world.js';
+import { rosterSummary, combatSummary, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
 import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
 import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/state.js';
@@ -246,7 +246,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
     const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);
-    const present = (c.docs.npcs || []).filter(n => n.lastSeen && n.lastSeen === w.location).map(n => n.name);
+    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location)).map(n => n.name);
     sections.push('', `Valid speakers for directions: party with the player ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
     if (awayList.length) sections.push(`Companions AWAY from the player (no briefs; they can't hear or speak until "party_back"): ${awayList.join('; ')}.`);
     sections.push('Reply with the JSON object only.');

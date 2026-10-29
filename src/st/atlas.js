@@ -707,7 +707,8 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
     }
     st.floor = lead.floor;
     c.docs.world.place = { key, floor: lead.floor };
-    if (place.kind === 'town' || place.kind === 'interior' || place.kind === 'grounds' || place.parent) c.docs.world.location = place.name;
+    // Inside a place the location is the place itself; rooms are tracked by the map, not by a name the DM picks each turn.
+    c.docs.world.location = place.name;
     saveDoc('world');
     look(c, key, place);
     await noteRoom(c, place, { quiet });
@@ -724,9 +725,14 @@ export function leavePlace(c = campaign()) {
     import('../ui/map.js').then(m => m.refreshMap());
 }
 
+/** Who looks around for the party: the player and the companions with them (not one held somewhere else: her eyes don't reveal her cell to you). */
+export function viewersOf(c, place) {
+    return partyOnMap(c).filter(n => !place.state.held?.[n]);
+}
+
 /** Update the fog of war from where the party stands. */
 export function look(c, key, place) {
-    const names = partyOnMap(c);
+    const names = viewersOf(c, place);
     const floorId = place.state.positions[names[0]]?.floor ?? place.state.floor;
     const viewers = names.map(n => place.state.positions[n]).filter(p => p && p.floor === floorId);
     const vis = computeVisible(place, floorId, viewers);

@@ -10,7 +10,7 @@ import { campaign, saveDoc } from './campaign.js';
 import { dmType } from './messages.js';
 import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
-import { addNpcs, isAway, awareSummary } from '../core/world.js';
+import { addNpcs, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
@@ -25,7 +25,7 @@ const HIDDEN_TYPES = new Set(['narration', 'ooc', 'roll', 'note']);
 
 function sceneVars(c) {
     const w = c.docs.world;
-    const npcsHere = (c.docs.npcs || []).filter(n => w.location && n.lastSeen === w.location).map(n => n.name);
+    const npcsHere = (c.docs.npcs || []).filter(n => w.location && isHere(n, w.location)).map(n => n.name);
     return {
         player: c.meta.persona.name,
         party: c.meta.party.map(p => p.name).join(', '),
@@ -230,7 +230,7 @@ export async function markSceneStart(messageId = ST.chat.length - 1) {
 export function speakerCandidates() {
     const c = campaign();
     if (!c) return [];
-    const npcsHere = (c.docs.npcs || []).filter(n => !n.dead && (!c.docs.world.location || n.lastSeen === c.docs.world.location)).map(n => n.name);
+    const npcsHere = (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location)).map(n => n.name);
     return [...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n)), ...npcsHere];
 }
 
