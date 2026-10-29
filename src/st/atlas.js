@@ -15,10 +15,11 @@ import { slug, nameKey } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, generateWilds, WILD_KINDS, clearDoorways, ensureIds } from '../core/layout.js';
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
-import { lookupModifier, isAway, applyPresence, conditionsOf } from '../core/world.js';
+import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
+import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS } from '../core/explore.js';
+import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
 import { inferStanding, setStanding, standingOf, standingFor, trespassOf } from '../core/access.js';
 import { watchParty } from './watch.js';
@@ -587,6 +588,9 @@ export async function pickLock(doorId, redraw = () => { }) {
         look(c, key, place);
         savePlace(key, c);
         redraw();
+        // Done in plain view of someone who belongs here: they saw it.
+        const seenBy = watchersSeeing(c, place, door.floor, player);
+        if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched ${player} pick the lock of ${door.id} (${doorRooms(place, door)}) and open it. Decide what they do about it (a guard: challenge, alarm, or going after them; anyone else: shout, run, or look the other way), brief them if they speak, and set an intent if they go after someone.`);
         return;
     }
     const { count, alarm } = notePickFailure(door, player, natural);
@@ -618,6 +622,8 @@ export async function unlockWithKey(doorId, redraw = () => { }) {
     look(c, cur.key, cur.place);
     savePlace(cur.key, c);
     redraw();
+    const seenBy = watchersSeeing(c, cur.place, door.floor, c.meta.persona.name);
+    if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched ${c.meta.persona.name} unlock ${door.id} (${doorRooms(cur.place, door)}) with the ${item} and open it. Decide whether that was theirs to do and what the watcher does about it; brief them if they speak.`);
 }
 
 /** Shove something light one square (free). Heavy things go to the DM for a roll instead. */
@@ -727,7 +733,10 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
         if (g.state !== 'gone' && g.floor === lead.floor && partySquares.has(`${g.x},${g.y}`)) placePerson(place, g.name, { floor: g.floor, x: g.x, y: g.y });
     }
     st.floor = lead.floor;
+    const prevKey = c.docs.world.place?.key;
+    if (prevKey && prevKey !== key) pruneAware(c, places.get(`${c.meta.id}:${prevKey}`));
     c.docs.world.place = { key, floor: lead.floor };
+    syncNight(c, { key, place });
     // Inside a place the location is the place itself; rooms are tracked by the map, not by a name the DM picks each turn.
     c.docs.world.location = place.name;
     saveDoc('world');
@@ -741,6 +750,8 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
 
 export function leavePlace(c = campaign()) {
     if (!c?.docs.world.place) return;
+    // What this place's people had seen of the party stays here, not in the next place's prompt.
+    pruneAware(c, currentPlace(c)?.place);
     c.docs.world.place = null;
     saveDoc('world');
     import('../ui/map.js').then(m => m.refreshMap());
@@ -754,11 +765,108 @@ export function viewersOf(c, place) {
 /** Update the fog of war from where the party stands. */
 export function look(c, key, place) {
     const names = viewersOf(c, place);
+    place.state.lights = partyLights(c, names);
     const floorId = place.state.positions[names[0]]?.floor ?? place.state.floor;
     const viewers = names.map(n => place.state.positions[n]).filter(p => p && p.floor === floorId);
     const vis = computeVisible(place, floorId, viewers);
     reveal(place, floorId, vis);
     return vis;
+}
+
+const LIGHT_RE = /\b(torch|torches|lantern|lamp|candle|candles|glowstone|sunrod|everburning|light stone)\b/i;
+
+/** Who in the party carries a light (a torch, a lantern): the squares around them are lit in the dark. */
+function partyLights(c, names) {
+    const w = c.docs.world;
+    const out = {};
+    for (const n of names) {
+        const own = w.inventory?.[n] ?? [];
+        const shared = n === names[0] ? (w.items ?? []) : [];
+        if ([...own, ...shared].some(i => LIGHT_RE.test(String(i)))) out[n] = true;
+    }
+    return out;
+}
+
+/** Forget what a place's people had seen of the party (the aware list is about where the party is now). */
+function pruneAware(c, place) {
+    const w = c.docs.world;
+    if (!place || !w.aware) return;
+    for (const k of Object.keys(w.aware)) if (personByName(place, k)) delete w.aware[k];
+}
+
+/** Out of it by the DM's conditions on them (unconscious, asleep, tied up): they notice nothing and go nowhere. */
+function outByWorld(c, g) {
+    return Boolean(outBy(conditionsOf(c.docs.world, g.name)));
+}
+
+/** The people who belong here, awake and able, who can see `name` right now (for what they'd witness). */
+export function watchersSeeing(c, place, floorId, name) {
+    return Object.values(place.guards)
+        .filter(g => !isOut(g) && g.floor === floorId && g.hostile !== true && !outByWorld(c, g) && !(g.unaware ?? []).some(u => nameKey(u) === nameKey(name)) && guardSees(place, floorId, g, [name]).length)
+        .map(g => `${g.name} (${g.description || 'someone who belongs here'})`);
+}
+
+function doorRooms(place, door) {
+    return door.rooms.map(id => place.rooms[id]?.name).filter(Boolean).join(' / ') || 'a door';
+}
+
+async function callDm(placeEvent) {
+    const { runTurn } = await import('./orchestrator.js');
+    await runTurn({ force: 'explore', placeEvent });
+}
+
+/** Places that keep late hours: their people are up at night and their doors open. */
+const NIGHTLIFE = /tavern|\binn\b|\bpub\b|alehouse|brothel|gambling|\bden\b|club|dock|harbou?r|guardhouse|barracks|watch|garrison|prison|jail|gaol|temple|shrine|hospital|infirmary|hideout|lair|camp/i;
+
+/**
+ * Night and day on the map, from the world's time of day (the DM's scene.time). Dark outside from
+ * evening on; at night residents go to sleep (on a bed if their room has one), shops and homes in
+ * town lock their doors, and night guards carry lanterns. Morning undoes it all. Returns true if
+ * anything changed.
+ */
+export function syncNight(c = campaign(), cur = currentPlace(c)) {
+    if (!c || !cur) return false;
+    const { key, place } = cur;
+    const night = isNight(c.docs.world.time), late = isLate(c.docs.world.time);
+    if (place.state.night === night && place.state.late === late) return false;
+    place.state.night = night;
+    place.state.late = late;
+    const upLate = NIGHTLIFE.test(`${place.kind || ''} ${place.hostKind || ''} ${place.name || ''}`);
+    for (const g of Object.values(place.guards)) {
+        if (g.state === 'dead' || g.state === 'gone' || g.hostile === true) continue;
+        const resident = g.role && g.role !== 'guard';
+        if (late && resident && !upLate && !g.down) { g.down = 'asleep'; g.sleeper = true; toBed(place, g); }
+        else if (!late && g.sleeper) { delete g.down; delete g.sleeper; }
+        if (g.role === 'guard') {
+            if (night && !g.lantern) { g.lantern = true; g.nightLantern = true; }
+            else if (!night && g.nightLantern) { delete g.lantern; delete g.nightLantern; }
+        }
+    }
+    // A town at night: shops and homes shut (their doors locked); taverns and the like stay open.
+    for (const d of Object.values(place.doors)) {
+        if (!d.enter) continue;
+        const b = place.buildings?.[d.enter];
+        const open = NIGHTLIFE.test(`${b?.kind || ''} ${b?.name || ''}`);
+        if (late && !open && d.state === 'closed') { setDoorState(place, d, 'locked'); d.nightLocked = true; }
+        else if (!late && d.nightLocked) { delete d.nightLocked; if (d.state === 'locked') setDoorState(place, d, 'closed'); }
+    }
+    for (const f of place.floors) f.map.version = (f.map.version || 0) + 1;
+    savePlace(key, c);
+    return true;
+}
+
+/** Someone going to sleep lies down on a free bed in their room, if there is one. */
+function toBed(place, g) {
+    const rm = roomAt(place, g.floor, g.x, g.y);
+    if (!rm) return;
+    const map = floorById(place, g.floor).map;
+    const taken = new Set([...Object.values(place.state.positions).filter(p => p.floor === g.floor), ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.floor === g.floor)].map(p => `${p.x},${p.y}`));
+    for (const p of map.props || []) {
+        if (p.type !== 'bed' || roomAt(place, g.floor, p.x, p.y)?.id !== rm.id) continue;
+        for (let y = p.y; y < p.y + (p.h || 1); y++) for (let x = p.x; x < p.x + (p.w || 1); x++) {
+            if (!taken.has(`${x},${y}`)) { Object.assign(g, { x, y }); return; }
+        }
+    }
 }
 
 /** Entering a room for the first time: its description goes in the chat and the scene card follows. */
@@ -938,8 +1046,12 @@ async function enterBuilding(c, townKey, town, door) {
         const inside = generateInterior(b, Math.floor(Math.random() * 1e9));
         inside.parent = { key: townKey, door: door.id };
         inside.hostKind = b.kind || '';
-        // Walking in off the street: a guest of a shop or tavern, an intruder in someone's home.
-        for (const n of [c.meta.persona.name, ...c.meta.party.map(p => p.name)]) setStanding(inside, n, inferStanding(inside, { why: 'walked in through the front door' }));
+        // Walking in off the street: a guest of a shop or tavern, an intruder in someone's home,
+        // unless the home is the party's own (named for one of them): then they live here.
+        const ours = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+        const label = ` ${nameKey(`${b.name} ${b.keeper || ''} ${b.owner || ''} ${b.description || ''}`)} `;
+        const home = ours.some(n => nameKey(n).split(' ').some(wd => wd.length >= 3 && label.includes(` ${wd} `)));
+        for (const n of ours) setStanding(inside, n, home ? standingFor('resident') : inferStanding(inside, { why: 'walked in through the front door' }));
         storePlace(c, key, inside, { parent: townKey });
         b.interior = key;
         savePlace(townKey, c);
@@ -1082,7 +1194,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             walked++;
             advance();
             // Anyone after the party keeps after them, a step for each of the player's.
-            const caught = moveHunters(place, floorId, names, 1);
+            const caught = moveHunters(place, floorId, names, 1, { skip: g => outByWorld(c, g) });
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
@@ -1095,7 +1207,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const watched = watchParty(c, cur, names);
             if (watched.events.length) { event = watched.events.join(' '); break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
-            if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
+            if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}${newGuard.down ? `, ${DOWN_WORDS[newGuard.down]}` : ''}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);
             if (up) { handoff = { stairs: up }; break; }
             const exit = exitAt(place, floorId, x, y);
@@ -1238,9 +1350,10 @@ export function tickPlace(c = campaign()) {
     const { key, place } = cur;
     const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
     const before = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
-    tickGuards(place);
-    clearBodies(place, c.meta.turn);
-    const now = visibleGuards(place, floorId, look(c, key, place));
+    tickGuards(place, Math.random, 0.5, PATROL_STEPS, { skip: g => outByWorld(c, g) });
+    const vis = look(c, key, place);
+    clearBodies(place, c.meta.turn, 3, { floorId, visible: vis });
+    const now = visibleGuards(place, floorId, vis);
     savePlace(key, c);
     return now.filter(g => !before.has(g.name) && g.hostile !== false);
 }
@@ -1256,7 +1369,7 @@ export function huntersTurn(c = campaign()) {
     const { key, place } = cur;
     clearEngaged(place);
     const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
-    const caught = moveHunters(place, floorId, partyOnMap(c), 6);
+    const caught = moveHunters(place, floorId, partyOnMap(c), 6, { skip: g => outByWorld(c, g) });
     look(c, key, place);
     savePlace(key, c);
     return caught.length ? hunterEvent(caught) : '';

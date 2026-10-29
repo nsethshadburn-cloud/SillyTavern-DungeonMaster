@@ -210,7 +210,7 @@ function board(c) {
         }
         const room = lead && lead.floor === floorId ? roomAt(place, floorId, lead.x, lead.y) : null;
         const trespass = trespassOf(place, c.meta.persona.name, roomAt);
-        return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? ''].filter(Boolean).join(' · '), trespass, map: floor.map, positions, enemies, people, guards, visible, fog: place.fog !== false };
+        return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? '', place.state.night ? '🌙 night' : ''].filter(Boolean).join(' · '), trespass, map: floor.map, positions, enemies, people, guards, visible, fog: place.fog !== false, night: place.state.night === true };
     }
     if (w.sceneMap?.map) return { kind: 'scene', title: `🗺️ ${w.sceneMap.title || 'Map'}`, sub: '', map: w.sceneMap.map, positions: w.sceneMap.positions || {}, enemies: new Set() };
     return null;
@@ -233,7 +233,7 @@ function renderMap(center = false) {
     const roster = Object.entries(b.positions).map(([name, coord]) => {
         const hp = hpOf(c, name);
         const cls = b.enemies.has(name) ? 'foe' : party.has(name) ? 'friend' : b.guards?.has(name) ? 'guard' : 'other';
-        return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} <b>${coord}</b>${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}</span>`;
+        return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} <b>${coord}</b>${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}${b.place?.guards?.[name]?.down ? ` · ${{ asleep: 'asleep', unconscious: 'out cold', bound: 'tied up' }[b.place.guards[name].down]}` : ''}</span>`;
     }).join('');
     const exploring = b.kind === 'place';
     const props = exploring ? '' : (map.props || []).filter(pr => !pr.hidden && !PROPS[pr.type]?.decal).map(pr => `<span>${escapeHtml(pr.label || PROPS[pr.type]?.name || pr.type)} <b>${toCoord(pr.x, pr.y)}</b></span>`).join('');
@@ -248,6 +248,7 @@ function renderMap(center = false) {
     lastViewKey = viewKey;
     panel.classList.toggle('dm-map-wide', exploring || map.w > 16);
     panel.classList.toggle('dm-map-trespassing', Boolean(b.trespass));
+    panel.classList.toggle('dm-map-night', Boolean(b.night));
     // Minimized on a phone, the map sits just above the message box, never over it.
     panel.style.setProperty('--dm-form-h', `${document.getElementById('form_sheld')?.offsetHeight || 100}px`);
     panel.innerHTML = `
@@ -563,10 +564,11 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             let anim = 'idle', elapsed = now + nameOffset(name);
             const rest = b.kind === 'place' ? poseNow(b.place, name) : null;
             const conds = conditionsOf(c.docs.world, name).join(' ').toLowerCase();
-            const out = (hp && hp.hp_max && hp.hp <= 0) || /unconscious|knocked out|dead/.test(conds) || b.place?.guards?.[name]?.state === 'dead';
+            const down = b.place?.guards?.[name]?.down;
+            const out = (hp && hp.hp_max && hp.hp <= 0) || /unconscious|knocked out|dead/.test(conds) || b.place?.guards?.[name]?.state === 'dead' || down === 'unconscious';
             if (out) anim = 'down';
             else if (rest) anim = rest.pose;
-            else if (/asleep|sleeping/.test(conds)) anim = 'sleep';
+            else if (down === 'asleep' || /asleep|sleeping/.test(conds)) anim = 'sleep';
             else if (m.anim && now < m.animUntil) { anim = m.anim; elapsed = now - m.animStart; }
             else if (m.walkUntil && now < m.walkUntil) anim = 'walk';
             else if (held.hurt || (hp?.hp_max && hp.hp / hp.hp_max <= 0.3)) anim = 'injured';

@@ -15,10 +15,10 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
-import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson } from '../core/explore.js';
+import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncNight } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
@@ -35,6 +35,7 @@ import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js'
 import { snapshotTurn, sealTurn } from './undo.js';
 import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
 import { mergeMind } from '../core/minds.js';
+import { standingOf, setStanding, standingFor } from '../core/access.js';
 
 let running = false;
 let rerunRequested = false;
@@ -290,7 +291,7 @@ async function turnBody(c, opts, status, signal) {
     }
     if (!opts.force && !autoRoll && !pacing.inCombat) {
         const spotted = tickPlace(c);
-        if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
+        if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'}${g.down ? `, ${g.down === 'bound' ? 'tied up' : g.down}` : ''})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
         const watched = watchTurn(c);
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
@@ -498,7 +499,7 @@ async function movedTurn(c, status, signal) {
     if (burned) placeEvent = burned;
     if (!pacing.inCombat) {
         const spotted = tickPlace(c);
-        if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
+        if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'}${g.down ? `, ${g.down === 'bound' ? 'tied up' : g.down}` : ''})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
         const watched = watchTurn(c);
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         const hunt = huntersTurn(c);
@@ -1089,6 +1090,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (t.scene.time) {
             if (/morning|dawn/.test(t.scene.time) && /night|evening/.test(world.time || '')) world.day = (world.day || 1) + 1;
             world.time = t.scene.time;
+            syncNight(c);
         }
     }
     // A new place: the old scene card no longer applies. A new scene: NPCs forget the last one.
@@ -1152,7 +1154,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (!g) continue;
                 if (nameKey(g.name) !== nameKey(ename)) combat.aliases[ename] = g.name;
                 combat.positions[ename] = toCoord(g.x, g.y);
-                g.hostile = true; g.state = 'alert';
+                if (g.wasHostile === undefined) g.wasHostile = g.hostile === true;
+                g.hostile = true; g.state = 'alert'; delete g.down; delete g.fought;
             }
             const foeKeys = new Set(Object.keys(combat.enemies || {}).map(nameKey));
             const standIns = new Set(Object.values(combat.aliases).map(nameKey));
@@ -1160,6 +1163,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (g.state === 'gone' || g.floor !== floorId || standIns.has(nameKey(g.name))) continue;
                 if (foeKeys.has(nameKey(g.name)) || seen[g.y * combat.map.w + g.x]) combat.positions[g.name] = toCoord(g.x, g.y);
             }
+            // A fight is loud: whoever belongs here, awake and not in it, within earshot, can hear it (the DM decides if they come).
+            const lead = here.place.state.positions[meta.persona.name];
+            const inIt = new Set([...foeKeys, ...standIns]);
+            const dist = g => (lead ? Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) : 99);
+            const hears = Object.values(here.place.guards)
+                .filter(g => g.state !== 'gone' && g.state !== 'dead' && !g.down && g.hostile !== true && g.floor === floorId && !inIt.has(nameKey(g.name)) && dist(g) <= EARSHOT * 2)
+                .map(g => `${g.name} (${g.description || 'someone who belongs here'}, ${dist(g)} squares away${g.role === 'guard' ? ', a guard' : ''})`);
+            here.place.state.fight = { turn: meta.turn, hears };
         } else if (mapsOn()) {
             combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
             combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
@@ -1188,12 +1199,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         } else {
             world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
         }
-        // Downed enemies stay where they fell for a few rounds (bodies), then they're cleared.
-        for (const [name, e] of Object.entries(world.combat.enemies || {})) {
-            if (e.hp > 0) continue;
-            e.downRound ??= world.combat.round || 1;
-            if ((world.combat.round || 1) - e.downRound >= 3) delete world.combat.positions[name];
-        }
+        // Downed enemies stay where they fell (a body on the board) for the whole fight.
+        for (const e of Object.values(world.combat.enemies || {})) if (e.hp <= 0) e.downRound ??= world.combat.round || 1;
         if (rejected.length) console.warn('[Dungeon Master] Ignored invalid map moves:', rejected);
         mapChanged = true;
     }
@@ -1238,17 +1245,28 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 const pt = parseCoord(world.combat.positions?.[name], map);
                 if (pt) here.place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
             }
+            const deadNames = new Set((t.npcs_dead || []).map(nameKey));
             for (const [name, e] of Object.entries(world.combat.enemies || {})) {
                 // The map's own person when the DM called them something else.
                 const pname = world.combat.aliases?.[name] ?? name;
                 const pt = parseCoord(world.combat.positions?.[name], map);
+                if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
+                const g = personByName(here.place, pname);
                 if (e.hp <= 0) {
-                    if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
-                    killPerson(here.place, pname, meta.turn);
+                    // Dead only when the DM says so; otherwise down and out (knocked out, bleeding) where they fell.
+                    const dead = deadNames.has(nameKey(name)) || deadNames.has(nameKey(pname)) || (e.conditions || []).some(x => /\b(dead|slain|killed)\b/i.test(x));
+                    if (dead) killPerson(here.place, pname, meta.turn);
+                    else if (g) { g.down = 'unconscious'; g.state = 'alert'; delete g.intent; delete g.target; }
                     continue;
                 }
-                if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
+                // Alive at the end: someone who wasn't an enemy before the fight (a guard who yielded) isn't one now,
+                // unless the DM sets an intent; the DM is told they fought.
+                if (g) {
+                    if (g.wasHostile === false) { g.hostile = false; g.state = 'alert'; g.fought = true; delete g.intent; delete g.target; }
+                    delete g.wasHostile;
+                }
             }
+            delete here.place.state.fight;
             for (const [name, cd] of Object.entries(world.combat.positions || {})) {
                 const g = personByName(here.place, name), pt = parseCoord(cd, map);
                 if (g && pt && !party.has(nameKey(name)) && !world.combat.enemies?.[name]) Object.assign(g, { floor: floorId, x: pt.x, y: pt.y, room: roomAt(here.place, floorId, pt.x, pt.y)?.id ?? g.room });
@@ -1283,12 +1301,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const { key, place } = inside;
         const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
         if (t.place_changes) {
-            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId });
+            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
         }
         if (!world.combat) {
             const map = floorById(place, floorId).map;
             const missed = [];
+            // Caught and taken somewhere: access set to "prisoner" or "none" this turn lets the DM move them.
+            const captured = new Set();
+            for (const [who, spec] of Object.entries(t.place_changes?.access || {})) {
+                if (typeof spec !== 'string' || !/^(prisoner|none|intruder|nowhere)$/i.test(spec.trim())) continue;
+                for (const n of (who === '*' || who === 'party' ? partyNames : [matchName(who, partyNames)].filter(Boolean))) captured.add(n);
+            }
             for (const [name, coord] of Object.entries(t.positions || {})) {
                 if (coord === null || /^(gone|removed|dead|fled|left)$/i.test(String(coord))) {
                     const g = personByName(place, name);
@@ -1299,10 +1323,17 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (member) {
                     // Outside a fight the party moves itself (the map, or the sync walking them): the DM
                     // only moves someone who can't move on their own (carried, dragged).
-                    if (!lockedReason(c, member)) { missed.push(`${name} → ${coord} (they move themselves; only someone restrained can be moved)`); continue; }
+                    if (!lockedReason(c, member) && !captured.has(member)) { missed.push(`${name} → ${coord} (they move themselves; only someone restrained, or just captured with access "prisoner"/"none", can be moved)`); continue; }
                     const pt = parseCoord(coord, map);
                     const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
-                    if (spot) { place.state.positions[member] = { floor: floorId, ...spot }; if (place.state.hidden?.[member]) delete place.state.hidden[member]; if (place.state.pose?.[member]) delete place.state.pose[member]; }
+                    if (spot) {
+                        place.state.positions[member] = { floor: floorId, ...spot };
+                        if (place.state.hidden?.[member]) delete place.state.hidden[member];
+                        if (place.state.pose?.[member]) delete place.state.pose[member];
+                        // Locked up again: wherever they were put is their cell now.
+                        const cell = captured.has(member) && standingOf(place, member).label === 'prisoner' ? roomAt(place, floorId, spot.x, spot.y) : null;
+                        if (cell) { setStanding(place, member, standingFor('prisoner', { home: cell.id })); status.note(`${member} is held in ${cell.name}`); }
+                    }
                     else missed.push(`${name} → ${coord}`);
                     continue;
                 }
@@ -1514,6 +1545,17 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (entry && !already) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
     }
 
+    // Someone still on their way in whom the DM has speaking now has arrived.
+    const hereNow = currentPlace(c);
+    if (hereNow) {
+        for (const d of t.directions) {
+            const g = personByName(hereNow.place, d.speaker);
+            if (!g || g.intent !== 'goto' || !g.goal) continue;
+            const spot = openSquareNear(hereNow.place, g.floor, g.goal.x, g.goal.y, new Set(Object.values(hereNow.place.state.positions).filter(p => p.floor === g.floor).map(p => `${p.x},${p.y}`)));
+            if (spot) Object.assign(g, spot, { room: roomAt(hereNow.place, g.floor, spot.x, spot.y)?.id ?? g.room });
+            delete g.goal; delete g.intent;
+        }
+    }
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     for (const d of t.directions) {
         if (signal.aborted) throw new Error('aborted');

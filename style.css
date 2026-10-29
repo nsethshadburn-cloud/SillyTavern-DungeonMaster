@@ -300,3 +300,6 @@
 @keyframes dm-bubble-pop { 0% { opacity: 0; transform: translate(-50%, -100%) scale(0.5) translateY(8px); } 100% { opacity: 1; transform: translate(-50%, -100%) scale(1) translateY(0); } }
 @keyframes dm-bubble-fade { 0% { opacity: 1; transform: translate(-50%, -100%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -100%) scale(0.92) translateY(-6px); } }
 @keyframes dm-caret { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+
+/* Night on the map: the board goes dim (bubbles and chips stay readable). */
+.dm-map-night .dm-map-canvas { filter: brightness(0.7) saturate(0.8); }

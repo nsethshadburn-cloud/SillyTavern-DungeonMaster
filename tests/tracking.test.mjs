@@ -125,7 +125,7 @@ test('hunters: a dog set on Judy chases her step by step and strikes once when i
     assert.match(placeView(place, party), /Guard Dog.*running from the party/);
 });
 
-test('bodies: the dead stay where they fell for three turns, then they are cleared', () => {
+test('bodies: the dead stay where they fell; cleared only out of sight, three turns on, by someone left to do it', () => {
     const place = testPlace();
     const g = placePerson(place, 'Bandit', { floor: 'F0', x: 3, y: 3 }, { info: { hostile: true } });
     g.intent = 'attack';
@@ -136,7 +136,10 @@ test('bodies: the dead stay where they fell for three turns, then they are clear
     assert.equal(visibleGuards(place, 'F0', new Uint8Array(200).fill(1)).length, 0, 'a body never "comes into view" as a guard');
     assert.match(placeView(place, ['Amber']), /Bodies on the floor.*Bandit/);
     assert.equal(clearBodies(place, 12), 0);
-    assert.equal(clearBodies(place, 13), 1);
+    assert.equal(clearBodies(place, 13), 0, 'nobody of the place is left to clear it: it stays');
+    placePerson(place, 'Turnkey', { floor: 'F0', x: 8, y: 8 }, { info: { hostile: false } });
+    place.guards.Turnkey.role = 'guard';
+    assert.equal(clearBodies(place, 13), 1, 'someone to do it, and out of sight: cleared');
     assert.equal(g.state, 'gone');
 });
 

@@ -51,13 +51,19 @@ const litCache = new WeakMap();
 /** Squares that are lit: outdoors, lit rooms (with their walls), and around light sources. */
 export function litMask(place, floorId) {
     const map = floorById(place, floorId).map;
-    const cached = litCache.get(map);
+    const night = place.state?.night === true;
+    const cached = night ? null : litCache.get(map);
     if (cached && cached.version === (map.version || 0)) return cached.mask;
     const mask = new Uint8Array(map.w * map.h);
-    if (OUTDOOR.has(map.theme) || place.fog === false) mask.fill(1);
+    if (!night && (OUTDOOR.has(map.theme) || place.fog === false)) mask.fill(1);
     else {
+        // By day a room is lit or dark as built. At night only a room with someone awake in it
+        // (they have a candle) or one lit on purpose (rooms: {lit: true} at night) stays lit;
+        // outdoors and lived-in houses go dark like anywhere else. Light sources burn either way.
+        const awakeIn = night ? new Set(Object.values(place.guards || {}).filter(g => !isOut(g) && g.floor === floorId).map(g => roomAt(place, floorId, g.x, g.y)?.id).filter(Boolean)) : null;
         for (const rm of Object.values(place.rooms)) {
-            if (rm.floor !== floorId || !rm.lit) continue;
+            if (rm.floor !== floorId) continue;
+            if (night ? !(rm.litNight === true || awakeIn.has(rm.id)) : !rm.lit) continue;
             const r = rm.rect;
             for (let x = r.x - 1; x <= r.x + r.w; x++) for (let y = r.y - 1; y <= r.y + r.h; y++) if (x >= 0 && y >= 0 && x < map.w && y < map.h) mask[y * map.w + x] = 1;
         }
@@ -71,7 +77,7 @@ export function litMask(place, floorId) {
             }
         }
     }
-    litCache.set(map, { version: map.version || 0, mask });
+    if (!night) litCache.set(map, { version: map.version || 0, mask });
     return mask;
 }
 
@@ -172,9 +178,14 @@ export const LANTERN_RADIUS = 3;
 export function lanternGlow(place, floorId) {
     const map = floorById(place, floorId).map;
     const out = new Set();
-    if (OUTDOOR.has(map.theme) || place.fog === false) return out;
-    for (const g of Object.values(place.guards || {})) {
-        if (!g.lantern || g.state === 'gone' || g.state === 'dead' || g.floor !== floorId) continue;
+    const night = place.state?.night === true;
+    if ((OUTDOOR.has(map.theme) || place.fog === false) && !night) return out;
+    // Guards' lanterns, and a torch or lantern someone in the party carries (place.state.lights).
+    const carriers = [
+        ...Object.values(place.guards || {}).filter(g => g.lantern && g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId),
+        ...Object.entries(place.state?.positions || {}).filter(([n, p]) => place.state.lights?.[n] && p && p.floor === floorId).map(([, p]) => p),
+    ];
+    for (const g of carriers) {
         for (let dx = -LANTERN_RADIUS; dx <= LANTERN_RADIUS; dx++) for (let dy = -LANTERN_RADIUS; dy <= LANTERN_RADIUS; dy++) {
             const x = g.x + dx, y = g.y + dy;
             if (x >= 0 && y >= 0 && x < map.w && y < map.h && dx * dx + dy * dy <= LANTERN_RADIUS * LANTERN_RADIUS) out.add(y * map.w + x);
@@ -230,13 +241,15 @@ export function revealRooms(place, ids) {
 // ---------- walking ----------
 
 /** Can someone stand on (or walk through) this square? Closed doors open as you walk in; locked ones don't. */
-export function walkable(place, floorId, x, y) {
+export function walkable(place, floorId, x, y, { keys = false } = {}) {
     const map = floorById(place, floorId).map;
     if (x < 0 || y < 0 || x >= map.w || y >= map.h) return false;
     const ch = terrainAt(map, x, y);
     // Something solid in the way (furniture, or a barricade shoved into a doorway) blocks it.
     if (propsAt(map, x, y).some(p => PROPS[p.type]?.blocks)) return false;
     if (ch === '+') return true;
+    // Someone with the keys to the place walks through its locked doors (they unlock them as they go).
+    if (keys && (ch === 'D' || ch === 'J')) return true;
     if (TERRAIN[ch]?.walk === false) return false;
     return ch !== '%';
 }
@@ -247,10 +260,11 @@ export function walkable(place, floorId, x, y) {
  * toward: running into the dark. Uses the real map (not what's explored) and, when the square
  * can't be reached (a wall, a locked door), goes as close to it as the way allows.
  */
-export function findPath(place, floorId, from, to, { knownOnly = true, blocked = new Set(), toward = false, isGoal = null } = {}) {
+export function findPath(place, floorId, from, to, { knownOnly = true, blocked = new Set(), toward = false, isGoal = null, keys = false } = {}) {
     const map = floorById(place, floorId).map;
     const known = (x, y) => toward || !knownOnly || isExplored(place, floorId, x, y);
-    if (!toward && !isGoal && (!walkable(place, floorId, to.x, to.y) || !known(to.x, to.y))) return null;
+    const can = (x, y) => walkable(place, floorId, x, y, { keys });
+    if (!toward && !isGoal && (!can(to.x, to.y) || !known(to.x, to.y))) return null;
     const key = (x, y) => y * map.w + x;
     const prev = new Map([[key(from.x, from.y), null]]);
     const queue = [[from.x, from.y]];
@@ -268,17 +282,20 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
         if (toward && far(x, y) < bestFar && terrainAt(map, x, y) !== '<' && terrainAt(map, x, y) !== '>') { best = key(x, y); bestFar = far(x, y); }
         for (const [dx, dy] of DIRS8) {
             const nx = x + dx, ny = y + dy, k = key(nx, ny);
-            if (prev.has(k) || !walkable(place, floorId, nx, ny) || !known(nx, ny) || blocked.has(`${nx},${ny}`)) continue;
+            if (prev.has(k) || !can(nx, ny) || !known(nx, ny) || blocked.has(`${nx},${ny}`)) continue;
             // Stepping on stairs takes you to another floor: only walk onto them when they're where you're going.
             if ((nx !== to.x || ny !== to.y) && (terrainAt(map, nx, ny) === '<' || terrainAt(map, nx, ny) === '>')) continue;
             // Diagonal steps can't squeeze between two walls or through a doorway.
-            if (dx && dy && (!walkable(place, floorId, x + dx, y) || !walkable(place, floorId, x, y + dy) || terrainAt(map, nx, ny) === '+' || terrainAt(map, x, y) === '+' || terrainAt(map, nx, ny) === '/' || terrainAt(map, x, y) === '/')) continue;
+            if (dx && dy && (!can(x + dx, y) || !can(x, y + dy) || DOORWAY.has(terrainAt(map, nx, ny)) || DOORWAY.has(terrainAt(map, x, y)))) continue;
             prev.set(k, key(x, y));
             queue.push([nx, ny]);
         }
     }
     return toward ? pathTo(best) : null;
 }
+
+/** Door squares: nobody squeezes through one diagonally. */
+const DOORWAY = new Set(['+', '/', 'D', 'J', 'j']);
 
 /** An open pit (or hole) stays dangerous after it's sprung; darts and the like are spent. */
 const OPEN_TRAP = /pit|hole|trapdoor|chasm|shaft/i;
@@ -420,7 +437,7 @@ export function adoptTrapProps(place) {
  * to them if there's room, else within two or three), not the leader's footprints. Returns up to
  * `steps` squares, or [] when they're already close or can't get closer.
  */
-export function followSteps(place, floorId, from, leader, { taken = new Set(), steps = 1, avoid = [] } = {}) {
+export function followSteps(place, floorId, from, leader, { taken = new Set(), steps = 1, avoid = [], keys = false } = {}) {
     const dist = (x, y) => Math.max(Math.abs(x - leader.x), Math.abs(y - leader.y));
     const blocked = new Set([...taken, `${leader.x},${leader.y}`]);
     const careful = new Set([...blocked, ...avoid]);
@@ -430,7 +447,7 @@ export function followSteps(place, floorId, from, leader, { taken = new Set(), s
         if (dist(from.x, from.y) <= near) return [];
         for (const set of avoid.length ? [careful, blocked] : [blocked]) {
             const isGoal = (x, y) => dist(x, y) <= near && !set.has(`${x},${y}`) && !stairsAt(place, floorId, x, y);
-            const path = findPath(place, floorId, from, leader, { knownOnly: false, blocked: set, isGoal });
+            const path = findPath(place, floorId, from, leader, { knownOnly: false, blocked: set, isGoal, keys });
             if (path?.length) return path.slice(0, steps);
         }
     }
@@ -557,7 +574,7 @@ function findByIdOrName(list, key) {
  *           rooms: {G4: {lit: true}}, reveal: ["G7"]}
  * floor: the party's floor (squares like "ab14" are on it)
  */
-export function applyPlaceChanges(place, changes, { floor = place.state?.floor } = {}) {
+export function applyPlaceChanges(place, changes, { floor = place.state?.floor, turn = null } = {}) {
     const log = [];
     const c = changes && typeof changes === 'object' ? changes : {};
     for (const [id, raw] of Object.entries(c.doors || {})) {
@@ -604,17 +621,34 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
             if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
             if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(id => findRoom(place, id)?.id).filter(Boolean);
             if (!g.patrol.length && g.room) g.patrol = [g.room];
-            g.state = raw.state === 'alert' ? 'alert' : 'patrol';
+            const st = String(raw.state || '').toLowerCase();
+            // The dead stay dead (their body was moved); only "alive" brings someone back.
+            if (g.state === 'dead' && !/^(alive|revived)$/.test(st)) { log.push(`${g.name} is dead (the body was moved; only state "alive" brings them back)`); continue; }
+            g.state = st === 'alert' ? 'alert' : 'patrol';
+            if (/asleep|sleeping/.test(st)) g.down = 'asleep';
+            else if (/unconscious|knocked out|out cold/.test(st)) g.down = 'unconscious';
+            else if (/tied|bound|restrained|shackled|chained|cuffed/.test(st)) g.down = 'bound';
+            else if (st) delete g.down;
             setIntent(g, raw.intent, raw.target);
             log.push(`${g.name} at ${coord(g.x, g.y)}${g.intent ? ` (${g.intent}${g.target ? ` ${g.target}` : ''})` : ''}`);
             continue;
         }
-        const v = String(raw);
-        if (/^(gone|dead|left|removed)$/i.test(v)) { if (g) g.state = 'gone'; }
+        const v = String(raw).trim();
+        const dead = g?.state === 'dead';
+        const wake = () => { if (g) { delete g.down; delete g.sleeper; } };
+        if (/^(gone|left|removed|vanished|carried (away|off)|taken away)$/i.test(v)) { if (g) g.state = 'gone'; }
+        else if (/^(dead|killed|slain|dies|died)$/i.test(v)) { if (g && !dead) killPerson(place, g.name, turn ?? 0); }
+        else if (/^(alive|revived|revives|back from the dead|resurrected)$/i.test(v)) { if (g) { g.state = 'patrol'; delete g.down; delete g.deadTurn; } }
+        // The dead stay dead: no state the DM sends wakes a corpse (only "alive" above).
+        else if (dead) { log.push(`${g.name} is dead (only "alive" brings them back)`); continue; }
+        else if (/^(asleep|sleeping|sleeps|dozing|dozes( off)?|napping|falls asleep|passed out( drunk)?)$/i.test(v)) { if (g) { g.down = 'asleep'; delete g.sleeper; delete g.intent; delete g.target; } }
+        else if (/^(unconscious|knocked out|out cold|ko|stunned|paralyzed|paralysed|senseless)$/i.test(v)) { if (g) { g.down = 'unconscious'; delete g.intent; delete g.target; } }
+        else if (/^(tied( up)?|bound|restrained|shackled|chained( up)?|cuffed|captured|in irons)$/i.test(v)) { if (g) { g.down = 'bound'; delete g.intent; delete g.target; } }
+        else if (/^(awake|wakes( up)?|woken|woke|comes to|conscious|free|freed|untied|loose|let go)$/i.test(v)) wake();
         else if (/^(alert)$/i.test(v)) { if (g) g.state = 'alert'; }
-        else if (/^(hunting|chasing|attacking|attack)$/i.test(v)) { if (g) { g.state = 'alert'; setIntent(g, 'attack'); } }
-        else if (/^(fleeing|flee|running|runs away)$/i.test(v)) { if (g) setIntent(g, 'flee'); }
-        else if (/^(following|follow)$/i.test(v)) { if (g) setIntent(g, 'follow'); }
+        else if (/^(hunting|chasing|attacking|attack)$/i.test(v)) { if (g) { wake(); g.state = 'alert'; setIntent(g, 'attack'); } }
+        else if (/^(fleeing|flee|running|runs away)$/i.test(v)) { if (g) { wake(); setIntent(g, 'flee'); } }
+        else if (/^(following|follow)$/i.test(v)) { if (g) { wake(); setIntent(g, 'follow'); } }
         else if (/^(calm|patrol|patrolling|stay|staying)$/i.test(v)) { if (g) { g.state = 'patrol'; setIntent(g, /^stay/i.test(v) ? 'stay' : ''); } }
         else {
             // A square or a room: move them there (someone new appears there).
@@ -979,6 +1013,46 @@ export function adoptStrays(place, partyNames) {
 /** Squares a guard walks in one turn on patrol (slow: a round, not a sprint). */
 export const PATROL_STEPS = 2;
 
+/** Out of it: dead, gone, asleep, knocked out or tied up (notices nothing, goes nowhere). */
+export function isOut(g) {
+    return !g || g.state === 'dead' || g.state === 'gone' || Boolean(g.down);
+}
+
+export const DOWN_WORDS = Object.freeze({ asleep: 'asleep', unconscious: 'unconscious', bound: 'tied up' });
+
+/** Someone of the place who carries the keys to its doors: its guards, keepers and residents (never a monster). */
+export function hasKeys(g) {
+    return g?.hostile !== true && ['guard', 'keeper', 'resident'].includes(String(g?.role || ''));
+}
+
+/** Squares the place's own people walk around: its traps (they know them) and anything burning. */
+export function dangerSquares(place, floorId) {
+    const out = new Set();
+    for (const t of Object.values(place.traps || {})) if (t.floor === floorId && t.state !== 'disarmed') out.add(`${t.x},${t.y}`);
+    for (const k of Object.keys(floorById(place, floorId).map.fire || {})) out.add(k);
+    return out;
+}
+
+/** Stepping onto a door square: a closed door opens, a locked one too for someone with the keys; remembered so it can be shut again. */
+function passDoor(place, g, x, y) {
+    const d = doorAt(place, g.floor, x, y);
+    if (!d) return;
+    if (d.state === 'closed' || (d.state === 'locked' && hasKeys(g))) { g.through = { id: d.id, was: d.state }; setDoorState(place, d, 'open'); }
+    else if (d.state === 'open') g.through = { id: d.id, was: 'open' };
+}
+
+/** Off the door square: someone of the place shuts the door behind them, and locks again what was locked. */
+function closeBehind(place, g, busy) {
+    const t = g.through;
+    if (!t) return;
+    const d = place.doors[t.id];
+    if (!d) { delete g.through; return; }
+    if (g.x === d.x && g.y === d.y) return; // still in the doorway
+    delete g.through;
+    if (d.state !== 'open' || busy.has(`${d.x},${d.y}`) || !hasKeys(g)) return;
+    setDoorState(place, d, t.was === 'locked' ? 'locked' : 'closed');
+}
+
 /** One step to a free square beside them inside the room they're in (pacing a post, pottering about a kitchen). */
 function paceStep(place, g, r, busy) {
     const rm = roomAt(place, g.floor, g.x, g.y);
@@ -1014,13 +1088,14 @@ function wanderNextDoor(place, g, r) {
  * and walks there, a few squares a turn, through doors, around furniture and people (never a jump
  * from room to room: someone watching the hallway sees them go). Returns who moved where.
  */
-export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_STEPS) {
+export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_STEPS, { skip = null } = {}) {
     const moved = [];
     for (const g of Object.values(place.guards)) {
-        if (g.state === 'gone' || g.state === 'dead' || (g.intent && g.intent !== 'wander')) continue;
+        if (isOut(g) || skip?.(g) || (g.intent && g.intent !== 'wander')) continue;
         const busy = new Set([
             ...Object.values(place.state?.positions || {}).filter(p => p && p.floor === g.floor).map(p => `${p.x},${p.y}`),
-            ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.state !== 'dead' && o.floor === g.floor).map(o => `${o.x},${o.y}`),
+            ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.floor === g.floor).map(o => `${o.x},${o.y}`),
+            ...dangerSquares(place, g.floor),
         ]);
         // Posted (one room): a guard paces it; a resident potters about and now and then goes next door.
         if ((g.patrol?.length ?? 0) < 2 && !g.walk) {
@@ -1039,7 +1114,7 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
             const at = freeInRoom(place, rm, r);
             g.walk = { step: next, x: at.x, y: at.y };
         }
-        const path = findPath(place, g.floor, g, g.walk, { knownOnly: false, blocked: busy });
+        const path = findPath(place, g.floor, g, g.walk, { knownOnly: false, blocked: busy, keys: hasKeys(g) });
         if (!path) {
             // No way through right now (someone in the doorway): wait a turn; give up after a few.
             g.walk.stuck = (g.walk.stuck ?? 0) + 1;
@@ -1047,9 +1122,9 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
             continue;
         }
         for (const [x, y] of path.slice(0, steps)) {
-            const d = doorAt(place, g.floor, x, y);
-            if (d && d.state === 'closed') setDoorState(place, d, 'open');
+            passDoor(place, g, x, y);
             Object.assign(g, { x, y });
+            closeBehind(place, g, busy);
         }
         g.room = roomAt(place, g.floor, g.x, g.y)?.id ?? g.room;
         if (g.x === g.walk.x && g.y === g.walk.y) {
@@ -1110,7 +1185,7 @@ export function setIntent(g, intent, target = '') {
     const want = String(intent ?? '').toLowerCase().trim();
     if (want === '' || !INTENTS.includes(want)) { if (intent !== undefined && want === '') { delete g.intent; delete g.target; } return; }
     g.intent = want;
-    if (want === 'attack') { g.hostile = true; g.state = 'alert'; }
+    if (want === 'attack') { g.hostile = true; g.state = 'alert'; delete g.fought; delete g.down; }
     if (target) g.target = String(target).slice(0, 60); else if (want !== 'attack' && want !== 'follow') delete g.target;
 }
 
@@ -1121,21 +1196,24 @@ export function setIntent(g, intent, target = '') {
  * their quarry strikes once (they're "engaged" until the next turn clears it).
  * Returns [{name, target}] for each hunter who just reached someone.
  */
-export function moveHunters(place, floorId, partyNames, steps = 1) {
+export function moveHunters(place, floorId, partyNames, steps = 1, { skip = null } = {}) {
     const struck = [];
     const party = partyNames.filter(n => place.state.positions[n]?.floor === floorId);
     if (!party.length) return struck;
+    const dangers = dangerSquares(place, floorId);
     const busy = except => new Set([
         ...party.filter(n => n !== except).map(n => `${place.state.positions[n].x},${place.state.positions[n].y}`),
-        ...Object.values(place.guards).filter(o => o.state !== 'gone' && o.state !== 'dead' && o.floor === floorId && o.name !== except).map(o => `${o.x},${o.y}`),
+        ...Object.values(place.guards).filter(o => o.state !== 'gone' && o.floor === floorId && o.name !== except).map(o => `${o.x},${o.y}`),
+        ...dangers,
     ]);
     const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     for (const g of Object.values(place.guards)) {
-        if (g.state === 'gone' || g.state === 'dead' || g.floor !== floorId) continue;
+        if (isOut(g) || skip?.(g) || g.floor !== floorId) continue;
         // On their way in to where they were meant to be (they came in through a door out of sight).
         if (g.intent === 'goto' && g.goal) {
-            const path = findPath(place, floorId, g, g.goal, { knownOnly: false, blocked: busy(g.name), isGoal: (x, y) => Math.max(Math.abs(x - g.goal.x), Math.abs(y - g.goal.y)) <= 1 });
-            for (const [x, y] of (path || []).slice(0, steps)) { const d = doorAt(place, floorId, x, y); if (d && d.state === 'closed') setDoorState(place, d, 'open'); Object.assign(g, { x, y }); }
+            const taken = busy(g.name);
+            const path = findPath(place, floorId, g, g.goal, { knownOnly: false, blocked: taken, keys: hasKeys(g), isGoal: (x, y) => Math.max(Math.abs(x - g.goal.x), Math.abs(y - g.goal.y)) <= 1 });
+            for (const [x, y] of (path || []).slice(0, steps)) { passDoor(place, g, x, y); Object.assign(g, { x, y }); closeBehind(place, g, taken); }
             if (!path || Math.max(Math.abs(g.x - g.goal.x), Math.abs(g.y - g.goal.y)) <= 1) { delete g.goal; delete g.intent; }
             g.room = roomAt(place, floorId, g.x, g.y)?.id ?? g.room;
             continue;
@@ -1162,10 +1240,9 @@ export function moveHunters(place, floorId, partyNames, steps = 1) {
                 Object.assign(g, best);
             }
         } else {
-            const path = followSteps(place, floorId, g, q, { taken: busy(g.name), steps });
+            const path = followSteps(place, floorId, g, q, { taken: busy(g.name), steps, keys: hasKeys(g) });
             for (const [x, y] of path) {
-                const d = doorAt(place, floorId, x, y);
-                if (d && d.state === 'closed') setDoorState(place, d, 'open');
+                passDoor(place, g, x, y);
                 Object.assign(g, { x, y });
             }
             if (g.intent === 'attack' && dist(g, q) <= 1 && !g.engaged) {
@@ -1183,14 +1260,26 @@ export function killPerson(place, name, turn) {
     const g = personByName(place, name);
     if (!g || g.state === 'gone') return null;
     Object.assign(g, { state: 'dead', deadTurn: turn });
-    delete g.intent; delete g.target; delete g.engaged;
+    delete g.intent; delete g.target; delete g.engaged; delete g.down; delete g.through; delete g.goal; delete g.fought; delete g.wasHostile;
     return g;
 }
 
-/** Bodies that have lain there `turns` turns are cleared away. Returns how many went. */
-export function clearBodies(place, turn, turns = 3) {
+/**
+ * Bodies are cleared away only once the party has been out of sight of them for `turns` turns and
+ * someone of the place is left standing (awake, not an enemy) on that floor to do it. A corpse the
+ * party stands over stays; so does the last man of an empty dungeon.
+ * sight = {floorId, visible}: what the party sees right now. Returns how many went.
+ */
+export function clearBodies(place, turn, turns = 3, sight = null) {
     let n = 0;
-    for (const g of Object.values(place.guards || {})) if (g.state === 'dead' && turn - (g.deadTurn ?? turn) >= turns) { g.state = 'gone'; n++; }
+    const map = sight ? floorById(place, sight.floorId).map : null;
+    for (const g of Object.values(place.guards || {})) {
+        if (g.state !== 'dead') continue;
+        if (sight && g.floor === sight.floorId && sight.visible[g.y * map.w + g.x]) { g.seenTurn = turn; continue; }
+        const since = g.seenTurn ?? g.deadTurn ?? turn;
+        const someone = Object.values(place.guards).some(o => o !== g && !isOut(o) && o.hostile !== true && o.floor === g.floor);
+        if (turn - since >= turns && someone) { g.state = 'gone'; n++; }
+    }
     return n;
 }
 
@@ -1304,6 +1393,7 @@ export function placeView(place, partyNames) {
     const floor = floorById(place, lead?.floor ?? st.floor);
     const room = lead ? roomAt(place, floor.id, lead.x, lead.y) : null;
     const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `in a corridor at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
+    if (st.night) lines.push(`It is ${st.late ? 'NIGHT' : 'DARK out (evening)'}: outdoors is dark; a room is lit only with someone awake in it or a light burning; ${st.late ? 'residents are asleep and shops and homes are shut (taverns, inns, guardhouses and jails are up); ' : ''}in the dark people see two squares, lantern-bearers three around them.`);
     if (st.visited.length) lines.push(`Rooms the party has been in: ${st.visited.join(', ')}.`);
     const changed = Object.values(place.doors).filter(d => (d.kind === 'locked' && d.state !== 'locked') || (d.kind === 'secret' && d.state !== 'hidden') || d.state === 'open' || d.state === 'broken').map(d => `${d.id} ${d.state === 'closed' && d.kind === 'locked' ? 'unlocked' : d.state === 'closed' && d.kind === 'secret' ? 'found' : d.state}`);
     if (changed.length) lines.push(`Doors now: ${changed.join(', ')}.`);
@@ -1323,8 +1413,10 @@ export function placeView(place, partyNames) {
         const inSight = seen?.[g.y * floor.map.w + g.x];
         return `${d} squares away, ${inSight ? 'IN SIGHT' : d <= EARSHOT ? 'out of sight but within earshot (only loud noise or talking carries)' : 'FAR: the party can\'t see, hear or smell them'}`;
     };
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name}${g.hostile === true ? '' : g.role === 'guard' ? ' [guard, not an enemy: keeps order, challenges trespassers]' : g.role ? ` [${g.role}, not an enemy]` : ''}${g.lantern ? ' [carries a lantern]' : ''} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.state === 'alert' ? ' (ALERT)' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name}${g.hostile === true ? '' : g.role === 'guard' ? ' [guard, not an enemy: keeps order, challenges trespassers]' : g.role ? ` [${g.role}, not an enemy]` : ''}${g.lantern ? ' [carries a lantern]' : ''} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.down ? ` (${DOWN_WORDS[g.down].toUpperCase()}: notices nothing and goes nowhere until place_changes.guards says "awake" or "free")` : g.state === 'alert' ? ' (ALERT)' : ''}${g.fought ? ' [fought the party and survived; not an enemy now unless you set an intent]' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it; describe only what the party can sense of each, as noted): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
+    if (st.fight?.hears?.length) lines.push(`The fight is loud. Within earshot of it but not in it: ${st.fight.hears.join('; ')}. Decide whether they come running (place_changes.guards with intent "attack", or "following" to watch), hide, or raise the alarm.`);
+    if (st.said?.length) lines.push(`Said lately by the place's people on their own (their own words, already in the chat): ${st.said.slice(-4).map(s => `${s.name}: "${s.text}"`).join('; ')}.`);
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);
         const rm = roomAt(place, p.floor, p.x, p.y);

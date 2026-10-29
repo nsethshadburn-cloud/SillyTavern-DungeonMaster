@@ -213,6 +213,17 @@ export function worldFlags(world) {
     return flags;
 }
 
+/** Dark outside: evening, dusk, night. */
+export function isNight(time) {
+    return /night|midnight|dusk|evening|late/i.test(String(time || ''));
+}
+
+/** Deep night: lived-in places are asleep and shut. */
+export function isLate(time) {
+    const t = String(time || '');
+    return /night|midnight|late/i.test(t) && !/evening/i.test(t);
+}
+
 // ---------- NPC roster ----------
 
 /** Two location names mean the same place: the same words, or one inside the other ("Blackmoor Prison" ~ "Blackmoor Prison, cell block"). */

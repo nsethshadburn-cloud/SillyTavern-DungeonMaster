@@ -76,7 +76,7 @@ test('canned lines fit who says them, and are said about half the time', () => {
     let seq = [0.1, 0.5, 0.2];
     const rng = () => seq.shift() ?? 0.2;
     const said = cannedLine(guard, { rng });
-    assert.ok(said.length > 0 && /trouble|moving|yourself|see here|Evening|eye on you|touch|see you|lost|along|Quiet/.test(said));
+    assert.ok(said.length > 0 && /trouble|moving|yourself|see here|eye on you|touch|see you|lost|along|Morning|Afternoon/.test(said));
     seq = [0.9];
     assert.equal(cannedLine(guard, { rng }), '', 'a high roll: nothing said');
     seq = [0.1, 0.1, 0.0];
