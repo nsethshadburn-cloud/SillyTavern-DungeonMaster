@@ -224,8 +224,8 @@ test('DM changes: secret doors found, traps spotted, guards moved; patrols walk 
     assert.equal(place.guards['Graves the Butler'].room, 'G4');
     assert.ok(inRect(place.rooms.G4.rect, place.guards['Graves the Butler'].x, place.guards['Graves the Butler'].y));
     const before = place.guards['The Hound'].room;
-    tickGuards(place, () => 0, 1);
-    assert.notEqual(place.guards['The Hound'].room, before, 'the hound moved on along its patrol');
+    for (let i = 0; i < 40 && place.guards['The Hound'].room === before; i++) tickGuards(place, () => 0, 1);
+    assert.notEqual(place.guards['The Hound'].room, before, 'the hound moved on along its patrol (a few squares a turn)');
 });
 
 test("the DM's view: the whole place with secrets (cached), and where the party is now", () => {
@@ -299,7 +299,7 @@ test("vision: you can't see into a room until you step inside it, even a lit one
     assert.ok(roomTiles(A).filter(([x, y]) => Math.max(Math.abs(x - inB.x), Math.abs(y - inB.y)) > 1).every(([x, y]) => !vis2[y * map.w + x]), 'and the room behind you is out of view');
 });
 
-test('people on the map: guards are hostile, residents and shopkeepers are not; the DM can add someone', () => {
+test('people on the map: a plan\'s guards keep order, residents and shopkeepers are not enemies; the DM can add someone', () => {
     const plan = normalizePlan({ rooms: [{ id: 'A', type: 'kitchen' }, { id: 'B', type: 'hallway' }], links: [{ a: 'A', b: 'B' }], guards: [{ name: 'Graves', room: 'B' }], people: [{ name: 'Old Martha', description: 'the cook', room: 'A' }] });
     assert.equal(plan.guards.find(g => g.name === 'Graves').hostile, true);
     assert.equal(plan.guards.find(g => g.name === 'Old Martha').hostile, false);

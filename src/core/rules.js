@@ -359,6 +359,27 @@ function patrols(plan) {
     return log;
 }
 
+/** A jail is staffed: a turnkey watching every cell block, someone on the door. (After the cells are organized into blocks.) */
+function staffed(plan) {
+    const log = [];
+    if (!/prison|jail|gaol|stockade|lockup|penitentiary|brig\b|detention|holding|barracks|garrison/i.test(`${plan.kind || ''} ${plan.name || ''}`)) return log;
+    plan.guards ??= [];
+    let n = plan.guards.filter(g => /^Turnkey \d+$/.test(g.name)).length;
+    const post = (rm, what) => {
+        if (!rm || plan.guards.some(g => g.hostile === false && (g.room === rm.id || (g.patrol || []).includes(rm.id)))) return;
+        let name;
+        do { n++; name = `Turnkey ${n}`; } while (plan.guards.some(g => g.name === name));
+        plan.guards.push({ name, description: `a turnkey, ${what}`, room: rm.id, patrol: [rm.id], hostile: false, role: 'guard' });
+        log.push(`${name} posted in ${rm.name} (${what})`);
+    };
+    for (const hall of plan.rooms.filter(r => r.type === 'hallway')) {
+        const cells = linksOf(plan, hall.id).map(l => roomOf(plan, other(l, hall.id))).filter(r => r?.type === 'cell');
+        if (cells.length >= 2) post(hall, 'watching the cells');
+    }
+    post(plan.rooms.find(r => r.exit) ?? plan.rooms.find(r => r.type === 'guard_room'), 'on the door');
+    return log;
+}
+
 /** The rules, in the order they run. */
 export const RULES = [
     { id: 'cells', says: 'A jail cell has exactly one door, a locked barred cell door onto its cell block; at most one hidden way out; barred windows; never the way out.', run: cells },
@@ -373,6 +394,7 @@ export const RULES = [
     { id: 'way_out', says: 'A building\'s way out is an entrance, hall, shop floor or back door on the ground floor.', run: wayOut },
     { id: 'fittings', says: 'Cellars, cells and crypts are dark; vaults and cellars have no windows; rooms are sized for what they are.', run: fittings },
     { id: 'patrols', says: 'Guards patrol their own floor, and nobody hostile starts on top of the party.', run: patrols },
+    { id: 'staffed', says: 'A jail has a turnkey watching every cell block and someone on the door.', run: staffed },
 ];
 
 /** Run every rule on a plan (in place). Returns what was fixed, as plain lines. */

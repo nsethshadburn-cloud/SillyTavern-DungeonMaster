@@ -3,7 +3,8 @@
 // get wrong (doors that don't line up, stairs that go nowhere). Same plan + same seed = same place.
 // Pure module.
 
-import { PROPS, THEMES, MAX_PLACE_SIZE, signIcon, ORIENTED } from './grid.js';
+import { PROPS, THEMES, MAX_PLACE_SIZE, signIcon, ORIENTED, terrainAt as terrainOf } from './grid.js';
+import { placeClass, zoneOf } from './access.js';
 import { ROOM_SIZES, recipeFor, roomType, WALLPAPER_HUES, CARPET_HUES } from './rooms.js';
 import { nameKey } from './text.js';
 import { applyRules, checkPlace } from './rules.js';
@@ -202,12 +203,13 @@ export function normalizePlan(raw) {
         links.push({ a, b, via, key: via === 'locked' ? str(l?.key).slice(0, 60) : '', dc: Number.isFinite(Number(l?.dc)) ? clamp(Math.round(Number(l.dc)), 8, 25) : (via === 'secret' ? 15 : 15) });
     }
     // Guards are hostile; "people" are everyone else who lives or works there (a cook, a prisoner).
-    const guards = [...arr(d.guards).map(g => ({ ...obj(g), hostile: obj(g).hostile !== false })), ...arr(d.people).map(g => ({ ...obj(g), hostile: obj(g).hostile === true }))].slice(0, 20).map(g => ({
+    const guards = [...arr(d.guards).map(g => ({ ...obj(g), hostile: obj(g).hostile !== false })), ...arr(d.people).map(g => ({ ...obj(g), hostile: obj(g).hostile === true, fromPeople: true }))].slice(0, 20).map(g => ({
         name: str(g.name).slice(0, 60),
         description: str(g.description).slice(0, 240),
         room: has(str(g.room)) ? str(g.room) : '',
         patrol: arr(g.patrol).map(str).filter(has).slice(0, 8),
         hostile: g.hostile,
+        role: str(g.role).slice(0, 20) || (g.hostile ? 'hostile' : g.fromPeople ? 'resident' : 'guard'),
         sprite: str(g.sprite).slice(0, 30),
     })).filter(g => g.name && (g.room || g.patrol.length));
     for (const g of guards) if (!g.room) g.room = g.patrol[0];
@@ -921,7 +923,8 @@ function tryBuild(plan, seed, shrink) {
         if (!room) continue;
         const at = freeTile(room.id);
         if (!at) continue;
-        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, ...(g.sprite ? { sprite: g.sprite } : {}), room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: Math.max(0, g.patrol.indexOf(room.id)), floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
+        const role = g.role || (g.hostile !== false ? 'hostile' : 'guard');
+        place.guards[g.name] = { name: g.name, description: g.description, hostile: g.hostile !== false, role, ...(role === 'guard' && g.hostile === false && place.fog !== false ? { lantern: true } : {}), ...(g.sprite ? { sprite: g.sprite } : {}), room: room.id, patrol: g.patrol.length ? g.patrol.filter(id => place.rooms[id]?.floor === room.floor) : [room.id], step: Math.max(0, g.patrol.indexOf(room.id)), floor: room.floor, x: at[0], y: at[1], state: 'patrol' };
     }
     // Rows (top row first) and the start.
     for (const f of place.floors) {
@@ -942,10 +945,40 @@ function tryBuild(plan, seed, shrink) {
     for (let i = 0; solved && i < 3 && sealCells(place); i++) solved = solvePlace(place, r);
     // A layout that left a cell without its one door is no good either: the next attempt, like an unreachable room.
     const badCells = solved ? checkPlace(place).filter(p => /\(a cell has exactly one\)|instead of a cell door/.test(p)) : [];
-    if (solved && !badCells.length) { clearDoorways(place); return place; }
+    if (solved && !badCells.length) { clearDoorways(place); placeNoEntrySigns(place); return place; }
     if (badCells.length) { failWhy = `cells without their door (${badCells.slice(0, 2).join('; ')})`; return null; }
     failWhy = `some rooms can't be reached (${Object.values(place.rooms).filter(rm => !new Set(reachable(place).roomsReached).has(rm.id)).map(rm => rm.name).slice(0, 4).join(', ')})`;
     return null;
+}
+
+/**
+ * A public building (a tavern, a shop, a temple) hangs a "no entry" sign by every door that leads
+ * from a public room into the back: so the party can see where the staff-only part begins.
+ */
+export function placeNoEntrySigns(place) {
+    if (placeClass(place) !== 'public' || place.kind === 'town') return 0;
+    let n = 0;
+    for (const d of Object.values(place.doors)) {
+        if (d.state === 'hidden' || d.exit || d.enter || d.rooms.length < 2) continue;
+        const [a, b] = d.rooms.map(id => place.rooms[id]);
+        if (!a || !b) continue;
+        const pub = zoneOf(place, a) === 'public' ? a : zoneOf(place, b) === 'public' ? b : null;
+        const back = pub === a ? b : a;
+        if (!pub || zoneOf(place, back) === 'public') continue;
+        const map = (place.floors.find(f => f.id === d.floor) ?? place.floors[0]).map;
+        const wall = (x, y) => terrainOf(map, x, y) === '#';
+        const taken = (x, y) => (map.props || []).some(p => p.x === x && p.y === y);
+        // The sign hangs on the wall beside the door, facing into the public room.
+        let spot = null, facing = 'n';
+        const pubCy = pub.rect.y + pub.rect.h / 2, pubCx = pub.rect.x + pub.rect.w / 2;
+        if (wall(d.x - 1, d.y) || wall(d.x + 1, d.y)) { spot = wall(d.x + 1, d.y) && !taken(d.x + 1, d.y) ? [d.x + 1, d.y] : wall(d.x - 1, d.y) && !taken(d.x - 1, d.y) ? [d.x - 1, d.y] : null; facing = pubCy < d.y ? 's' : 'n'; }
+        else if (wall(d.x, d.y - 1) || wall(d.x, d.y + 1)) { spot = wall(d.x, d.y + 1) && !taken(d.x, d.y + 1) ? [d.x, d.y + 1] : wall(d.x, d.y - 1) && !taken(d.x, d.y - 1) ? [d.x, d.y - 1] : null; facing = pubCx < d.x ? 'w' : 'e'; }
+        if (!spot) continue;
+        map.props.push({ x: spot[0], y: spot[1], type: 'sign', icon: 'nope', label: 'No entry', facing });
+        n++;
+    }
+    if (n) ensureIds(place);
+    return n;
 }
 
 /**

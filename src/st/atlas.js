@@ -20,6 +20,8 @@ import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
 import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies } from '../core/explore.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
+import { inferStanding, setStanding, standingOf, standingFor, trespassOf } from '../core/access.js';
+import { watchParty } from './watch.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
 import { callLocal } from './llm.js';
@@ -192,8 +194,9 @@ export function roomBrief(c, name) {
     const rm = roomAt(cur.place, pos.floor, pos.x, pos.y);
     const known = knownRooms(c, cur.place, name, rm);
     if (!rm) return { room: 'A passage between rooms.', things: '', exits: '', known };
+    const t = trespassOf(cur.place, name, roomAt);
     return {
-        room: `${rm.name}${rm.description ? `: ${rm.description}` : ''}`,
+        room: `${rm.name}${rm.description ? `: ${rm.description}` : ''}${t ? ` (${name} is not supposed to be here: ${t.why === 'escaped' ? 'an escaped prisoner' : t.why}; anyone who belongs here would object)` : ''}`,
         things: thingsIn(cur.place, rm).map(t => t.name).join(', '),
         exits: exitsOf(cur.place, rm).join('; '),
         known,
@@ -449,6 +452,7 @@ export function placeHeld(c) {
         if (spot.caged && !conditionsOf(w, name).some(x => /cage/i.test(x))) { w.party[name] ??= { hp: 10, hp_max: 10, conditions: [] }; (w.party[name].conditions ??= []).push('caged'); }
         w.away[name] = `${where} (on the map: ${rm.name}, ${rm.id})`;
         place.state.held[name] = w.away[name];
+        if (standingOf(place, name).label === 'prisoner' || spot.caged) setStanding(place, name, standingFor('prisoner', { home: rm.id }));
         placed.push(name);
     }
     if (placed.length) { savePlace(key, c); saveDoc('world'); }
@@ -853,9 +857,16 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         // A building is two maps: its grounds outside (with the front door) and its inside. The front
         // door goes between them; the party starts outside when they're arriving (or out in the yard).
         let enterKey = key, outside = null;
+        // Who may be where, from how the party arrives (locked in a cell: prisoners; sneaking in:
+        // intruders; a tavern: guests). The DM can change it any turn.
+        const partyNames = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+        const standing = inferStanding(place, { start: req.start, why: req.why, objective: req.objective, startRoom: place.start?.room ?? null });
+        for (const n of partyNames) setStanding(place, n, standing);
         if (placePlan?.building) {
             anim.step('Laying out the grounds');
             outside = generateGrounds(placePlan, place, seed + 1);
+            outside.hostKind = placePlan.kind;
+            for (const n of partyNames) setStanding(outside, n, inferStanding(outside, { start: req.start, why: req.why, objective: req.objective }));
             const insideKey = `${key}--b1`;
             place.parent = { key, door: outside.buildings.B1.door };
             outside.buildings.B1.interior = insideKey;
@@ -926,6 +937,9 @@ async function enterBuilding(c, townKey, town, door) {
     if (!atlas(c).places[key]) {
         const inside = generateInterior(b, Math.floor(Math.random() * 1e9));
         inside.parent = { key: townKey, door: door.id };
+        inside.hostKind = b.kind || '';
+        // Walking in off the street: a guest of a shop or tavern, an intruder in someone's home.
+        for (const n of [c.meta.persona.name, ...c.meta.party.map(p => p.name)]) setStanding(inside, n, inferStanding(inside, { why: 'walked in through the front door' }));
         storePlace(c, key, inside, { parent: townKey });
         b.interior = key;
         savePlace(townKey, c);
@@ -1077,6 +1091,9 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             if (caught.length) { redraw(); event = hunterEvent(caught); break; }
+            // Guards and residents who see the party: a trespasser stops the walk (the DM rules on it).
+            const watched = watchParty(c, cur, names);
+            if (watched.events.length) { event = watched.events.join(' '); break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);
@@ -1201,6 +1218,19 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     }
 }
 
+/**
+ * The people on the map look around: guards and residents who can see a party member react (a
+ * trespasser: the DM is told; someone allowed: a vague line in their bubble, no model). Returns
+ * what the DM must rule on, or ''.
+ */
+export function watchTurn(c = campaign()) {
+    const cur = currentPlace(c);
+    if (!cur || c.docs.world.combat) return '';
+    const { events } = watchParty(c, cur, partyOnMap(c));
+    if (events.length) savePlace(cur.key, c);
+    return events.join(' ');
+}
+
 /** Patrols move on each player turn. Returns guards that just came into view. */
 export function tickPlace(c = campaign()) {
     const cur = currentPlace(c);
@@ -1309,7 +1339,8 @@ export async function applyMapSync(c, ops) {
             if (went) log.push(`${ch.who} → ${went}`);
         } else if (ch.op === 'gone') {
             const g = personByName(place, ch.who);
-            if (g && g.state !== 'gone') { g.state = 'gone'; log.push(`${g.name} is gone`); }
+            // Someone down or dead stays where they fell (the body is cleared later); "gone" is for leaving.
+            if (g && g.state !== 'gone' && g.state !== 'dead' && !(c.docs.world.combat?.enemies?.[g.name]?.hp <= 0)) { g.state = 'gone'; log.push(`${g.name} is gone`); }
         } else if (ch.op === 'intent') {
             const g = personByName(place, ch.who);
             if (g && g.intent !== ch.intent) { setIntent(g, ch.intent, ch.target); log.push(`${g.name}: ${ch.intent}${ch.target ? ` ${ch.target}` : ''}`); }

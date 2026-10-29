@@ -14,6 +14,7 @@ import { currentPlace, partyOnMap, look, walkTo, approachSpot, pushProp, climbOu
 import { conditionsOf } from '../core/world.js';
 import { restraintOf } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
+import { trespassOf } from '../core/access.js';
 import { statsForName } from '../st/sheets.js';
 import { settings, saveSettings, mapsOn } from '../st/settings.js';
 import { drawEffects, effectsActive } from './effects.js';
@@ -199,15 +200,17 @@ function board(c) {
         const positions = {};
         // A companion held somewhere (caged in the dungeon) shows only once the party can see them.
         for (const n of names) { const p = place.state.positions[n]; if (p?.floor === floorId && (!place.state.held?.[n] || visible[p.y * floor.map.w + p.x])) positions[n] = toCoord(p.x, p.y); }
-        const enemies = new Set(), people = new Set();
+        const enemies = new Set(), people = new Set(), guards = new Set();
         for (const g of Object.values(place.guards)) {
             if (g.state === 'gone' || g.floor !== floorId || !visible[g.y * floor.map.w + g.x]) continue;
             positions[g.name] = toCoord(g.x, g.y);
             people.add(g.name);
             if (g.hostile !== false && g.state !== 'dead') enemies.add(g.name);
+            else if (g.role === 'guard' && g.state !== 'dead') guards.add(g.name);
         }
         const room = lead && lead.floor === floorId ? roomAt(place, floorId, lead.x, lead.y) : null;
-        return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? ''].filter(Boolean).join(' · '), map: floor.map, positions, enemies, people, visible, fog: place.fog !== false };
+        const trespass = trespassOf(place, c.meta.persona.name, roomAt);
+        return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? ''].filter(Boolean).join(' · '), trespass, map: floor.map, positions, enemies, people, guards, visible, fog: place.fog !== false };
     }
     if (w.sceneMap?.map) return { kind: 'scene', title: `🗺️ ${w.sceneMap.title || 'Map'}`, sub: '', map: w.sceneMap.map, positions: w.sceneMap.positions || {}, enemies: new Set() };
     return null;
@@ -229,7 +232,7 @@ function renderMap(center = false) {
     const party = new Set([c.meta.persona.name, ...c.meta.party.map(p => p.name)]);
     const roster = Object.entries(b.positions).map(([name, coord]) => {
         const hp = hpOf(c, name);
-        const cls = b.enemies.has(name) ? 'foe' : party.has(name) ? 'friend' : 'other';
+        const cls = b.enemies.has(name) ? 'foe' : party.has(name) ? 'friend' : b.guards?.has(name) ? 'guard' : 'other';
         return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} <b>${coord}</b>${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}</span>`;
     }).join('');
     const exploring = b.kind === 'place';
@@ -244,9 +247,12 @@ function renderMap(center = false) {
         : oldView?.isConnected && oldView.clientWidth && lastViewKey === viewKey ? { left: oldView.scrollLeft, top: oldView.scrollTop, body: panel.querySelector('.dm-map-body')?.scrollTop ?? 0 } : null;
     lastViewKey = viewKey;
     panel.classList.toggle('dm-map-wide', exploring || map.w > 16);
+    panel.classList.toggle('dm-map-trespassing', Boolean(b.trespass));
+    // Minimized on a phone, the map sits just above the message box, never over it.
+    panel.style.setProperty('--dm-form-h', `${document.getElementById('form_sheld')?.offsetHeight || 100}px`);
     panel.innerHTML = `
 <div class="dm-map-head">
-  <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>
+  <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>${b.trespass ? `<span class="dm-map-trespass" title="${escapeHtml(`You're not allowed in ${b.trespass.room}: ${b.trespass.why === 'escaped' ? 'you are an escaped prisoner' : b.trespass.why}. Anyone who belongs here will object.`)}">⚠ ${b.trespass.why === 'escaped' ? 'ESCAPED' : 'TRESPASSING'}</span>` : ''}
   ${floors.length > 1 ? `<select class="dm-map-floor text_pole" title="Look at another floor you've explored">${floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === b.floor.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>` : ''}
   ${map.w > 16 || map.h > 16 ? '<span class="dm-map-btn fa-solid fa-magnifying-glass-minus" data-act="out" title="Zoom out"></span><span class="dm-map-btn fa-solid fa-magnifying-glass-plus" data-act="in" title="Zoom in"></span>' : ''}
   <span class="dm-map-btn fa-solid fa-cloud-rain ${settings().mapAmbience === false ? 'dm-map-off' : ''}" data-act="ambience" title="Weather and ambient particles: on/off (fire and spells always show)"></span>
@@ -334,6 +340,7 @@ function renderMap(center = false) {
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
     panel.querySelector('[data-act="ambience"]')?.addEventListener('click', () => { settings().mapAmbience = settings().mapAmbience === false; saveSettings(); renderMap(); });
     panel.querySelector('[data-act="min"]').addEventListener('click', () => {
+        panel.style.setProperty('--dm-form-h', `${document.getElementById('form_sheld')?.offsetHeight || 100}px`);
         panel.classList.toggle('dm-map-min');
         ensureLoop();
         if (panel.classList.contains('dm-map-min')) return;
@@ -537,7 +544,7 @@ function drawTokens(ctx, c, b, tile, now, restore) {
         const px = MARGIN + pt.x * tile, py = (map.h - 1 - pt.y) * tile;
         if (restore) ctx.drawImage(live.layer, px, py, tile, tile, px, py, tile, tile);
         const cx = px + tile / 2, cy = py + tile / 2;
-        const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : '#8fb4d9';
+        const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : b.guards?.has(name) ? '#ff9800' : '#8fb4d9';
         const hp = hpOf(c, name);
         const held = restraintOf(conditionsOf(c.docs.world, name));
         const hid = b.kind === 'place' ? hiddenNow(b.place, name) : null;

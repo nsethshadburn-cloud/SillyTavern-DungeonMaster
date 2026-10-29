@@ -43,6 +43,8 @@ const ICONS = {
     music(ctx, k) { ellipse(ctx, -k * 0.2, k * 0.25, k * 0.13, k * 0.1, '#222'); ellipse(ctx, k * 0.22, k * 0.15, k * 0.13, k * 0.1, '#222'); line(ctx, -k * 0.08, k * 0.25, -k * 0.08, -k * 0.35, '#222', 2); line(ctx, k * 0.34, k * 0.15, k * 0.34, -k * 0.42, '#222', 2); line(ctx, -k * 0.08, -k * 0.35, k * 0.34, -k * 0.42, '#222', k * 0.08); },
     candle(ctx, k) { ctx.fillStyle = '#f3eee0'; ctx.fillRect(-k * 0.1, -k * 0.1, k * 0.2, k * 0.45); flame(ctx, 0, -k * 0.22, k * 0.12); },
     flower(ctx, k) { for (let i = 0; i < 5; i++) { const a = i / 5 * Math.PI * 2; ellipse(ctx, Math.cos(a) * k * 0.18, Math.sin(a) * k * 0.18, k * 0.13, k * 0.13, '#e05a8a'); } ellipse(ctx, 0, 0, k * 0.1, k * 0.1, '#f5cd3a'); },
+    // No entry: a red ring with a bar through it.
+    nope(ctx, k) { ellipse(ctx, 0, 0, k * 0.42, k * 0.42, '#f3eee0', '#c62828', k * 0.14); line(ctx, -k * 0.3, k * 0.3, k * 0.3, -k * 0.3, '#c62828', k * 0.13); },
 };
 
 /** A hanging sign board with its icon (on the wall square, hanging out over the street). */

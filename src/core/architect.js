@@ -842,6 +842,7 @@ export function planFromBrief(briefIn, seed = 1) {
 
     // People: the kind's guards (named now and then, patrolling their floor) and residents.
     const people = [], guards = [];
+    const monsters = /dungeon|crypt|cave/.test(bp.id) || (brief.creatures ? /\b(rat|skeleton|zombie|ghoul|spider|bat|wolf|goblin|bandit|cultist|kobold|troglodyte|ghost|shade|bear|boar|snake|orc|troll|ogre|zealot|thug|pirate)/i.test(brief.creatures) : false);
     const nG = brief.guards ?? int(r, ...(bp.guards.n[brief.size] ?? bp.guards.n.small));
     const word = brief.creatures ? cap(brief.creatures.replace(/s$/i, '')) : null;
     const wordUsed = {};
@@ -866,6 +867,21 @@ export function planFromBrief(briefIn, seed = 1) {
         guards.push({ name: `${w} ${wordUsed[w]}`, word: w, description: `a ${w.toLowerCase()} guarding the way to ${goal.name}`, room: post.id, patrol: [post.id] });
         notes.push(`A ${w.toLowerCase()} stands guard in ${post.name}, just before ${goal.name}.`);
     }
+    // A jail is staffed: a turnkey pacing every cell block, someone at the way in. (Prisoners can't
+    // be left with nobody watching them.)
+    if (/prison|barracks/.test(bp.id)) {
+        const addPost = (rm, label) => {
+            if (!rm || guards.some(g => g.patrol.includes(rm.id))) return;
+            const w = pick(r, bp.guards.words);
+            wordUsed[w] = (wordUsed[w] ?? 0) + 1;
+            guards.push({ name: `${w} ${wordUsed[w]}`, word: w, description: `a ${w.toLowerCase()}, ${label}`, room: rm.id, patrol: [rm.id] });
+        };
+        for (const hall of rooms.filter(x => x.type === 'hallway')) {
+            const cells = links.filter(l => l.a === hall.id || l.b === hall.id).map(l => rooms.find(x => x.id === (l.a === hall.id ? l.b : l.a))).filter(x => x?.type === 'cell');
+            if (cells.length >= 2) addPost(hall, 'watching the cells');
+        }
+        addPost(rooms.find(x => x.exit) ?? rooms.find(x => x.type === 'guard_room'), 'on the door');
+    }
     // A lone one of a kind is just "Ghoul", not "Ghoul 1".
     for (const g of guards) if (g.word && wordUsed[g.word] === 1) g.name = g.word;
     for (const [role, type, p, looks] of bp.people) {
@@ -874,14 +890,14 @@ export function planFromBrief(briefIn, seed = 1) {
         if (!rm || !chance(r, p)) continue;
         // Prisoners go in a cell that isn't the party's.
         if (type === 'cell' && rooms.filter(x => x.type === 'cell').length < 2) continue;
-        people.push({ name: `${pick(r, GIVEN)}${role === 'prisoner' ? ' the prisoner' : ''}`, description: pick(r, looks), room: rm.id, role });
+        people.push({ name: `${pick(r, GIVEN)}${role === 'prisoner' ? ' the prisoner' : ''}`, description: pick(r, looks), room: rm.id, patrol: [rm.id], role });
     }
     // The story's people, where the brief puts them (or where they'd be).
     for (const p of brief.people) {
         let rm = findRoom(p.where) ?? findRoom(p.what) ?? (p.hostile ? rooms.find(x => x.type === 'guard_room') : rooms.find(x => x.hub)) ?? rooms[0];
         if (rm === start && rm.type === 'cell') rm = rooms.find(x => x.type === 'cell' && x !== start) ?? rm;
         // "in a cell": a cell that isn't the party's (they start in the first free one later).
-        const entry = { name: p.name, description: p.what || 'someone the story needs here', room: rm.id, patrol: [rm.id], here: true };
+        const entry = { name: p.name, description: p.what || 'someone the story needs here', room: rm.id, patrol: [rm.id], here: true, role: p.hostile ? 'hostile' : 'resident' };
         for (const it of p.carries) rm.items.push({ name: it, hidden: false, note: `carried by ${p.name}` });
         (p.hostile ? guards : people).push(entry);
     }
@@ -928,8 +944,10 @@ export function planFromBrief(briefIn, seed = 1) {
         floors,
         rooms: [...rooms, ...(outside ? [outside] : [])].map(x => ({ id: x.id, name: x.name, type: x.type, floor: x.floor, size: x.size, lit: x.lit, description: x.description, hint: x.hint?.join(' ') ?? '', props: x.props, marks: x.marks, traps: x.traps, items: x.items, exit: x.exit, windows: x.windows || '' })),
         links: [...links, ...(outside && exitRoom ? [{ a: outside.id, b: exitRoom.id, via: 'door', key: '', dc: 15 }] : [])],
-        guards: guards.map(g => ({ ...g, hostile: true })),
-        people: people.map(p => ({ name: p.name, description: p.description, room: p.room })),
+        // Guards keep order; they're enemies only when the place is a monster's (a dungeon, a crypt, a
+        // cave) or the brief made them so. The story's own hostile people stay hostile.
+        guards: guards.map(g => ({ ...g, hostile: g.role === 'hostile' || monsters, role: g.role === 'hostile' || monsters ? 'hostile' : 'guard' })),
+        people: people.map(p => ({ name: p.name, description: p.description, room: p.room, patrol: p.patrol, role: p.role || 'resident' })),
         start: start.id,
         ...(brief.exterior ? { exterior: brief.exterior } : {}),
         barred_windows: bp.id === 'prison',

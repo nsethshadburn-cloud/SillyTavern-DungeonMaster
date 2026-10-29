@@ -190,6 +190,10 @@
 .dm-map-chip { font-size: 0.8em; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--SmartThemeBorderColor); }
 .dm-map-chip.foe { border-color: #e53935; }
 .dm-map-chip.friend { border-color: #4caf50; }
+.dm-map-chip.guard { border-color: #ff9800; }
+.dm-map-trespass { margin-left: 8px; padding: 1px 7px; border-radius: 9px; background: #c62828; color: #fff; font-size: 0.72em; font-weight: 700; letter-spacing: 0.04em; animation: dm-trespass 1.6s ease-in-out infinite; }
+.dm-map.dm-map-trespassing .dm-map-view { box-shadow: inset 0 0 0 2px rgba(198, 40, 40, 0.55); }
+@keyframes dm-trespass { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .dm-map-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
 .dm-map-pending { flex: 1; font-size: 0.85em; opacity: 0.85; min-width: 140px; }
 .dm-map-actions .menu_button { margin: 0; padding: 4px 10px; }
@@ -204,7 +208,7 @@
 @media (max-width: 700px) {
     /* Phone: a sheet across the bottom 70% of the screen, still anchored from the top. */
     .dm-map { left: 0; right: 0; top: 30dvh; width: 100vw; max-height: 70dvh; border-radius: 12px 12px 0 0; }
-    .dm-map.dm-map-min { top: calc(100dvh - 44px); }
+    .dm-map.dm-map-min { top: auto; bottom: calc(var(--dm-form-h, 100px) + 8px); border-radius: 12px; }
     .dm-map-head { gap: 2px; padding: 4px 6px; }
     .dm-map-head .dm-muted { display: none; }
     .dm-map-head .dm-map-btn { padding: 8px 9px; font-size: 1.1em; }

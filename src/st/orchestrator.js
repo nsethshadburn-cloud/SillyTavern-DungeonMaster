@@ -15,10 +15,10 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
-import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight } from '../core/explore.js';
+import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext } from './atlas.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
@@ -291,6 +291,8 @@ async function turnBody(c, opts, status, signal) {
     if (!opts.force && !autoRoll && !pacing.inCombat) {
         const spotted = tickPlace(c);
         if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
+        const watched = watchTurn(c);
+        if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
         const hunt = huntersTurn(c);
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
@@ -497,6 +499,8 @@ async function movedTurn(c, status, signal) {
     if (!pacing.inCombat) {
         const spotted = tickPlace(c);
         if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
+        const watched = watchTurn(c);
+        if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         const hunt = huntersTurn(c);
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
     }
@@ -1140,9 +1144,20 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             // The place's people on this floor join the board where they stand: the enemies among
             // them, and anyone the party can see (bystanders stay on the map during the fight).
             const seen = computeVisible(here.place, floorId, Object.values(here.place.state.positions).filter(p => p.floor === floorId));
+            // An enemy the DM names is the person already on the map ("Watchman" is Turnkey Wren):
+            // they fight from where they stand, and are the same person when the fight ends.
+            combat.aliases = {};
+            for (const ename of Object.keys(combat.enemies || {})) {
+                const g = matchPerson(here.place, floorId, ename, seen);
+                if (!g) continue;
+                if (nameKey(g.name) !== nameKey(ename)) combat.aliases[ename] = g.name;
+                combat.positions[ename] = toCoord(g.x, g.y);
+                g.hostile = true; g.state = 'alert';
+            }
             const foeKeys = new Set(Object.keys(combat.enemies || {}).map(nameKey));
+            const standIns = new Set(Object.values(combat.aliases).map(nameKey));
             for (const g of Object.values(here.place.guards)) {
-                if (g.state === 'gone' || g.floor !== floorId) continue;
+                if (g.state === 'gone' || g.floor !== floorId || standIns.has(nameKey(g.name))) continue;
                 if (foeKeys.has(nameKey(g.name)) || seen[g.y * combat.map.w + g.x]) combat.positions[g.name] = toCoord(g.x, g.y);
             }
         } else if (mapsOn()) {
@@ -1224,15 +1239,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (pt) here.place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
             }
             for (const [name, e] of Object.entries(world.combat.enemies || {})) {
-                const g = personByName(here.place, name);
+                // The map's own person when the DM called them something else.
+                const pname = world.combat.aliases?.[name] ?? name;
+                const pt = parseCoord(world.combat.positions?.[name], map);
                 if (e.hp <= 0) {
-                    const pt = parseCoord(world.combat.positions?.[name], map);
-                    if (pt) placePerson(here.place, name, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
-                    killPerson(here.place, name, meta.turn);
+                    if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
+                    killPerson(here.place, pname, meta.turn);
                     continue;
                 }
-                const pt = parseCoord(world.combat.positions?.[name], map);
-                if (pt) placePerson(here.place, name, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
+                if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
             }
             for (const [name, cd] of Object.entries(world.combat.positions || {})) {
                 const g = personByName(here.place, name), pt = parseCoord(cd, map);

@@ -6,6 +6,7 @@ import { PROPS, TERRAIN, HEAVY, HIDE, SEATS, terrainAt, propsAt, colName, parseC
 import { doorChar, ensureIds } from './layout.js';
 import { nameKey, matchName } from './text.js';
 import { lockDc } from './locks.js';
+import { grantAccess, trespassOf, accessSummary, zoneOf, placeClass } from './access.js';
 
 const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'jungle']);
 /** Squares you can't see through. Windows and open doors are see-through. */
@@ -132,6 +133,7 @@ function zones(place, floorId) {
 export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 } = {}) {
     const map = floorById(place, floorId).map;
     const lit = litMask(place, floorId);
+    const glow = lanternGlow(place, floorId);
     const vis = new Uint8Array(map.w * map.h);
     const z = zones(place, floorId);
     const open = OUTDOOR.has(map.theme) || !z.rooms.length;
@@ -155,12 +157,45 @@ export function computeVisible(place, floorId, viewers, { radius = 11, near = 2 
                     if (zone && zone !== own && !through.get(own)?.has(zone)) continue;
                     if (!zone && room && !inRing(x, y) && ![...(through.get(own) ?? [])].some(zn => { const rr = z.rooms[zn - 1]?.rect; return rr && x >= rr.x - 1 && x <= rr.x + rr.w && y >= rr.y - 1 && y <= rr.y + rr.h; })) continue;
                 }
-                if (!lit[i] && d > near) continue;
+                if (!lit[i] && !glow.has(i) && d > near) continue;
                 if (lineOfSight(map, v.x, v.y, x, y)) vis[i] = 1;
             }
         }
     }
     return vis;
+}
+
+/** How far a lantern lights around whoever carries it. */
+export const LANTERN_RADIUS = 3;
+
+/** Squares lit by the lanterns of the people on this floor (guards in the dark carry one): a set of indices. */
+export function lanternGlow(place, floorId) {
+    const map = floorById(place, floorId).map;
+    const out = new Set();
+    if (OUTDOOR.has(map.theme) || place.fog === false) return out;
+    for (const g of Object.values(place.guards || {})) {
+        if (!g.lantern || g.state === 'gone' || g.state === 'dead' || g.floor !== floorId) continue;
+        for (let dx = -LANTERN_RADIUS; dx <= LANTERN_RADIUS; dx++) for (let dy = -LANTERN_RADIUS; dy <= LANTERN_RADIUS; dy++) {
+            const x = g.x + dx, y = g.y + dy;
+            if (x >= 0 && y >= 0 && x < map.w && y < map.h && dx * dx + dy * dy <= LANTERN_RADIUS * LANTERN_RADIUS) out.add(y * map.w + x);
+        }
+    }
+    return out;
+}
+
+/** How far someone on the map can make out a person in the light (closer in the dark, see computeVisible). */
+export const GUARD_SIGHT = 8;
+
+/**
+ * Who of `names` a person on the map can see from where they stand: lit squares in their line of
+ * sight within GUARD_SIGHT, their own lantern's glow, or two squares around them in the dark. The
+ * same rules the party sees by, from the other side.
+ */
+export function guardSees(place, floorId, g, names) {
+    if (!g || g.floor !== floorId || !Number.isFinite(g.x)) return [];
+    const map = floorById(place, floorId).map;
+    const vis = computeVisible(place, floorId, [{ x: g.x, y: g.y }], { radius: GUARD_SIGHT });
+    return names.filter(n => { const p = place.state.positions[n]; return p && p.floor === floorId && vis[p.y * map.w + p.x]; });
 }
 
 /** Add what's visible to what's been explored. Returns how many squares were new. */
@@ -673,6 +708,14 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor }
         if (r) { bump(place, pos.floor); log.push(`${name} ${r.pose === 'sit' ? 'sits on' : r.pose === 'sleep' ? 'sleeps on' : 'lies on'} the ${r.what}`); }
     }
     // Windows: by id, by room, or all of them ("all": "barred").
+    // Who may be where: a guard lets them through, the host invites them in, they're locked up again.
+    const party = Object.keys(place.state?.positions || {});
+    for (const [who, spec] of Object.entries(c.access || {})) {
+        const name = who === '*' || who === 'party' ? '*' : matchName(who, party) ?? null;
+        if (!name) continue;
+        const line = grantAccess(place, name, spec, party);
+        if (line) log.push(`access: ${line}`);
+    }
     for (const [key, raw] of Object.entries(c.windows || {})) {
         const state = { barred: 'barred', bars: 'barred', broken: 'broken', smashed: 'broken', intact: 'intact', fixed: 'intact', repaired: 'intact', unbarred: 'intact' }[String(raw).toLowerCase()];
         if (!state) continue;
@@ -814,6 +857,27 @@ export function looksLikeThing(name) {
     return THING_WORDS.test(s);
 }
 
+const PERSON_SYNONYMS = { watchman: 'guard', sentry: 'guard', turnkey: 'guard', jailer: 'guard', gaoler: 'guard', warder: 'guard', soldier: 'guard', constable: 'guard', hound: 'dog', mastiff: 'dog', mutt: 'dog', cur: 'dog' };
+const personWords = s => (nameKey(s).match(/[a-z]{3,}/g) ?? []).map(w => w.replace(/s$/, '')).map(w => PERSON_SYNONYMS[w] ?? w).filter(w => !['the', 'and', 'old', 'young', 'big', 'one'].includes(w));
+
+/**
+ * Which person on the map the DM means by a name that isn't exactly theirs ("Watchman" for Turnkey
+ * Wren): someone whose name or description shares a word, in the party's sight first; exactly one
+ * fit, or null. Exact names win outright.
+ */
+export function matchPerson(place, floorId, name, seen = null) {
+    const exact = personByName(place, name);
+    if (exact) return exact;
+    const map = floorById(place, floorId).map;
+    const want = new Set(personWords(name));
+    if (!want.size) return null;
+    const alive = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId);
+    const fits = alive.filter(g => [...personWords(g.name), ...personWords(g.description || '').slice(-3)].some(w => want.has(w)));
+    const inSight = seen ? fits.filter(g => seen[g.y * map.w + g.x]) : fits;
+    const pool = inSight.length ? inSight : fits;
+    return pool.length === 1 ? pool[0] : null;
+}
+
 /** Find someone among a place's people by name. */
 export function personByName(place, name) {
     return place.guards[name] ?? Object.values(place.guards).find(g => nameKey(g.name) === nameKey(name)) ?? null;
@@ -912,8 +976,38 @@ export function adoptStrays(place, partyNames) {
     return n;
 }
 
-/** Squares a guard walks in one turn on patrol. */
-export const PATROL_STEPS = 6;
+/** Squares a guard walks in one turn on patrol (slow: a round, not a sprint). */
+export const PATROL_STEPS = 2;
+
+/** One step to a free square beside them inside the room they're in (pacing a post, pottering about a kitchen). */
+function paceStep(place, g, r, busy) {
+    const rm = roomAt(place, g.floor, g.x, g.y);
+    const map = floorById(place, g.floor).map;
+    const options = [];
+    for (const [dx, dy] of DIRS8) {
+        const x = g.x + dx, y = g.y + dy;
+        if (!walkable(place, g.floor, x, y) || busy.has(`${x},${y}`) || stairsAt(place, g.floor, x, y)) continue;
+        const ch = terrainAt(map, x, y);
+        if (ch === '+' || ch === '/' || ch === 'j') continue; // not into doorways
+        const there = roomAt(place, g.floor, x, y);
+        if ((rm && there?.id !== rm.id) || (!rm && there)) continue; // stays in their own room (or corridor)
+        options.push({ x, y });
+    }
+    if (!options.length) return false;
+    const pick = options[Math.floor(r() * options.length)];
+    Object.assign(g, pick);
+    return true;
+}
+
+/** A resident wanders to a room next door now and then: through an unlocked door, in the same kind of zone. */
+function wanderNextDoor(place, g, r) {
+    const rm = roomAt(place, g.floor, g.x, g.y);
+    if (!rm) return null;
+    const zone = zoneOf(place, rm);
+    const doors = Object.values(place.doors).filter(d => d.rooms.includes(rm.id) && d.floor === g.floor && !['locked', 'hidden', 'walled'].includes(d.state) && d.kind !== 'cell');
+    const next = doors.map(d => place.rooms[d.rooms.find(id => id && id !== rm.id)]).filter(x => x && x.floor === g.floor && zoneOf(place, x) === zone && x.type !== 'cell');
+    return next.length ? next[Math.floor(r() * next.length)] : null;
+}
 
 /**
  * Guards on patrol walk their rounds: now and then one sets off for the next room of their patrol
@@ -923,7 +1017,20 @@ export const PATROL_STEPS = 6;
 export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_STEPS) {
     const moved = [];
     for (const g of Object.values(place.guards)) {
-        if (g.state === 'gone' || g.state === 'dead' || g.patrol.length < 2 || (g.intent && g.intent !== 'wander')) continue;
+        if (g.state === 'gone' || g.state === 'dead' || (g.intent && g.intent !== 'wander')) continue;
+        const busy = new Set([
+            ...Object.values(place.state?.positions || {}).filter(p => p && p.floor === g.floor).map(p => `${p.x},${p.y}`),
+            ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.state !== 'dead' && o.floor === g.floor).map(o => `${o.x},${o.y}`),
+        ]);
+        // Posted (one room): a guard paces it; a resident potters about and now and then goes next door.
+        if ((g.patrol?.length ?? 0) < 2 && !g.walk) {
+            const resident = g.role && g.role !== 'guard' && g.hostile !== true;
+            if (resident && r() < 0.12) {
+                const next = wanderNextDoor(place, g, r);
+                if (next) { const at = freeInRoom(place, next, r); g.walk = { step: g.step ?? 0, x: at.x, y: at.y, back: true }; }
+            }
+            if (!g.walk) { if (r() < (resident ? 0.35 : 0.6) && paceStep(place, g, r, busy)) moved.push({ name: g.name, room: g.room }); continue; }
+        }
         if (!g.walk) {
             if (r() > chance) continue;
             const next = ((g.step ?? 0) + 1) % g.patrol.length;
@@ -932,10 +1039,6 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
             const at = freeInRoom(place, rm, r);
             g.walk = { step: next, x: at.x, y: at.y };
         }
-        const busy = new Set([
-            ...Object.values(place.state?.positions || {}).filter(p => p && p.floor === g.floor).map(p => `${p.x},${p.y}`),
-            ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.state !== 'dead' && o.floor === g.floor).map(o => `${o.x},${o.y}`),
-        ]);
         const path = findPath(place, g.floor, g, g.walk, { knownOnly: false, blocked: busy });
         if (!path) {
             // No way through right now (someone in the doorway): wait a turn; give up after a few.
@@ -950,8 +1053,7 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
         }
         g.room = roomAt(place, g.floor, g.x, g.y)?.id ?? g.room;
         if (g.x === g.walk.x && g.y === g.walk.y) {
-            g.step = g.walk.step;
-            g.room = g.patrol[g.step];
+            if (!g.walk.back) { g.step = g.walk.step; g.room = g.patrol[g.step]; }
             delete g.walk;
         }
         moved.push({ name: g.name, room: g.room });
@@ -1221,7 +1323,7 @@ export function placeView(place, partyNames) {
         const inSight = seen?.[g.y * floor.map.w + g.x];
         return `${d} squares away, ${inSight ? 'IN SIGHT' : d <= EARSHOT ? 'out of sight but within earshot (only loud noise or talking carries)' : 'FAR: the party can\'t see, hear or smell them'}`;
     };
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.state === 'alert' ? ' (ALERT)' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name}${g.hostile === true ? '' : g.role === 'guard' ? ' [guard, not an enemy: keeps order, challenges trespassers]' : g.role ? ` [${g.role}, not an enemy]` : ''}${g.lantern ? ' [carries a lantern]' : ''} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.state === 'alert' ? ' (ALERT)' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it; describe only what the party can sense of each, as noted): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     const party = partyNames.filter(n => st.positions[n]).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);
@@ -1229,9 +1331,12 @@ export function placeView(place, partyNames) {
         const trapped = caughtNow(place, n);
         const rest = poseNow(place, n);
         const resting = rest ? `, ${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what} (${rest.prop})` : '';
-        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}${trapped ? `, CAUGHT in the ${trapped.kind} (${trapped.trap}): held until their save succeeds or you free them (place_changes.free)` : ''}`;
+        const t = trespassOf(place, n, roomAt);
+        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}${trapped ? `, CAUGHT in the ${trapped.kind} (${trapped.trap}): held until their save succeeds or you free them (place_changes.free)` : ''}${t ? `, TRESPASSING (${t.why === 'escaped' ? 'an escaped prisoner, out of their cell' : t.why})` : placeClass(place) === 'wild' ? '' : ', where they are allowed to be'}`;
     });
     if (party.length) lines.push(`Party now (live from the map, the truth whatever earlier messages said): ${party.join('; ')}.`);
+    const access = accessSummary(place, partyNames.filter(n => st.positions[n]), roomAt);
+    if (access) lines.push(access);
     const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
     if (waiting.length) lines.push(`Companions who chose not to follow: ${waiting.join('; ')}.`);
     const people = { ...st.positions };

@@ -59,7 +59,7 @@ test('the rules fix a careless plan: a cell with a plain door, a vault left open
     assert.ok(plan.fixes.length >= 4, 'it says what it fixed');
     const place = generatePlace(plan, 3);
     assert.deepEqual(checkPlace(place), []);
-    assert.equal(RULES.length, 12);
+    assert.equal(RULES.length, 13);
 });
 
 test('places of every kind build cleanly, every room reachable, solid walls', () => {
