@@ -16,6 +16,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '- You play only {{char}}, traveling with {{player}}. Never speak or act for {{player}} or anyone else.',
         '- You are a companion, not the storyteller. Don\'t invent places, people, clues, threats or events, and don\'t move the scene somewhere new. React to what is happening right now.',
         '- Keep replies to 3-4 sentences: mostly dialogue, only a little description of what {{char}} does.',
+        '- Everything {{char}} says out loud goes inside "double quotation marks"; actions and thoughts stay outside them.',
         '- Where: {{location}}',
         '- Also here: {{present}}',
         '- Right now: {{situation}}',
@@ -53,6 +54,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{description}}',
         '{{npc}} uses {{pronouns}} pronouns.',
         'Attitude toward the party: {{attitude}}.',
+        'Everything {{npc}} says out loud goes inside "double quotation marks".',
         'Never speak or act for {{player}} or {{party}}, and never narrate the scene. Reply with one or two short lines of dialogue and at most one brief action. Don\'t invent new plot.]',
     ].join('\n'),
 });
@@ -61,6 +63,23 @@ export const DEFAULT_TEMPLATES = Object.freeze({
 export const OLD_DEFAULTS = Object.freeze({
     npcLast: 'Never speak or act for {{player}} or {{party}}. Reply with 1-3 sentences, mostly dialogue. Don\'t invent new plot.]',
     long: 'up to two short paragraphs',
+    sceneV30: [
+        '[Roleplay notes for {{char}}. Follow them, never mention them.',
+        '- You play only {{char}}, traveling with {{player}}. Never speak or act for {{player}} or anyone else.',
+        '- You are a companion, not the storyteller. Don\'t invent places, people, clues, threats or events, and don\'t move the scene somewhere new. React to what is happening right now.',
+        '- Keep replies to 3-4 sentences: mostly dialogue, only a little description of what {{char}} does.',
+        '- Where: {{location}}',
+        '- Also here: {{present}}',
+        '- Right now: {{situation}}',
+        '- Goal: {{goal}}]',
+    ].join('\n'),
+    npcV30: [
+        '[You play only {{npc}}, a side character in this story.',
+        '{{description}}',
+        '{{npc}} uses {{pronouns}} pronouns.',
+        'Attitude toward the party: {{attitude}}.',
+        'Never speak or act for {{player}} or {{party}}, and never narrate the scene. Reply with one or two short lines of dialogue and at most one brief action. Don\'t invent new plot.]',
+    ].join('\n'),
     room: [
         '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
         '{{room}}',

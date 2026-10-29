@@ -21,6 +21,8 @@ import { drawCaught } from './trap-art.js';
 import { fireAt } from '../core/fire.js';
 import { drawFigure } from './sprite-render.js';
 import { figureFor } from '../st/figures.js';
+import { setBubbleStage, clearBubbleStage } from './bubbles.js';
+import { nameKey } from '../core/text.js';
 
 let panel = null;
 let selection = { move: '', target: '' };
@@ -77,7 +79,21 @@ export function openMap() {
 
 export function closeMap() {
     panel?.classList.add('dm-hidden');
+    clearBubbleStage();
     choosing?.done(null);
+}
+
+/** The speech bubbles live on a layer over the canvas; each render tells them where every figure is. */
+function mountBubbles(canvas, b) {
+    const layer = panel?.querySelector('.dm-map-bubbles');
+    if (!layer) return;
+    setBubbleStage(layer, name => {
+        const key = b.positions[name] !== undefined ? name : Object.keys(b.positions).find(n => nameKey(n) === nameKey(name));
+        const pt = key ? parseCoord(b.positions[key], b.map) : null;
+        if (!pt) return null;
+        const scale = canvas.clientWidth / canvas.width || zoom, tile = tileFor(b.map);
+        return { x: (MARGIN + (pt.x + 0.5) * tile) * scale, y: ((b.map.h - pt.y - 1) * tile + 6) * scale };
+    });
 }
 
 /**
@@ -239,7 +255,7 @@ function renderMap(center = false) {
   <span class="dm-map-btn fa-solid fa-xmark" data-act="close" title="Close (reopen from the wand menu)"></span>
 </div>
 <div class="dm-map-body">
-  <div class="dm-map-view"><canvas class="dm-map-canvas"></canvas></div>
+  <div class="dm-map-view"><div class="dm-map-stage"><canvas class="dm-map-canvas"></canvas><div class="dm-map-bubbles"></div></div></div>
   <div class="dm-map-hover dm-muted">&nbsp;</div>
   <div class="dm-map-roster">${roster}</div>
   ${exploring
@@ -257,6 +273,7 @@ function renderMap(center = false) {
     const view = panel.querySelector('.dm-map-view');
     drawBoard(canvas, c, b);
     sizeCanvas(canvas, b);
+    mountBubbles(canvas, b);
     if (center) follow = true;
     if (follow || !kept) centerOnParty(view, canvas, b);
     else {
@@ -312,8 +329,8 @@ function renderMap(center = false) {
         panel.querySelector('.dm-map-hover').textContent = sq ? describeSquare(b, sq) : ' ';
     });
     panel.querySelector('.dm-map-floor')?.addEventListener('change', ev => { viewFloor = ev.target.value; renderMap(true); });
-    panel.querySelector('[data-act="in"]')?.addEventListener('click', () => { zoom = Math.min(1.5, zoom + 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
-    panel.querySelector('[data-act="out"]')?.addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.25); sizeCanvas(canvas, b); if (follow) centerOnParty(view, canvas, b); });
+    panel.querySelector('[data-act="in"]')?.addEventListener('click', () => { zoom = Math.min(1.5, zoom + 0.25); sizeCanvas(canvas, b); mountBubbles(canvas, b); if (follow) centerOnParty(view, canvas, b); });
+    panel.querySelector('[data-act="out"]')?.addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.25); sizeCanvas(canvas, b); mountBubbles(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
     panel.querySelector('[data-act="ambience"]')?.addEventListener('click', () => { settings().mapAmbience = settings().mapAmbience === false; saveSettings(); renderMap(); });
     panel.querySelector('[data-act="min"]').addEventListener('click', () => {

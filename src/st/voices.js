@@ -15,6 +15,14 @@ const MALE = new Set(['adrian', 'alexander', 'austin', 'axel', 'connor', 'eli', 
 
 let voiceCache = null;
 
+// ---------------- Speech events (for the map's speech bubbles) ----------------
+// {type: 'start', name, kind, text, duration} when a line's audio starts playing; 'end' when it's
+// done; 'skip' when a line won't be voiced (no voice for them, the server failed, voices off);
+// 'stop' when everything was stopped (a swipe, a chat change).
+const speechListeners = new Set();
+export function onSpeech(fn) { speechListeners.add(fn); return () => speechListeners.delete(fn); }
+function emitSpeech(ev) { for (const fn of speechListeners) { try { fn(ev); } catch (error) { console.warn('[Dungeon Master] speech listener failed', error); } } }
+
 export function ttsConfig() {
     const tts = ST.extensionSettings.tts ?? {};
     const provider = tts.currentProvider;
@@ -207,6 +215,7 @@ let generation = 0; // bumps on stop, so stale requests don't play
 export function stopVoices() {
     generation++;
     queue.length = 0;
+    emitSpeech({ type: 'stop' });
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
@@ -219,11 +228,11 @@ export function stopVoices() {
  * Audio starts generating right away, but lines always PLAY in the order they were queued.
  */
 export function voiceLine({ kind, name = '', text, voice = '' }) {
-    if (!voicesActive()) return;
+    if (!voicesActive()) { emitSpeech({ type: 'skip', name, kind, text: '', why: 'off' }); return; }
     const clean = speechText(text, { kind });
-    if (!clean) return;
+    if (!clean) { emitSpeech({ type: 'skip', name, kind, text: '', why: 'nothing to say' }); return; }
     const gen = generation;
-    const item = { gen, audio: null };
+    const item = { gen, audio: null, name, kind, text: clean };
     item.audio = (async () => {
         let id = voice;
         if (kind === 'dm') id = settings().dmVoice;
@@ -247,9 +256,10 @@ async function playQueue() {
             const url = await item.audio;
             if (!url || item.gen !== generation) {
                 if (url) URL.revokeObjectURL(url);
+                else emitSpeech({ type: 'skip', name: item.name, kind: item.kind, text: item.text, why: 'no audio' });
                 continue;
             }
-            await playUrl(url);
+            await playUrl(url, item);
         }
     } finally {
         // A stop may have started a newer loop already; only the current loop clears the flag.
@@ -285,20 +295,28 @@ async function fetchAudio(text, voiceId) {
     return URL.createObjectURL(await res.blob());
 }
 
-function playUrl(url) {
+function playUrl(url, item = {}) {
     return new Promise((resolve) => {
         const audio = new Audio(url);
         currentAudio = audio;
         audio.playbackRate = Number(ST.extensionSettings.tts?.playback_rate) || 1;
+        let started = false, finished = false;
         const done = () => {
+            if (finished) return;
+            finished = true;
             if (currentAudio === audio) currentAudio = null;
             URL.revokeObjectURL(url);
+            emitSpeech({ type: started ? 'end' : 'skip', name: item.name, kind: item.kind, text: item.text, why: started ? '' : 'failed' });
             resolve();
         };
         audio.onended = done;
         audio.onerror = done;
         audio.onpause = () => { if (!audio.ended && currentAudio !== audio) done(); };
-        audio.play().catch(done);
+        audio.play().then(() => {
+            started = true;
+            const rate = audio.playbackRate || 1;
+            emitSpeech({ type: 'start', name: item.name, kind: item.kind, text: item.text, duration: Number.isFinite(audio.duration) ? audio.duration / rate : 0 });
+        }).catch(done);
     });
 }
 

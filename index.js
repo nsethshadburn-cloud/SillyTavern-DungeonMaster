@@ -6,7 +6,8 @@ import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
 import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll, levelUp } from './src/st/orchestrator.js';
 import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, addNoteToChat, briefForMessage } from './src/st/actors.js';
-import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig } from './src/st/voices.js';
+import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig, voicesActive } from './src/st/voices.js';
+import { sayOnMap } from './src/ui/bubbles.js';
 import { toggleMap, refreshMap, closeMap } from './src/ui/map.js';
 import { postDiceCard } from './src/st/messages.js';
 import { forgetAll, flushWrites } from './src/st/storage.js';
@@ -281,7 +282,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.30.0-beta';
+export const LOADED_VERSION = '0.31.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows
@@ -347,11 +348,16 @@ jQuery(async () => {
             await cleanPartyReply(id);
             const c = campaign();
             const msg = ST.chat[Number(id)];
+            // The bubble is registered first so it catches the voice's start (or its skip).
             if (c && !c.meta.paused && msg && !msg.is_user && c.meta.party.some(p => p.name === msg.name)) {
+                sayOnMap({ name: msg.name, text: msg.mes, voiced: voicesActive() });
                 voiceLine({ kind: 'party', name: msg.name, text: msg.mes });
             } else if (c && !c.meta.paused && msg && !msg.is_user) {
                 const npc = npcForName(msg.name);
-                if (npc) voiceLine({ kind: 'npc', name: npc.name, text: msg.mes, voice: npc.voice });
+                if (npc) {
+                    sayOnMap({ name: npc.name, text: msg.mes, voiced: voicesActive() });
+                    voiceLine({ kind: 'npc', name: npc.name, text: msg.mes, voice: npc.voice });
+                }
             }
         } catch (error) {
             console.warn('[Dungeon Master] party reply handling failed', error);

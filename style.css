@@ -281,3 +281,18 @@
     .dm-figure-card { flex-direction: column; align-items: center; }
     .dm-figure-side { width: 100%; }
 }
+
+/* Speech bubbles over the map figures */
+.dm-map-stage { position: relative; width: fit-content; min-width: 100%; line-height: 0; }
+.dm-map-stage .dm-map-canvas { margin: 0; }
+.dm-map-bubbles { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 4; line-height: 1.3; }
+.dm-bubble { position: absolute; transform: translate(-50%, -100%); max-width: 230px; min-width: 60px; padding: 6px 10px 7px; border-radius: 12px; background: #fffdf5; color: #1b1b1b; font-size: 12.5px; box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45); transform-origin: 50% 100%; white-space: normal; word-wrap: break-word; }
+.dm-bubble::after { content: ''; position: absolute; left: 50%; bottom: -7px; width: 12px; height: 12px; margin-left: -6px; background: #fffdf5; transform: rotate(45deg); border-radius: 2px; box-shadow: 3px 3px 6px rgba(0, 0, 0, 0.18); }
+.dm-bubble-name { font-size: 10px; font-weight: 700; letter-spacing: 0.02em; color: #6b5a2a; margin-bottom: 2px; text-transform: uppercase; }
+.dm-bubble-text { font-family: var(--mainFontFamily, inherit); }
+.dm-bubble-typing .dm-bubble-text::after { content: '▍'; margin-left: 1px; color: #6b5a2a; animation: dm-caret 0.8s steps(1) infinite; }
+.dm-bubble-in { animation: dm-bubble-pop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.dm-bubble-out { animation: dm-bubble-fade 0.32s ease-in both; }
+@keyframes dm-bubble-pop { 0% { opacity: 0; transform: translate(-50%, -100%) scale(0.5) translateY(8px); } 100% { opacity: 1; transform: translate(-50%, -100%) scale(1) translateY(0); } }
+@keyframes dm-bubble-fade { 0% { opacity: 1; transform: translate(-50%, -100%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -100%) scale(0.92) translateY(-6px); } }
+@keyframes dm-caret { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }

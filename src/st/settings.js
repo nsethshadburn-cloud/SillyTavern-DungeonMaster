@@ -70,6 +70,7 @@ export const DEFAULTS = Object.freeze({
     autoReadDice: true,         // read SillyTavern's dice rolls for a pending roll (no need to type the number)
     mapFigures: true,           // animated pixel figures on the map (false = round portraits)
     mapAmbience: true,          // weather and ambient particles on the map (fire and spells always show)
+    mapBubbles: true,           // speech bubbles over figures on the map when companions and NPCs speak
     figures: {},                // "p:<persona avatar>" / "c:<character avatar>" -> the look Claude described
 
     // Surprises Claude may add
@@ -121,6 +122,12 @@ export function settings() {
     if (!s.roomV30) {
         if (s.templates?.room === OLD_DEFAULTS.room) s.templates.room = DEFAULT_TEMPLATES.room;
         s.roomV30 = true;
+    }
+    // v0.31: dialogue in quotation marks (so the map's speech bubbles know what was said aloud); untouched defaults only.
+    if (!s.quotesV31) {
+        if (s.templates?.scene === OLD_DEFAULTS.sceneV30) s.templates.scene = DEFAULT_TEMPLATES.scene;
+        if (s.templates?.npc === OLD_DEFAULTS.npcV30) s.templates.npc = DEFAULT_TEMPLATES.npc;
+        s.quotesV31 = true;
     }
     // v0.24: everyday jobs left on the main model move to the light one (Haiku), which hands big
     // moments up by itself. Jobs someone set to another model stay as they are.
