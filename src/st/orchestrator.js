@@ -34,6 +34,7 @@ import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
 import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
+import { mergeMind } from '../core/minds.js';
 
 let running = false;
 let rerunRequested = false;
@@ -1313,6 +1314,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             meta.knowledge ??= {};
             meta.knowledge[member.name] = text;
         }
+    }
+    // Their inner state: only the fields the DM sent change.
+    for (const [name, update] of Object.entries(t.mind_update || {})) {
+        const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
+        if (!member) continue;
+        meta.minds ??= {};
+        meta.minds[member.name] = mergeMind(meta.minds[member.name], update);
+        status.note(`${member.name}'s mind: ${Object.keys(update).join(', ')}`);
     }
     // Level a companion up or down when the player asked for it.
     for (const [name, level] of Object.entries(t.level_change || {})) {

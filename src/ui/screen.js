@@ -13,6 +13,7 @@ import { turnHistory } from './status.js';
 import { escapeHtml } from '../core/text.js';
 import { formatUsd } from '../core/budget.js';
 import { driftBudget, PRESSURE_STAGES, nextBeat } from '../core/pacing.js';
+import { renderMind } from '../core/minds.js';
 
 let panel = null;
 
@@ -75,6 +76,7 @@ export function renderScreen() {
     const events = c.docs.events_log.slice(-6).reverse().map(e => `<li>${escapeHtml(e.title)} <small>(turn ${e.turn})</small></li>`).join('') || '<li class="dm-muted">none yet</li>';
     const rolls = c.docs.rolls_log.slice(-6).reverse().map(r => `<li>${escapeHtml(r.who)}: ${escapeHtml(r.what)} = <b>${r.total}</b>${r.success === true ? ' ✔' : r.success === false ? ' ✘' : ''}</li>`).join('') || '<li class="dm-muted">none yet</li>';
     const turns = turnHistory().slice(-5).reverse().map(t => `<li>${escapeHtml(t.at)} · ${escapeHtml(t.title)} <small>${t.secs.toFixed(1)}s${t.usd ? ` · ${formatUsd(t.usd)}` : ''}</small></li>`).join('') || '<li class="dm-muted">none yet</li>';
+    const minds = m.party.map(p => { const text = renderMind(m.minds?.[p.name]); return text ? `<li><b>${escapeHtml(p.name)}</b> <small>${escapeHtml(text)}</small></li>` : ''; }).join('');
     const npcs = (c.docs.npcs || []).slice(-8).reverse().map(n => `<li><b>${escapeHtml(n.name)}</b> <small>${escapeHtml(n.attitude)}${n.voice ? ' · 🔊' : ''}</small></li>`).join('') || '<li class="dm-muted">none yet</li>';
 
     panel.innerHTML = `${head}
@@ -101,6 +103,7 @@ export function renderScreen() {
   ${enemies ? `<h5>Enemies (round ${w.combat.round})</h5>${enemies}` : ''}
   <div class="dm-muted">Gold ${w.gold ?? 0}${w.items?.length ? ` · ${escapeHtml(w.items.join(', '))}` : ''}</div>
   <h5>Plot</h5><div class="dm-plot">${plotHtml(c.docs.plot)}</div>
+  ${minds ? `<h5>Companions' minds</h5><ul>${minds}</ul>` : ''}
   <h5>NPCs</h5><ul>${npcs}</ul>
   <h5>Events</h5><ul>${events}</ul>
   <h5>Rolls</h5><ul>${rolls}</ul>

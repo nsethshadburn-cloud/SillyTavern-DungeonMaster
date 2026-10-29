@@ -11,6 +11,7 @@ import { extractJson, escapeHtml, shortId, trimToTokens } from '../core/text.js'
 import { beginTurn } from './status.js';
 import { mapsOn, modelFor } from '../st/settings.js';
 import { applyPresence } from '../core/world.js';
+import { normalizeMind, mergeMind } from '../core/minds.js';
 
 const TONES = ['adventure', 'mystery', 'horror', 'political intrigue', 'survival', 'heist', 'war', 'romance-adjacent drama', 'dark fantasy', 'comedy'];
 
@@ -270,6 +271,12 @@ async function buildCampaign(form) {
             for (const ch of partyChars) {
                 const text = Object.entries(json.knowledge).find(([k]) => k.toLowerCase() === ch.name.toLowerCase())?.[1];
                 if (text) meta.knowledge[ch.name] = String(text);
+            }
+        }
+        if (json.minds && typeof json.minds === 'object') {
+            for (const ch of partyChars) {
+                const update = normalizeMind(Object.entries(json.minds).find(([k]) => k.toLowerCase() === ch.name.toLowerCase())?.[1]);
+                if (update) meta.minds[ch.name] = mergeMind(null, update);
             }
         }
         meta.pacing.tension = Number(json.tension) || 2;

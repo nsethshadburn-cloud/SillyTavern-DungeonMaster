@@ -4,6 +4,7 @@
 import { extractJson } from './text.js';
 import { SCENE_TYPES } from './pacing.js';
 import { normalizeSceneCard } from './state.js';
+import { normalizeMind } from './minds.js';
 import { PROPS_LEGEND } from './grid.js';
 import { LIBRARY } from './sprites.js';
 const FIGURES = Object.keys(LIBRARY).join(', ');
@@ -29,6 +30,8 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
 - Name the speaker's pronouns in the brief when they aren't "she".
 - Companions don't have to speak every turn. Give a companion a brief only when they are with the player and would naturally react or have something to say; silence is fine, and "directions" may be empty. Never narrate their words for them instead.
 - Each companion has a private "what you know" summary (WHAT COMPANIONS KNOW in your context). It's how they understand the story: who they are here, how they got into this, what they've been told. Keep it true: when they learn something important (a big reveal, a new chapter, a major change), send the full updated text in "knowledge_update". Rarely, not every turn. If one is marked MISSING, write it this turn. Anchor every time in it plainly ("tonight", "this morning", "a week ago, before the story began") so they never mix up when things happened.
+- Each companion also has a MIND (COMPANIONS' MINDS in your context): their mood right now, a goal of their own (not the party's objective: something THEY want), how they feel about particular people, and a private worry. You keep it, the local model never sees it. It is what makes them the same person from one turn to the next: write every brief FROM it (what they want this reply follows from their own goal and feelings, not from what would be convenient for the plot), and keep it true with "mind_update" only when something changes it (a slight, a kindness, a reveal, a goal reached or lost; send only the fields that changed, "" to clear one). If one is marked MISSING, write it this turn.
+- Unprompted: a companion with a mind acts on it. Every few turns, when their goal, a feeling or their worry would make them speak up or do something nobody asked for (raise the thing that's been bothering them, push the plan they wanted, confront someone they resent, check on someone they care about), give them a brief to do exactly that, even in a quiet moment and even when it's not what the player wants. That is their free will; use it, in character, at a natural pace (not every turn).
 - Companions are players too, not luggage. In turns you're already handling, have them act when it fits: use an ability, spell or item from their sheet (Misty Step to reach a ledge, Help on a lock, a healing word), take a risk, notice something with their own Perception. Roll for them in "npc_rolls" and tell them in their brief what they just did, so they play it out. The player still leads; don't let companions solve everything.
 - Group checks: when a check applies to everyone (all climbing, all sneaking, all resisting the same poison), ask the player with "player_roll" AND roll for each companion present in "npc_rolls" in the same turn. Judge each person by their own roll (one person failing can drag the group if it makes sense: a group Stealth fails if half or more fail).
 - When the party splits up (someone stays behind, goes another way, gets separated or captured apart), list who left in "party_away" with where they are. Away companions can't hear the player or speak: give them no briefs until they rejoin, then list them in "party_back".
@@ -164,6 +167,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "world_next": 3,
   "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline; inside a place, name the room (caged in the kennels, locked in Cell 4), or say she is somewhere in this place and the code picks a room the party hasn't found yet (only when someone splits off)"},
   "knowledge_update": {"Judy Hopps": "full new 'what you know' text for that companion (rarely; or when MISSING)"},
+  "mind_update": {"Judy Hopps": {"mood": "how they feel right now, a few words", "goal": "a goal of their own they are pushing", "feelings": {"Captain Dray": "distrusts him", "Amber": ""}, "worry": "a private worry, or \"\" when it's resolved"}},
   "level_change": {"Judy Hopps": 5},
   "build_place": {"name": "place name", "size": "big|small", "kind": "mansion|dungeon|town|...", "why": "one line", "objective": "what the party is there for (an item, a person, escape), if anything"},
   "enter_place": "name of a place already in the ATLAS",
@@ -213,6 +217,7 @@ Return ONE JSON object and nothing else:
   "scene_card": {"place": "the opening place and its light", "people": {"Name": "where each person present is and their body (posture, what they hold)"}, "objects": {"Item": "things that matter: how they look and where they are"}},
   "table_rules": ["0-5 things the player's premise says must always stay true, in plain words (who stays together, what must or must not happen)"],
   "knowledge": {"<each party member's exact name>": "what they know when the story starts: who they are in this story, how they got into this situation, what they've been told or accused of, who they know here, what they suspect. 4-8 plain sentences, only things they would actually know (no secrets kept from them), with clear times (tonight, a week ago)."},
+  "minds": {"<each party member's exact name>": {"mood": "how they feel as the story starts, a few words", "goal": "a goal of their OWN (not the party's objective): what they personally want out of this", "feelings": {"<a person>": "how they feel about them (the player, another companion, an NPC): 2-3 entries"}, "worry": "one private worry they haven't said out loud"}},
   "objective": "<=15 words: the party's immediate goal at the start",
   "start_place": {"name": "the place the story starts in, when it is somewhere to explore on a map (a prison, a mansion, a dungeon, a town, a camp, a forest); null for a road or an open-ended scene", "kind": "prison|mansion|castle|dungeon|town|forest|...", "size": "small|big", "start": "where the player is in it right now: outside the gate | locked in a cell | in the great hall", "why": "one line: what the place is in this story", "objective": "what the party has to find or do there (an item, a person, escape), if anything"},
   "party_start": {"<each party member's exact name>": "with the player | where they are instead, as the premise says (locked in a cage elsewhere in the prison, waiting at the inn)"},
@@ -274,6 +279,7 @@ Return ONE JSON object and nothing else:
   "standing_direction": "<=35 words",
   "objective": "<=15 words",
   "knowledge": {"Companion": "full corrected 'what you know' text"},
+  "minds": {"Companion": {"mood": "", "goal": "", "feelings": {}, "worry": ""}} (only what the chat as it is now contradicts),
   "scene_card": {"place": "", "people": {}, "objects": {}},
   "timeline": [{"day": 1, "time": "night", "place": "", "text": "the logged timeline, minus anything the chat no longer supports"}],
   "npcs_forget": ["names of NPCs who were only met in messages that are gone"],
@@ -322,6 +328,7 @@ export function normalizeDmTurn(raw) {
         party_back: arr(d.party_back).map(String).filter(Boolean),
         happened: str(d.happened).slice(0, 200),
         knowledge_update: Object.fromEntries(Object.entries(obj(d.knowledge_update)).map(([k, v]) => [str(k), str(v)]).filter(([k, v]) => k && v)),
+        mind_update: Object.fromEntries(Object.entries(obj(d.mind_update)).map(([k, v]) => [str(k), normalizeMind(v)]).filter(([k, v]) => k && v)),
         level_change: Object.fromEntries(Object.entries(obj(d.level_change)).map(([k, v]) => [str(k), Math.round(Number(v))]).filter(([k, v]) => k && v >= 1 && v <= 20)),
         world_next: Number.isFinite(Number(d.world_next)) && d.world_next !== null && d.world_next !== '' ? clamp(Math.round(Number(d.world_next)), 1, 10) : null,
         escalate: d.escalate === true,

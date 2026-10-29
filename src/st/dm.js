@@ -19,6 +19,7 @@ import { estimateTokens, trimToTokens, extractJson } from '../core/text.js';
 import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/state.js';
 import { modelLabel } from '../core/models.js';
 import { untilWords, resourcesLine } from '../core/upkeep.js';
+import { renderMinds, mergeMind, normalizeMind } from '../core/minds.js';
 
 let stableCache = { key: '', text: '' };
 
@@ -133,7 +134,7 @@ const REASON_TEXT = {
     companion_task: 'The player told a companion to do something whose result isn\'t known yet (COMPANION TASK below). The companion does it now (the code already walks them to where they have to go on the map). Rule on it: roll for them in npc_rolls if it needs a roll (Investigation to search something, Perception to look or listen, Stealth, Sleight of Hand, Thieves\' Tools...), decide what they actually find or what happens, and brief them with that result so they tell the player in their own words. Never let them find something you haven\'t decided is there.',
     companion_action: 'A companion just attempted something risky in their own reply (below). Rule on it like a player\'s action: roll for them in npc_rolls against a DC or the right opponent (for example the player\'s passive Perception), narrate what actually happens, and brief them only if they need to react. If it truly needs no roll, just narrate the result.',
     solo: 'No companion or NPC is with the player right now, or nobody nearby would answer. Respond as the world: what they notice, what happens, who shows up. Keep it short if nothing much happens. Absent companions stay silent.',
-    checkin: 'The world moves on: a few turns have passed since it last acted. Advance it one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. Usually that happens through briefs to the NPCs and companions, with narration only if something new arrives, a place changes or time skips. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. But if they just set something up ("I have a question…", "there\'s something I need to tell you"), the world waits: brief the listener only. Then set world_next (at least 2 after a setup).',
+    checkin: 'The world moves on: a few turns have passed since it last acted. Advance it one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. A quiet moment is also when a companion acts on their MIND unprompted (raises their worry, pushes their own goal, confronts someone): brief them to, if it\'s been a while. Usually that happens through briefs to the NPCs and companions, with narration only if something new arrives, a place changes or time skips. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. But if they just set something up ("I have a question…", "there\'s something I need to tell you"), the world waits: brief the listener only. Then set world_next (at least 2 after a setup).',
     opening: 'Open the campaign.',
     manual: 'The player asked the DM to step in.',
     explore: 'The party is exploring a mapped place and something happened as they moved (PLACE EVENT below). Rule on it: ask for a roll if one is needed (a save against a sprung trap, Stealth to stay unseen), narrate briefly, brief companions or NPCs, and record changes with place_changes.',
@@ -178,6 +179,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const knowledgeLines = c.meta.party.map(p => `## ${p.name}\n${c.meta.knowledge?.[p.name] || '(MISSING: write "knowledge_update" for them this turn)'}`);
     const notesLayer = [
         '# WHAT COMPANIONS KNOW (each one\'s private summary; sent with every reply they give)', knowledgeLines.join('\n\n'),
+        '', '# COMPANIONS\' MINDS (their inner state, yours alone: write their briefs from it; update it with "mind_update" only when something changes it)', renderMinds(c.meta.party.map(p => p.name), c.meta.minds),
         '', '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none yet)',
         '', '# STORY SO FAR', c.docs.story ? trimToTokens(c.docs.story, 2000, true) : '(none yet)',
         '', '# MEMORY BOOK ENTRIES (from the MemoryBooks extension)', memories || '(none yet)',
@@ -390,6 +392,7 @@ export async function resyncWithChat() {
         standing_direction: c.meta.standing,
         objective: c.meta.objective,
         knowledge: c.meta.knowledge ?? {},
+        minds: c.meta.minds ?? {},
         scene_card: w.sceneCard ?? {},
         timeline: c.meta.timeline ?? [],
         npcs_met: (c.docs.npcs || []).map(n => `${n.name} (${n.attitude}${n.lastSeen ? `, last seen: ${n.lastSeen}` : ''})`),
@@ -451,6 +454,13 @@ function applyResync(c, j) {
         for (const p of c.meta.party) {
             const text = Object.entries(j.knowledge).find(([k]) => k.toLowerCase() === p.name.toLowerCase())?.[1];
             if (text) c.meta.knowledge[p.name] = String(text);
+        }
+    }
+    if (j.minds && typeof j.minds === 'object') {
+        c.meta.minds ??= {};
+        for (const p of c.meta.party) {
+            const update = normalizeMind(Object.entries(j.minds).find(([k]) => k.toLowerCase() === p.name.toLowerCase())?.[1]);
+            if (update) c.meta.minds[p.name] = mergeMind(c.meta.minds[p.name], update);
         }
     }
     if (Array.isArray(j.npcs_forget) && j.npcs_forget.length) {

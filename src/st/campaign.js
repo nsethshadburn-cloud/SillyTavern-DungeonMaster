@@ -58,6 +58,7 @@ export function newMeta({ id, title, persona, party, options }) {
         standing: '',
         objective: '',       // party's immediate goal (set by the DM)
         knowledge: {},       // companion name -> what they know about the story (DM-written)
+        minds: {},           // companion name -> {mood, goal, feelings, worry}: their inner state, kept by the DM (core/minds.js)
         timeline: [],        // recent "happened" lines with day, time and place
         tableRules: [],      // things the player settled out of character (always true)
         directions: {},      // speaker -> last direction from the DM
