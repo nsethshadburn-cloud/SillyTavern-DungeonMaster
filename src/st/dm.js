@@ -349,7 +349,7 @@ export async function askPlaceBrief(req, { signal = null } = {}) {
         '', '# PEOPLE MET', c.docs.npcs?.length ? trimToTokens(rosterSummary(c.docs.npcs), local ? 300 : 800, true) : '(none yet)',
         '', '# RECENT CHAT (oldest first)', transcript(local ? 8 : 16) || '(empty)',
         '', '# WHERE THE PARTY IS RIGHT NOW', renderSceneCard(c.docs.world.sceneCard) || '(not set)',
-        '', '# THE PLACE TO BUILD', `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nSize asked: ${req.size || 'small'}\nWhy: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}`,
+        '', '# THE PLACE TO BUILD', `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nSize asked: ${req.size || 'small'}\nWhy: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}${req.objective ? `\nWhat they're there for: ${req.objective}` : ''}`,
         '', PLACE_BRIEF_INSTRUCTIONS,
     ].join('\n');
     if (local) {

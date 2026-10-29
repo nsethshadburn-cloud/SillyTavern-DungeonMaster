@@ -93,7 +93,7 @@ function cells(plan) {
         const blocks = plan.rooms.filter(r => r.floor === f.id && r.cellBlock).sort((a, b) => cellsOn(b) - cellsOn(a));
         if (!blocks.length) {
             const hidden = r => linksOf(plan, r.id).some(l => l.via === 'secret') && linksOf(plan, r.id).every(l => l.via === 'secret' || (ids.has(other(l, r.id)) && l.via !== 'cell'));
-            const hall = plan.rooms.filter(r => r.floor === f.id && r.type === 'hallway' && !ids.has(r.id) && !hidden(r))
+            const hall = plan.rooms.filter(r => r.floor === f.id && r.type === 'hallway' && !ids.has(r.id) && !hidden(r) && !r.exit)
                 .sort((a, b) => linksOf(plan, b.id).filter(l => ids.has(other(l, b.id))).length - linksOf(plan, a.id).filter(l => ids.has(other(l, a.id))).length)[0];
             if (hall) blocks.push(hall);
         }
@@ -309,7 +309,7 @@ function wayOut(plan) {
     if (!plan.building) return log;
     const ground = plan.floors.slice().sort((a, b) => Math.abs(a.level) - Math.abs(b.level))[0]?.id;
     for (const r of plan.rooms.filter(x => x.exit)) {
-        if (EXIT_OK.has(r.type) && r.floor === ground) continue;
+        if (EXIT_OK.has(r.type) && r.floor === ground && !r.cellBlock) continue;
         r.exit = false;
         const to = plan.rooms.find(x => x.floor === ground && x.type === 'foyer') ?? plan.rooms.find(x => x.floor === ground && EXIT_OK.has(x.type) && !x.cellBlock) ?? plan.rooms.find(x => x.floor === ground && x.type !== 'cell');
         if (to) { to.exit = true; log.push(`the way out moved from ${r.name} to ${to.name}`); }

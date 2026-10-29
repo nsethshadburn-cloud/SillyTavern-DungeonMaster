@@ -165,7 +165,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "party_away": {"Judy Hopps": "where she is, e.g. waiting at the treeline; inside a place, name the room (caged in the kennels, locked in Cell 4), or say she is somewhere in this place and the code picks a room the party hasn't found yet (only when someone splits off)"},
   "knowledge_update": {"Judy Hopps": "full new 'what you know' text for that companion (rarely; or when MISSING)"},
   "level_change": {"Judy Hopps": 5},
-  "build_place": {"name": "place name", "size": "big|small", "kind": "mansion|dungeon|town|...", "why": "one line"},
+  "build_place": {"name": "place name", "size": "big|small", "kind": "mansion|dungeon|town|...", "why": "one line", "objective": "what the party is there for (an item, a person, escape), if anything"},
   "enter_place": "name of a place already in the ATLAS",
   "leave_place": false,
   "place_changes": {"doors": {"D4": "open"}, "traps": {"T2": "found"}, "items": {"I3": "taken"}, "guards": {"Name": "G4"}, "rooms": {"G7": {"lit": true}}, "reveal": ["G7"]},
@@ -214,7 +214,7 @@ Return ONE JSON object and nothing else:
   "table_rules": ["0-5 things the player's premise says must always stay true, in plain words (who stays together, what must or must not happen)"],
   "knowledge": {"<each party member's exact name>": "what they know when the story starts: who they are in this story, how they got into this situation, what they've been told or accused of, who they know here, what they suspect. 4-8 plain sentences, only things they would actually know (no secrets kept from them), with clear times (tonight, a week ago)."},
   "objective": "<=15 words: the party's immediate goal at the start",
-  "start_place": {"name": "the place the story starts in, when it is somewhere to explore on a map (a prison, a mansion, a dungeon, a town, a camp, a forest); null for a road or an open-ended scene", "kind": "prison|mansion|castle|dungeon|town|forest|...", "size": "small|big", "start": "where the player is in it right now: outside the gate | locked in a cell | in the great hall", "why": "one line: what the place is in this story"},
+  "start_place": {"name": "the place the story starts in, when it is somewhere to explore on a map (a prison, a mansion, a dungeon, a town, a camp, a forest); null for a road or an open-ended scene", "kind": "prison|mansion|castle|dungeon|town|forest|...", "size": "small|big", "start": "where the player is in it right now: outside the gate | locked in a cell | in the great hall", "why": "one line: what the place is in this story", "objective": "what the party has to find or do there (an item, a person, escape), if anything"},
   "party_start": {"<each party member's exact name>": "with the player | where they are instead, as the premise says (locked in a cage elsewhere in the prison, waiting at the inn)"},
   "directions": [{"speaker": "party member name", "direction": "optional brief for an opening line: only what they need to know and want, never their words", "length": "short|normal"}],
   "new_npcs": [{"name": "every NPC who appears in the opening", "role": "<=8 words: job or title and tie to the party", "description": "one line: who they are, look, manner", "gender": "male|female|any", "attitude": "friendly|neutral|wary|hostile"}],
@@ -326,7 +326,7 @@ export function normalizeDmTurn(raw) {
         world_next: Number.isFinite(Number(d.world_next)) && d.world_next !== null && d.world_next !== '' ? clamp(Math.round(Number(d.world_next)), 1, 10) : null,
         escalate: d.escalate === true,
         scene_card: normalizeSceneCard(d.scene_card),
-        build_place: d.build_place && typeof d.build_place === 'object' && str(d.build_place.name) ? { name: str(d.build_place.name).slice(0, 80), size: str(d.build_place.size).toLowerCase() === 'big' ? 'big' : 'small', kind: str(d.build_place.kind).toLowerCase().slice(0, 40), why: str(d.build_place.why).slice(0, 200), start: str(d.build_place.start).slice(0, 200) } : null,
+        build_place: d.build_place && typeof d.build_place === 'object' && str(d.build_place.name) ? { ...(str(d.build_place.objective) ? { objective: str(d.build_place.objective).slice(0, 80) } : {}), name: str(d.build_place.name).slice(0, 80), size: str(d.build_place.size).toLowerCase() === 'big' ? 'big' : 'small', kind: str(d.build_place.kind).toLowerCase().slice(0, 40), why: str(d.build_place.why).slice(0, 200), start: str(d.build_place.start).slice(0, 200) } : null,
         enter_place: str(d.enter_place).slice(0, 80),
         leave_place: d.leave_place === true,
         place_changes: d.place_changes && typeof d.place_changes === 'object' && !Array.isArray(d.place_changes) ? d.place_changes : null,
@@ -519,7 +519,9 @@ Reply with ONE JSON object and nothing else:
   "secrets": [{"from": "room", "to": "a hidden room or passage", "how": "how it's hidden"}],
   "guards": "how many nameless guards or creatures besides the people above (a number), or leave out",
   "creatures": "what those nameless ones are (prison guards, skeletons, giant rats), or leave out",
-  "traps": "none|few|many"
+  "traps": "none|few|many",
+  "objective": "what the party is here for, in a few words: an item (the jade idol), a person (the captured heir), a room (the vault), or escape; empty if nothing in particular. The code puts it deep inside, far from where they start (an escape: the way out far from them).",
+  "objective_near": "only if the story says it is close to where they start (by the entrance); otherwise leave this out"
 }
 Keep it short: only rooms, people, locks and secrets the story really uses (0-4 of each). Names and facts must match the story so far.`;
 

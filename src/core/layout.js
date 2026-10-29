@@ -940,7 +940,10 @@ function tryBuild(plan, seed, shrink) {
     // Cells keep one door; anything that only a cell's extra door reached gets its own way in.
     let solved = solvePlace(place, r);
     for (let i = 0; solved && i < 3 && sealCells(place); i++) solved = solvePlace(place, r);
-    if (solved) { clearDoorways(place); return place; }
+    // A layout that left a cell without its one door is no good either: the next attempt, like an unreachable room.
+    const badCells = solved ? checkPlace(place).filter(p => /\(a cell has exactly one\)|instead of a cell door/.test(p)) : [];
+    if (solved && !badCells.length) { clearDoorways(place); return place; }
+    if (badCells.length) { failWhy = `cells without their door (${badCells.slice(0, 2).join('; ')})`; return null; }
     failWhy = `some rooms can't be reached (${Object.values(place.rooms).filter(rm => !new Set(reachable(place).roomsReached).has(rm.id)).map(rm => rm.name).slice(0, 4).join(', ')})`;
     return null;
 }

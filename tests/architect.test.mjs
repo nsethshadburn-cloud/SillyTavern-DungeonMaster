@@ -189,3 +189,42 @@ test('a new campaign that starts with Judy caged elsewhere in the prison: she is
         assert.ok(['cell', 'kennel'].includes(rm.type), `seed ${seed}: a cell or kennel (${rm.type})`);
     }
 });
+
+test('built around the objective: what they came for lies deep, an escape\'s way out lies far from the cells, dungeons run along a route with a gate', () => {
+    const dist = (plan, from) => {
+        const d = new Map([[from, 0]]);
+        for (let changed = true; changed;) {
+            changed = false;
+            for (const l of plan.links) for (const [p, q] of [[l.a, l.b], [l.b, l.a]]) {
+                if (!d.has(p)) continue;
+                const v = d.get(p) + (l.via === 'stairs' ? 2 : l.via === 'secret' ? 3 : 1);
+                if (!d.has(q) || d.get(q) > v) { d.set(q, v); changed = true; }
+            }
+        }
+        return d;
+    };
+    const share = (plan, goal) => { const d = dist(plan, plan.start); return (d.get(goal.id) ?? 0) / Math.max(...plan.rooms.map(r => d.get(r.id) ?? 0)); };
+    let deep = 0, far = 0, gates = 0;
+    for (let seed = 1; seed <= 10; seed++) {
+        const raw = planFromBrief(normalizeBrief({ name: 'Sunken Vault', kind: 'dungeon', size: 'medium', objective: 'the jade idol' }), seed);
+        const plan = normalizePlan(raw);
+        const goal = plan.rooms.find(r => r.items.some(i => /jade idol/i.test(i.name)));
+        assert.ok(goal, `seed ${seed}: the idol is somewhere`);
+        if (share(plan, goal) >= 0.5) deep++;
+        if (raw.architect.twists.some(t => /barred at .* by a locked door/.test(t))) gates++;
+        const jail = normalizePlan(planFromBrief(normalizeBrief({ name: 'Gaol', kind: 'prison', size: 'medium', start: 'locked in a cell' }), seed));
+        if (share(jail, jail.rooms.find(r => r.exit)) >= 0.5) far++;
+        assert.ok(generatePlace(normalizePlan(raw), seed), `seed ${seed}: the dungeon builds`);
+    }
+    assert.ok(deep >= 9, `the idol lies at least half way in (${deep}/10)`);
+    assert.ok(far >= 9, `the way out lies at least half way from the cells (${far}/10)`);
+    assert.ok(gates >= 6, `most dungeons have a locked gate on the way, its key before it (${gates}/10)`);
+    // The story can put it near: then it stays where it is.
+    const near = planFromBrief(normalizeBrief({ name: 'Shrine', kind: 'dungeon', size: 'small', objective: 'the bell', objective_near: 'by the entrance' }), 3);
+    assert.ok(!near.architect.twists.some(t => /What the party came for/.test(t)), 'pinned near: not moved deep');
+    // Big places spread over floors instead of one crowded one.
+    const big = normalizePlan(planFromBrief(normalizeBrief({ name: 'Keep', kind: 'castle', size: 'big' }), 20));
+    const perFloor = {};
+    for (const r of big.rooms) perFloor[r.floor] = (perFloor[r.floor] ?? 0) + 1;
+    assert.ok(Object.keys(perFloor).length >= 3 && Math.max(...Object.values(perFloor)) <= 40, JSON.stringify(perFloor));
+});

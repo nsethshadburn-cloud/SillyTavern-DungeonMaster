@@ -520,6 +520,8 @@ export function normalizeBrief(raw, req = {}) {
         mood: str(d.mood || d.style).slice(0, 120),
         start: str(d.start || req.start).slice(0, 120),
         summary: str(d.summary || req.why).slice(0, 600),
+        objective: str(d.objective ?? req.objective).slice(0, 80),
+        objectiveNear: str(d.objective_near ?? d.objectiveNear).slice(0, 120),
         rooms: arr(d.rooms ?? d.story).filter(x => x && typeof x === 'object').slice(0, 8).map(x => ({ room: str(x.room ?? x.where ?? x.name).slice(0, 60), name: str(x.name && x.room ? x.name : '').slice(0, 60), has: arr(x.has ?? x.items ?? x.item).map(str).filter(Boolean).slice(0, 3), hidden: x.hidden === true, note: str(x.note ?? x.what).slice(0, 160) })).filter(x => x.room),
         people: arr(d.people).filter(x => x && typeof x === 'object' && str(x.name)).slice(0, 8).map(x => ({ name: str(x.name).slice(0, 50), what: str(x.what ?? x.description ?? x.role).slice(0, 160), where: str(x.where ?? x.room).slice(0, 60), hostile: x.hostile === true || x.hostile === 'true', carries: arr(x.carries).map(str).filter(Boolean).slice(0, 3) })),
         locked: arr(d.locked).filter(x => x && typeof x === 'object' && str(x.room)).slice(0, 4).map(x => ({ room: str(x.room).slice(0, 60), key: str(x.key).slice(0, 50), keyIn: str(x.key_in ?? x.keyIn ?? x.holder).slice(0, 60) })),
@@ -581,9 +583,15 @@ export function planFromBrief(briefIn, seed = 1) {
         if (!chance(r, p) || !levelsOk(level)) continue;
         for (let i = 0, n = countOf(type, mn, mx); i < n && rooms.length < target + 1; i++) addRoom(type, level, opts);
     }
+    // The rest spread over the floors, emptiest first; when every floor is full (about 18 rooms) a big
+    // place grows another one (upstairs for a building, deeper for a dungeon) rather than one huge floor.
+    const PER_FLOOR = 18;
     while (rooms.length < target) {
-        const lv = [...new Set(rooms.map(x => x.level))].sort((a, b) => rooms.filter(x => x.level === a).length - rooms.filter(x => x.level === b).length);
-        addRoom(pick(r, bp.filler), chance(r, 0.7) ? lv[0] : pick(r, lv), {});
+        const used = [...new Set(rooms.map(x => x.level))];
+        const lv = used.sort((a, b) => rooms.filter(x => x.level === a).length - rooms.filter(x => x.level === b).length);
+        const full = rooms.filter(x => x.level === lv[0]).length >= PER_FLOOR;
+        const next = bp.maze ? Math.min(...used) - 1 : !used.includes(1) ? 1 : !used.includes(-1) ? -1 : Math.max(...used) + 1;
+        addRoom(pick(r, bp.filler), full && used.length < maxLevels ? next : chance(r, 0.7) ? lv[0] : pick(r, lv), {});
     }
     const notes = [];
 
@@ -626,13 +634,20 @@ export function planFromBrief(briefIn, seed = 1) {
     for (const l of levels) {
         const here = rooms.filter(x => x.level === l && !x.hidden);
         if (style === 'maze' || (bp.maze && condition === 'ruined')) {
-            // A ruin: a branching maze, rooms through rooms, a few loops and dead ends.
-            const order = [...here.filter(x => x.entry), ...shuffle(r, here.filter(x => !x.entry))];
-            for (let i = 1; i < order.length; i++) {
-                const from = chance(r, 0.55) ? order[Math.max(0, i - 1 - int(r, 0, 1))] : pick(r, order.slice(0, i));
-                link(from, order[i], chance(r, 0.25) ? 'arch' : 'door');
+            // A dungeon is a route, not a tangle: a main way through room after room from the way in to
+            // the far end (where what they came for usually lies), side branches off it (dead ends,
+            // loot, the key to a gate further on), and only now and then a shortcut.
+            // Cells are never on the way through (a cell has one door): they hang off the route.
+            const open = here.filter(x => x.type !== 'cell');
+            const order = [...open.filter(x => x.entry), ...shuffle(r, open.filter(x => !x.entry))];
+            const spine = order.slice(0, Math.max(2, Math.ceil(order.length * 0.6))), side = [...order.slice(spine.length), ...here.filter(x => x.type === 'cell')];
+            spine.forEach((room, i) => { room.spine = i; if (i) link(spine[i - 1], room, chance(r, 0.25) ? 'arch' : 'door'); });
+            for (const room of side) {
+                const twigs = side.filter(x => x !== room && degree(x) > 0 && degree(x) < 3);
+                const from = twigs.length && chance(r, 0.3) ? pick(r, twigs) : spine[int(r, 0, Math.max(0, spine.length - 2))];
+                link(from, room, chance(r, 0.2) ? 'arch' : 'door');
             }
-            for (let i = 0, n = Math.max(1, Math.floor(order.length / 5)); i < n; i++) { const a = pick(r, order), b = pick(r, order); if (a !== b && degree(a) < 4 && degree(b) < 4) link(a, b, chance(r, 0.3) ? 'secret' : 'door'); }
+            for (let i = 0, n = Math.floor(order.length / 8); i < n && spine.length > 3; i++) { const a = int(r, 0, spine.length - 3); link(spine[a], spine[a + 2], chance(r, 0.5) ? 'secret' : 'door'); }
             continue;
         }
         // A building: a hub (the hall) and corridors; rooms open off their parent room, or off a corridor.
@@ -664,8 +679,14 @@ export function planFromBrief(briefIn, seed = 1) {
     const mainOf = l => rooms.find(x => x.level === l && x.hub && !x.hidden) ?? rooms.find(x => x.level === l && x.type === 'hallway' && !x.hidden) ?? rooms.find(x => x.level === l && x.entry) ?? rooms.find(x => x.level === l && !x.hidden) ?? rooms.find(x => x.level === l);
     for (let i = 1; i < levels.length; i++) {
         const lowerL = levels[i - 1], upperL = levels[i];
-        const deep = bp.maze ? rooms.filter(x => x.level === (lowerL < 0 ? upperL : lowerL)).sort((a, b) => degree(a) - degree(b))[0] : null;
-        link(deep ?? mainOf(upperL), mainOf(lowerL), 'stairs');
+        // A dungeon goes down from the far end of one level's route to the start of the next one's.
+        const nearL = Math.abs(lowerL) < Math.abs(upperL) ? lowerL : upperL, farL = nearL === lowerL ? upperL : lowerL;
+        const routeOf = l => rooms.filter(x => x.level === l && x.spine !== undefined).sort((a, b) => a.spine - b.spine);
+        if (bp.maze && routeOf(nearL).length && routeOf(farL).length) link(routeOf(nearL).at(-1), routeOf(farL)[0], 'stairs');
+        else {
+            const deep = bp.maze ? rooms.filter(x => x.level === (lowerL < 0 ? upperL : lowerL)).sort((a, b) => degree(a) - degree(b))[0] : null;
+            link(deep ?? mainOf(upperL), mainOf(lowerL), 'stairs');
+        }
         if (!bp.maze && brief.size === 'big' && chance(r, 0.6)) {
             const back = rooms.find(x => x.level === upperL && ['kitchen', 'pantry', 'servants_quarters', 'storage', 'hallway'].includes(x.type) && x !== mainOf(upperL));
             const backTo = rooms.find(x => x.level === lowerL && x.type === 'hallway' && x !== mainOf(lowerL)) ?? rooms.find(x => x.level === lowerL && ['hallway', 'storage', 'cellar'].includes(x.type) && x !== mainOf(lowerL));
@@ -679,6 +700,104 @@ export function planFromBrief(briefIn, seed = 1) {
         if (room.secretFrom) link(room.secretFrom, room, 'secret', { dc: int(r, 13, 16) });
         if (room.backStairTo) link(room, room.backStairTo, 'stairs');
         if (room.sealed) { const l = links.find(x => (x.a === room.id || x.b === room.id) && x.via !== 'stairs' && x.via !== 'secret'); if (l) { l.via = 'locked'; l.key = ''; } }
+    }
+    // Where the party starts (decided before the challenge is laid out: distances count from here).
+    const startWords = brief.start.toLowerCase();
+    let start = rooms.find(x => x.exit) ?? rooms.find(x => x.entry) ?? rooms[0];
+    let outside = null;
+    const lockedUp = /\b(cell|locked up|imprison|captive|captured|jailed|prisoner|locked in|shackled|chained)\b/.test(startWords);
+    if (lockedUp) {
+        // The free cell furthest from the way in (the deepest one), or a holding room if there's no cell.
+        const D0 = distances(rooms, links, mainOf(0) ?? rooms[0]);
+        start = rooms.filter(x => x.type === 'cell' && !x.hidden).sort((a, b) => (D0.get(b.id) ?? 0) - (D0.get(a.id) ?? 0))[0];
+        if (!start) {
+            const lvl = Math.min(...levels);
+            start = addRoom('cell', lvl, { name: lvl < 0 ? ['Locked Cellar Room', 'Holding Room', 'The Cage Room'] : ['Locked Room', 'Holding Cell'] });
+            start.floor = floorOf(lvl);
+            link(rooms.find(x => x.level === lvl && x.type === 'hallway') ?? mainOf(lvl), start, 'cell');
+        }
+        notes.push(`The party starts locked in ${start.name}.`);
+    } else if (bp.building && /\b(outside|arriv|approach|front|gate|door|yard|garden|street|walk up|sneak)/.test(startWords) && !/\binside|already in\b/.test(startWords)) {
+        outside = { id: `R${++idN}`, name: pick(r, ['Front Gate', 'Courtyard', 'Front Garden', 'Forecourt', 'Yard']), type: 'courtyard', level: 0, floor: floorOf(0), description: '', props: [], marks: [], traps: [], items: [], exit: false };
+        start = outside;
+    } else if (startWords && !/\b(entrance|front|start)\b/.test(startWords)) {
+        start = findRoom(brief.start) ?? start;
+    }
+
+    // The challenge: what they're after lies deep, the way out of a prison lies far from the cells.
+    // At least half way from where they start to the furthest room, as far as it can be, unless
+    // the story puts it close. (Distances are rooms walked through; stairs count double.)
+    const origin = start === outside ? (rooms.find(x => x.exit) ?? rooms[0]) : start;
+    const objective = brief.objective;
+    const escaping = lockedUp || /\b(escape|get out|break out|way out|flee)\b/i.test(objective);
+    const pinnedNear = /\b(near|next to|beside|close to|by) the (entrance|gate|door|front|start|way in)|just inside|first room\b/i.test(`${brief.objectiveNear} ${brief.rooms.map(x => x.note).join(' ')}`);
+    let D = distances(rooms, links, origin);
+    const reach = () => Math.max(1, ...rooms.filter(x => !x.hidden && D.has(x.id)).map(x => D.get(x.id)));
+    let goal = null;
+    if (escaping && bp.building) {
+        // The way out: a ground-floor room people leave by, as far from the start as there is.
+        const ground = levels.reduce((a, b) => (Math.abs(b) < Math.abs(a) ? b : a), levels[0]);
+        // Never a corridor the cells open onto (a cell block is where the prisoners are, not a way out).
+        const cellsOff = x => links.some(l => (l.a === x.id || l.b === x.id) && rooms.find(y => y.id === (l.a === x.id ? l.b : l.a))?.type === 'cell');
+        const doorsOut = rooms.filter(x => x.level === ground && !x.hidden && EXIT_TYPES.has(x.type) && x !== origin && D.has(x.id) && !cellsOff(x)).sort((a, b) => D.get(b.id) - D.get(a.id));
+        if (doorsOut.length && !pinnedNear) {
+            for (const x of rooms) x.exit = false;
+            doorsOut[0].exit = true;
+            goal = doorsOut[0];
+            notes.push(`The way out is through ${goal.name}, far from where the party starts${(D.get(goal.id) ?? 0) < reach() * 0.5 ? ' (as far as this place allows)' : ''}.`);
+        }
+    } else if (objective && !pinnedNear) {
+        // What they came for: an item the story already put somewhere, a room the words name, or (if it's neither) a new find.
+        const k = nameKey(objective);
+        let holder = rooms.find(x => x.items.some(i => nameKey(i.name) && (nameKey(i.name).includes(k) || k.includes(nameKey(i.name)))));
+        const item = holder?.items.find(i => nameKey(i.name).includes(k) || k.includes(nameKey(i.name)));
+        const named = holder ? null : rooms.find(x => !x.hidden && (nameKey(x.name) === k || (k.length > 4 && nameKey(x.name).includes(k)) || (roomType(objective) !== 'room' && x.type === roomType(objective) && !x.hub)));
+        const far = () => rooms.filter(x => !x.hidden && !x.hub && !x.exit && !x.entry && x.type !== 'cell' && D.has(x.id)).sort((a, b) => D.get(b.id) - D.get(a.id));
+        if (named && !named.hub && !named.exit && (D.get(named.id) ?? 0) < reach() * 0.5) {
+            // Move the room itself deep: it opens off a far room instead (its old neighbours stay joined).
+            const anchor = far().find(x => x !== named && !['bathroom', 'pantry', 'vault', 'storage', 'nursery'].includes(x.type) && (D.get(x.id) ?? 0) >= reach() * 0.6);
+            if (anchor) {
+                const old = links.filter(l => (l.a === named.id || l.b === named.id) && l.via !== 'secret');
+                const nbrs = old.map(l => rooms.find(x => x.id === (l.a === named.id ? l.b : l.a))).filter(Boolean);
+                for (const l of old) links.splice(links.indexOf(l), 1);
+                for (const n of nbrs.slice(1)) link(nbrs[0], n, 'door');
+                Object.assign(named, { level: anchor.level, floor: anchor.floor });
+                link(anchor, named, 'door');
+                D = distances(rooms, links, origin);
+            }
+            goal = named;
+        } else if (named) goal = named;
+        else {
+            // An item: into the furthest room it would fit in (or simply the furthest), if it isn't deep already.
+            const fits = far().filter(x => ['vault', 'study', 'office', 'crypt', 'throne_room', 'chapel', 'storage', 'room', 'cave', 'laboratory', 'library', 'master_bedroom', 'cellar', 'attic'].includes(x.type));
+            const target = (fits[0] && (D.get(fits[0].id) ?? 0) >= reach() * 0.5 ? fits[0] : far()[0]);
+            if (item && holder && target && (D.get(holder.id) ?? 0) < reach() * 0.5) { holder.items.splice(holder.items.indexOf(item), 1); target.items.push(item); holder = target; }
+            else if (!item && target) { target.items.push({ name: cap(objective).slice(0, 60), hidden: false, note: '' }); holder = target; }
+            goal = holder ?? null;
+        }
+        if (goal) notes.push(`What the party came for (${objective}) is in ${goal.name}${(D.get(goal.id) ?? 0) < reach() * 0.5 ? '' : ', deep inside'}.`);
+    } else if (bp.maze && !pinnedNear) {
+        // A dungeon with no particular goal: its far end is where the best of it lies.
+        goal = rooms.filter(x => !x.hidden && D.has(x.id)).sort((a, b) => D.get(b.id) - D.get(a.id))[0] ?? null;
+        if (goal) { goal.items.push({ name: pick(r, bp.loot), hidden: false, note: 'the prize at the end' }); notes.push(`The far end, ${goal.name}, holds the best of it.`); }
+    }
+    // The way there, room by room, for the challenges on it.
+    const route = goal ? pathBetween(rooms, links, origin, goal) : [];
+    // A gate on the way: a locked door part-way along, its key somewhere reachable before it (a side
+    // branch with luck, else any room this side). Dungeons always; other places now and then.
+    if (route.length >= 5 && !pinnedNear && (bp.maze || (condition !== 'kept' && chance(r, 0.5)))) {
+        const at = Math.floor(route.length * 0.6);
+        const a = route[at - 1], b = route[at];
+        const gate = links.find(l => ((l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id)) && l.via !== 'stairs' && l.via !== 'cell');
+        if (gate && gate.via !== 'locked') {
+            gate.via = 'locked';
+            gate.key = `${pick(r, ['iron', 'bone', 'rusted', 'black', 'brass', 'serpent'])} ${pick(r, ['gate', 'door'])} key`;
+            const before = distances(rooms, links.filter(l => l !== gate), origin);
+            const pockets = rooms.filter(x => x !== origin && before.has(x.id) && !route.includes(x) && !x.hidden && x.type !== 'cell').sort((p, q) => degree(p) - degree(q) || before.get(q.id) - before.get(p.id));
+            const keep = pockets[0] ?? route[Math.max(0, at - 2)];
+            keep.items.push({ name: gate.key, hidden: chance(r, 0.4), note: pick(r, ['among the bones', 'under a loose flagstone', 'on a hook behind the door', 'in a dead man\'s pouch', 'in a rotting chest', 'on a chain round a statue\'s neck']) });
+            notes.push(`The way to ${goal.name} is barred at ${b.name} by a locked door; its ${gate.key} is in ${keep.name}.`);
+        }
     }
     // Locks and keys: the kind's lockable rooms, each key kept by whoever would have it.
     const holderFor = (exclude) => {
@@ -739,11 +858,19 @@ export function planFromBrief(briefIn, seed = 1) {
         const patrol = chance(r, 0.65) && near.length ? [home.id, ...shuffle(r, near).slice(0, int(r, 1, 3)).map(x => x.id)] : [home.id];
         guards.push({ name, word: named ? '' : w, description: named ? `${w.toLowerCase()}${pick(r, [', scarred and patient', ', bored and careless', ', sharp-eyed', ', half asleep on duty', ', mean when crossed', ', new to the job'])}` : `a ${w.toLowerCase()}`, room: home.id, patrol });
     }
+    // Something stands between the party and what they came for: a guardian just before it.
+    if (goal && route.length >= 4 && !escaping && (bp.maze || nG > 0)) {
+        const post = route[route.length - 2];
+        const w = word ?? pick(r, bp.guards.words);
+        wordUsed[w] = (wordUsed[w] ?? 0) + 1;
+        guards.push({ name: `${w} ${wordUsed[w]}`, word: w, description: `a ${w.toLowerCase()} guarding the way to ${goal.name}`, room: post.id, patrol: [post.id] });
+        notes.push(`A ${w.toLowerCase()} stands guard in ${post.name}, just before ${goal.name}.`);
+    }
     // A lone one of a kind is just "Ghoul", not "Ghoul 1".
     for (const g of guards) if (g.word && wordUsed[g.word] === 1) g.name = g.word;
     for (const [role, type, p, looks] of bp.people) {
         if (role === 'keeper' && brief.people.length) continue;
-        const rm = shuffle(r, rooms.filter(x => x.type === type)).find(Boolean);
+        const rm = shuffle(r, rooms.filter(x => x.type === type && x !== start)).find(Boolean);
         if (!rm || !chance(r, p)) continue;
         // Prisoners go in a cell that isn't the party's.
         if (type === 'cell' && rooms.filter(x => x.type === 'cell').length < 2) continue;
@@ -751,7 +878,8 @@ export function planFromBrief(briefIn, seed = 1) {
     }
     // The story's people, where the brief puts them (or where they'd be).
     for (const p of brief.people) {
-        const rm = findRoom(p.where) ?? findRoom(p.what) ?? (p.hostile ? rooms.find(x => x.type === 'guard_room') : rooms.find(x => x.hub)) ?? rooms[0];
+        let rm = findRoom(p.where) ?? findRoom(p.what) ?? (p.hostile ? rooms.find(x => x.type === 'guard_room') : rooms.find(x => x.hub)) ?? rooms[0];
+        if (rm === start && rm.type === 'cell') rm = rooms.find(x => x.type === 'cell' && x !== start) ?? rm;
         // "in a cell": a cell that isn't the party's (they start in the first free one later).
         const entry = { name: p.name, description: p.what || 'someone the story needs here', room: rm.id, patrol: [rm.id], here: true };
         for (const it of p.carries) rm.items.push({ name: it, hidden: false, note: `carried by ${p.name}` });
@@ -763,7 +891,10 @@ export function planFromBrief(briefIn, seed = 1) {
     const nT = trapLevel === 'none' ? 0 : trapLevel === 'many' ? int(r, Math.ceil(rooms.length / 5), Math.ceil(rooms.length / 3)) : int(r, 0, Math.max(1, Math.ceil(rooms.length / 8)));
     const magical = /temple|crypt|tower|library/.test(bp.id);
     const pool = condition === 'ruined' ? TRAPS.ruined : TRAPS.kept;
-    const trapRooms = shuffle(r, rooms.filter(x => ['vault', 'study', 'office', 'hallway', 'crypt', 'chapel', 'master_bedroom', 'library', 'room', 'cave', 'throne_room', 'laboratory', 'storage'].includes(x.type) && x.id !== rooms[0].id));
+    // On the way to what they came for first (the route), then where traps make sense anyway.
+    const trapTypes = ['vault', 'study', 'office', 'hallway', 'crypt', 'chapel', 'master_bedroom', 'library', 'room', 'cave', 'throne_room', 'laboratory', 'storage'];
+    const onRoute = shuffle(r, route.slice(1).filter(x => x !== start && x.type !== 'cell'));
+    const trapRooms = [...onRoute, ...shuffle(r, rooms.filter(x => trapTypes.includes(x.type) && x !== origin && !route.includes(x)))];
     for (let i = 0; i < nT && trapRooms.length; i++) {
         const rm = trapRooms[i % trapRooms.length];
         const [kind, save, effect] = pick(r, magical && chance(r, 0.5) ? TRAPS.magic : pool.filter(([k]) => !/floorboard/.test(k) || WOODEN.has(rm.type)));
@@ -778,26 +909,6 @@ export function planFromBrief(briefIn, seed = 1) {
 
     // Marks: a lived-in or ruined look, room by room.
     if (condition !== 'kept') for (const rm of rooms) if (chance(r, condition === 'ruined' ? 0.5 : 0.2)) rm.marks.push(pick(r, condition === 'ruined' ? ['bones', 'scratches', 'stain', 'blood', 'papers'] : ['stain', 'papers']));
-
-    // Where the party starts.
-    const startWords = brief.start.toLowerCase();
-    let start = rooms.find(x => x.exit) ?? rooms.find(x => x.entry) ?? rooms[0];
-    let outside = null;
-    if (/\b(cell|locked up|imprison|captive|captured|jailed|prisoner|locked in|shackled|chained)\b/.test(startWords)) {
-        start = rooms.find(x => x.type === 'cell' && !people.some(p => p.room === x.id));
-        if (!start) {
-            const lvl = Math.min(...levels);
-            start = addRoom('cell', lvl, { name: lvl < 0 ? ['Locked Cellar Room', 'Holding Room', 'The Cage Room'] : ['Locked Room', 'Holding Cell'] });
-            start.floor = floorOf(lvl);
-            link(rooms.find(x => x.level === lvl && x.type === 'hallway') ?? mainOf(lvl), start, 'cell');
-        }
-        notes.push(`The party starts locked in ${start.name}.`);
-    } else if (bp.building && /\b(outside|arriv|approach|front|gate|door|yard|garden|street|walk up|sneak)/.test(startWords) && !/\binside|already in\b/.test(startWords)) {
-        outside = { id: `R${++idN}`, name: pick(r, ['Front Gate', 'Courtyard', 'Front Garden', 'Forecourt', 'Yard']), type: 'courtyard', level: 0, floor: floorOf(0), description: '', props: [], marks: [], traps: [], items: [], exit: false };
-        start = outside;
-    } else if (startWords && !/\b(entrance|front|start)\b/.test(startWords)) {
-        start = findRoom(brief.start) ?? start;
-    }
 
     // The DM's notes: what this place is and where its secrets are.
     const exitRoom = rooms.find(x => x.exit);
@@ -825,6 +936,46 @@ export function planFromBrief(briefIn, seed = 1) {
         architect: { blueprint: bp.id, style, seed, twists: notes },
     };
     return out;
+}
+
+// ---------- distances ----------
+
+/** Rooms a building is left by (for an escape's way out). */
+const EXIT_TYPES = new Set(['foyer', 'hallway', 'guard_room', 'kitchen', 'tavern', 'shop', 'stable', 'smithy', 'workshop', 'chapel', 'room', 'gallery', 'office']);
+
+/** How far each room is from one, in rooms walked through (stairs count two; secret doors three, they have to be found). */
+function distances(rooms, links, from) {
+    const dist = new Map([[from.id, 0]]);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const l of links) {
+            const w = l.via === 'stairs' ? 2 : l.via === 'secret' ? 3 : 1;
+            for (const [p, q] of [[l.a, l.b], [l.b, l.a]]) {
+                if (!dist.has(p)) continue;
+                const d = dist.get(p) + w;
+                if (!dist.has(q) || dist.get(q) > d) { dist.set(q, d); changed = true; }
+            }
+        }
+    }
+    return dist;
+}
+
+/** The rooms on the shortest way from one room to another (both ends included), or []. */
+function pathBetween(rooms, links, from, to) {
+    const dist = distances(rooms, links, from);
+    if (!dist.has(to.id)) return [];
+    const path = [to];
+    let at = to;
+    while (at !== from) {
+        const prev = links.map(l => (l.a === at.id ? l.b : l.b === at.id ? l.a : null)).filter(id => id && dist.has(id))
+            .map(id => rooms.find(x => x.id === id)).filter(Boolean)
+            .sort((p, q) => dist.get(p.id) - dist.get(q.id))[0];
+        if (!prev || dist.get(prev.id) >= dist.get(at.id)) break;
+        path.unshift(prev);
+        at = prev;
+    }
+    return path[0] === from ? path : [];
 }
 
 // ---------- twists ----------

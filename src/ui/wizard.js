@@ -375,7 +375,7 @@ async function buildCampaign(form) {
             const { requestBuild, placeHeld } = await import('../st/atlas.js');
             const context = [json.opening, Object.entries(away).map(([n, w]) => `${n}: ${w}`).join('; ')].filter(Boolean).join('\n');
             try {
-                built = await requestBuild({ name: String(sp.name).slice(0, 80), kind: String(sp.kind || '').slice(0, 40), size: sp.size === 'big' ? 'big' : 'small', start: String(sp.start || '').slice(0, 200), why: String(sp.why || 'where the story starts').slice(0, 200), context }, { ask: true, quiet: true });
+                built = await requestBuild({ objective: String(sp.objective || '').slice(0, 80), name: String(sp.name).slice(0, 80), kind: String(sp.kind || '').slice(0, 40), size: sp.size === 'big' ? 'big' : 'small', start: String(sp.start || '').slice(0, 200), why: String(sp.why || 'where the story starts').slice(0, 200), context }, { ask: true, quiet: true });
             } catch (error) {
                 toastr.error(`The map couldn't be built: ${error?.message || error}. The story starts without it.`, 'Dungeon Master');
             }
