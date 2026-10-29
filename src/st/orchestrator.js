@@ -27,7 +27,7 @@ import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPromp
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere } from '../core/world.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage } from '../core/world.js';
 import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
@@ -383,7 +383,9 @@ async function turnBody(c, opts, status, signal) {
         if (reasons.includes('stalled')) pacing.fillerStreak = 0;
         if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
         await taskWalk;
-        await applyDmTurn(c, result.turn, status, signal, { events, reasons });
+        // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
+        const quiet = !triage.ooc && !triage.speakers?.length && (['action', 'risky_action', 'scene_move'].includes(triage.category) || (opts.force === 'explore' && !/first meeting/.test(opts.placeEvent || '')));
+        await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
         meta.stats.lastTurnUsd = turnUsd;
@@ -611,12 +613,14 @@ function queueBookkeeping(c, fromIndex) {
 async function bookkeep(c, fromIndex) {
     const s = settings();
     if (!s.useHelper || s.bookkeeper === false || campaign() !== c) return;
-    const said = ST.chat.slice(fromIndex).filter(m => !m.is_user && m.mes && !/^\s*(🎲|📜|🗺️|🔥|💥|⚠️|📈)/u.test(m.mes));
+    // Only the DM's narration is evidence: what companions and NPCs say is the local model's own
+    // guesswork ("open the latch" doesn't open it), and enemies' and map people's state is the DM's.
+    const said = ST.chat.slice(fromIndex).filter(m => !m.is_user && m.mes && dmType(m) === 'narration');
     if (!said.length) return;
     const story = trimToTokens(said.map(m => `${m.name}: ${m.mes}`).join('\n\n'), 1200, true);
     const w = c.docs.world;
     const party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
-    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location)).map(n => n.name);
+    const present = [];
     const own = n => w.inventory?.[matchName(n, Object.keys(w.inventory || {})) ?? ''] ?? [];
     const { system, user } = bookkeeperPrompt({
         status: party.map(n => ({ name: n, hp: w.party[n] ? `${w.party[n].hp}/${w.party[n].hp_max}` : '', conditions: conditionsOf(w, n), items: own(n) })),
@@ -626,8 +630,9 @@ async function bookkeep(c, fromIndex) {
     });
     const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 300, profileId: s.helperProfileId });
     const changes = parseBookkeeping(raw, {
-        names: [...party, ...present],
+        names: party,
         itemNames: party,
+        story,
         conditionsOf: n => conditionsOf(w, n),
         itemsOf: n => [...own(n), ...(w.items || [])],
         allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
@@ -831,7 +836,7 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
         const places = c.docs.world.combat || moved.includes(name) ? [] : goTargets(c, name);
         try {
             const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}`, places, player: c.meta.persona.name, askStance: Boolean(currentPlace(c)) && !c.docs.world.combat });
-            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }), places);
+            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }), places, msg.mes);
         } catch {
             continue;
         }
@@ -867,7 +872,7 @@ async function companionMovesOnMap(c, name, status, signal) {
     if (!msg?.mes) return;
     try {
         const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false, player: c.meta.persona.name, askStance: true });
-        const { go, hide, pose, stance } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }), places);
+        const { go, hide, pose, stance } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }), places, msg.mes);
         if (stance && !go) await setStance(c, name, stance, status);
         if (!go || signal.aborted) return;
         const went = await companionGoTo(c, name, go, { hide, pose });
@@ -1049,7 +1054,7 @@ export function combatFromAttacks(c, t) {
     return { enemies, map: null };
 }
 
-export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [] } = {}) {
+export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [], quiet = false } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
     // Maps off: anything about maps in the DM's answer is ignored (the story stays in the chat).
@@ -1508,7 +1513,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             continue;
         }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
-        const length = meta.pacing.inCombat ? 'short' : d.length;
+        // In a fight, or while just exploring (nobody talking to them): one short line.
+        const length = meta.pacing.inCombat || quiet ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);
         try {
             await makeSpeak(speaker, [d.direction, extra].filter(Boolean).join(' '), { signal, length });
@@ -1523,6 +1529,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.player_roll) {
         const pr = t.player_roll;
         if (pr.kind === 'damage') pr.die = 100;
+        // "Roll damage" with nothing to roll: the dice come from the sheet (doubled after a natural 20).
+        if (pr.kind === 'damage' && !pr.damage) {
+            const lastHit = [...c.docs.rolls_log].reverse().find(r => r.who === meta.persona.name && r.kind === 'attack');
+            pr.damage = attackDamage(statsForName(meta.persona.name, meta), `${pr.reason} ${pr.skill}`, { critical: lastHit?.natural === 20 });
+            if (pr.damage) status.note(`Damage dice from the sheet: ${pr.damage}`);
+        }
+        if (pr.kind === 'initiative') pr.dc = null;
         meta.pendingRoll = pr;
         const adv = pr.advantage && pr.advantage !== 'none' ? ` (with **${pr.advantage}**: roll two d20, keep the ${pr.advantage === 'advantage' ? 'higher' : 'lower'})` : '';
         const what = pr.kind === 'damage'

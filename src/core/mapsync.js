@@ -58,9 +58,12 @@ const words = s => (nameKey(s).match(/[a-z]{3,}/g) ?? []).filter(w => !NOT_EVIDE
  */
 export function parseMapSync(text, known, { story = '' } = {}) {
     const data = extractJson(text);
-    const told = new Set(words(story));
+    // Evidence is literal: the story has to use one of the name's own words ("watchman" is not
+    // "turnkey", even though both are guards for merging purposes).
+    const raw = s => (nameKey(s).match(/[a-z]{3,}/g) ?? []).filter(w => !NOT_EVIDENCE.has(w)).map(w => w.replace(/s$/, ''));
+    const told = new Set(raw(story));
     // Something the story never mentions didn't happen in it (a spawn must be named or described there).
-    const inStory = (...texts) => !story || texts.some(t => words(t).some(w => told.has(w)));
+    const inStory = (...texts) => !story || texts.some(t => raw(t).some(w => told.has(w)));
     const peopleInfo = known.peopleInfo || {};
     // "the hound" when a Guard Dog (a hound) is already there: the same one, not a second.
     // Only a plain description ("the hound"), never a numbered or second one ("Guard 2"), and only one match.
@@ -104,7 +107,7 @@ export function parseMapSync(text, known, { story = '' } = {}) {
             const who = matchName(String(raw.who ?? ''), everyone);
             if (!who) continue;
             // Someone the story doesn't mention didn't move.
-            if (op !== 'intent' && op !== 'gone' && !inStory(who)) continue;
+            if (op !== 'intent' && !inStory(who)) continue;
             if (op === 'move') { const to = spotOf(raw.to); if (to && nameKey(to) !== nameKey(who)) ch = { op, who, to }; }
             else if (op === 'hide') { if (party.includes(who)) ch = { op, who, in: idOf(raw.in, known.things || []) ?? '' }; }
             else if (op === 'pose') {

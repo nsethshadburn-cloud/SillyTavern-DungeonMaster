@@ -66,23 +66,26 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
  *   names = whose conditions may change (the party and the people here); itemNames = who carries tracked
  *   items (the party); itemsOf = what someone carries (their own and the shared pack)
  */
-export function parseBookkeeping(text, { names, itemNames = names, conditionsOf, itemsOf, allItems }) {
+export function parseBookkeeping(text, { names, itemNames = names, conditionsOf, itemsOf, allItems, story = '' }) {
     const data = extractJson(text);
     if (!data || typeof data !== 'object') return null;
+    // Only someone the text actually names can have changed (no guessing who "the watchman" was).
+    const told = nameKey(story);
+    const mentioned = n => !story || told.includes(nameKey(n)) || told.split(' ').includes(nameKey(n).split(' ')[0]);
     const entries = v => (v && typeof v === 'object' && !Array.isArray(v) ? Object.entries(v) : []);
     const list = v => (Array.isArray(v) ? v : v ? [v] : []).map(x => String(x).trim()).filter(Boolean).slice(0, 4);
     const has = (arr, x) => arr.some(y => nameKey(y) === nameKey(x));
     const out = { conditions_add: {}, conditions_remove: {}, items_add: {}, items_remove: {} };
     for (const [who, conds] of entries(data.conditions_add)) {
         const name = matchName(who, names);
-        if (!name) continue;
+        if (!name || !mentioned(name)) continue;
         const now = conditionsOf(name).map(c => conditionWord(c) ?? c);
         const add = [...new Set(list(conds).map(conditionWord).filter(Boolean))].filter(c => !has(now, c));
         if (add.length) out.conditions_add[name] = add;
     }
     for (const [who, conds] of entries(data.conditions_remove)) {
         const name = matchName(who, names);
-        if (!name) continue;
+        if (!name || !mentioned(name)) continue;
         // Only what they actually have (by its tracked wording).
         const now = conditionsOf(name);
         const remove = list(conds).map(conditionWord).filter(Boolean).flatMap(w => now.filter(c => (conditionWord(c) ?? c) === w));
@@ -91,7 +94,7 @@ export function parseBookkeeping(text, { names, itemNames = names, conditionsOf,
     const removed = [];
     for (const [who, items] of entries(data.items_remove)) {
         const name = matchName(who, itemNames);
-        if (!name) continue;
+        if (!name || !mentioned(name)) continue;
         const theirs = itemsOf(name);
         const remove = list(items).map(i => theirs.find(t => nameKey(t) === nameKey(i) || nameKey(t).includes(nameKey(i)))).filter(Boolean);
         if (remove.length) { out.items_remove[name] = [...new Set(remove)]; removed.push(...remove); }
@@ -99,7 +102,7 @@ export function parseBookkeeping(text, { names, itemNames = names, conditionsOf,
     // Nothing tracked twice, except something handed over this turn (it leaves one person for another).
     for (const [who, items] of entries(data.items_add)) {
         const name = matchName(who, itemNames);
-        if (!name) continue;
+        if (!name || !mentioned(name)) continue;
         const add = list(items).map(i => i.slice(0, 40)).filter(i => !has(allItems, i) || has(removed, i));
         if (add.length) out.items_add[name] = [...new Set(add)];
     }

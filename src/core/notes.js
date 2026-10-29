@@ -43,7 +43,9 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
         '{{room}}',
         'In it: {{things}}',
-        'Ways out: {{exits}}]',
+        'Ways out: {{exits}}',
+        'Rooms {{char}} knows of in this place: {{known}}',
+        'Never name a room, door, passage, route or item that is not listed above: {{char}} doesn\'t know the rest of this place.]',
     ].join('\n'),
     combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight.]',
     npc: [
@@ -59,6 +61,12 @@ export const DEFAULT_TEMPLATES = Object.freeze({
 export const OLD_DEFAULTS = Object.freeze({
     npcLast: 'Never speak or act for {{player}} or {{party}}. Reply with 1-3 sentences, mostly dialogue. Don\'t invent new plot.]',
     long: 'up to two short paragraphs',
+    room: [
+        '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
+        '{{room}}',
+        'In it: {{things}}',
+        'Ways out: {{exits}}]',
+    ].join('\n'),
 });
 
 export const DEFAULT_LENGTHS = Object.freeze({
@@ -67,7 +75,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: '4-6 sentences at most',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid', 'room', 'things', 'exits'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid', 'room', 'things', 'exits', 'known'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**

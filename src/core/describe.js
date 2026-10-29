@@ -94,9 +94,12 @@ export function describePrompt(room, { things = [], condition = 'kept', placeNam
 }
 
 /** A model's reply cleaned up: one or two sentences, no quotes or labels. Empty when it's unusable. */
+const PEOPLE = /\b(guards?|watchm[ae]n|jailers?|turnkeys?|soldiers?|servants?|cooks?|clerks?|priests?|monks?|prisoners?|men|women|man|woman|boys?|girls?|child(ren)?|figures?|someone|somebody|people|person|wardens?|sentr(y|ies))\b/i;
+
 export function cleanDescription(text) {
     let t = String(text ?? '').replace(/<[^>]+>/g, ' ').replace(/^\s*(description|room)\s*:\s*/i, '').replace(/^["'\s]+|["'\s]+$/g, '').replace(/\s+/g, ' ').trim();
-    const sentences = t.match(/[^.!?]+[.!?]+/g) ?? [];
+    // Nobody is in a room description: people on the map are the map's business ("a lone guard sits" invents a guard).
+    const sentences = (t.match(/[^.!?]+[.!?]+/g) ?? []).filter(s => !PEOPLE.test(s));
     t = sentences.slice(0, 2).map(x => x.trim()).join(' ') || t;
     return t.length >= 12 && t.length <= 400 ? t : '';
 }

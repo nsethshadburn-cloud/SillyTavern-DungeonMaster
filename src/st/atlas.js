@@ -24,6 +24,7 @@ import { describeRoom, describePrompt, cleanDescription } from '../core/describe
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
+import { voiceLine } from './voices.js';
 import { trimToTokens, extractJson } from '../core/text.js';
 
 const places = new Map(); // `${campaignId}:${key}` -> place
@@ -189,12 +190,28 @@ export function roomBrief(c, name) {
     const pos = cur && whereIs(cur.place, name);
     if (!pos) return { room: '', things: '', exits: '' };
     const rm = roomAt(cur.place, pos.floor, pos.x, pos.y);
-    if (!rm) return { room: 'A passage between rooms.', things: '', exits: '' };
+    const known = knownRooms(c, cur.place, name, rm);
+    if (!rm) return { room: 'A passage between rooms.', things: '', exits: '', known };
     return {
         room: `${rm.name}${rm.description ? `: ${rm.description}` : ''}`,
         things: thingsIn(cur.place, rm).map(t => t.name).join(', '),
         exits: exitsOf(cur.place, rm).join('; '),
+        known,
     };
+}
+
+/**
+ * The rooms a companion knows of in this place: the ones the party has been in, and, when their
+ * knowledge says they know the place, the rooms of their floor (its name only; no secrets). Nothing
+ * else: a companion never gets the whole map.
+ */
+function knownRooms(c, place, name, here) {
+    const names = new Set();
+    for (const id of place.state.visited || []) if (place.rooms[id]?.name) names.add(place.rooms[id].name);
+    const knowledge = nameKey(c.meta.knowledge?.[name] || '');
+    const knowsPlace = knowledge && (knowledge.includes(nameKey(place.name)) || /\bknow(s|n)? (this|the) (place|building|gaol|jail|prison|house|castle|keep|dungeon|manor|mansion|temple|tower|inside and out)\b/.test(knowledge));
+    if (knowsPlace && here) for (const r of Object.values(place.rooms)) if (r.floor === here.floor && r.name && !r.hidden) names.add(r.name);
+    return [...names].slice(0, 30).join(', ');
 }
 
 /** Where a companion could go on their own right now: things in their room, and rooms next door. [{id, name}] */
@@ -755,7 +772,10 @@ async function noteRoom(c, place, { quiet = false } = {}) {
     if (quiet) return;
     // Written the first time anyone walks in (and kept): by the local model from the room's facts, or from pieces.
     if (!room.description) room.description = await writeDescription(place, room);
-    if (room.description) await postNarration(`**${room.name}.** ${room.description}`);
+    if (room.description) {
+        await postNarration(`**${room.name}.** ${room.description}`);
+        voiceLine({ kind: 'dm', text: `${room.name}. ${room.description}` });
+    }
 }
 
 /** A room's description from its facts: the local model if there is one, else put together in code. */
@@ -1161,8 +1181,20 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         const { runTurn } = await import('./orchestrator.js');
         await runTurn({ moved: true });
     } else if (greet.length && !handoff) {
-        const { companionsSeeYou } = await import('./orchestrator.js');
-        await companionsSeeYou(c, greet);
+        // Finding a companion held somewhere for the first time: the DM writes her first words (from
+        // her mind and what she knows), not a cheap local guess. Later comings and goings stay local.
+        const first = greet.find(g => g.kind === 'held' && !place.state.greeted?.[g.name]);
+        if (first) {
+            place.state.greeted ??= {};
+            place.state.greeted[first.name] = true;
+            savePlace(key, c);
+            walked = 0;
+            const { runTurn } = await import('./orchestrator.js');
+            await runTurn({ force: 'explore', placeEvent: `${c.meta.persona.name} has just found ${first.name}, held in ${first.room || 'this room'}${first.why ? ` (${first.why.replace(/\s*\(on the map:.*\)$/, '')})` : ''}. This is their first meeting here. Narrate only what ${c.meta.persona.name} sees, and brief ${first.name} for her first words from her mind and what she knows: she can't get out by herself, and she knows nothing of this place beyond what she has seen.` });
+        } else {
+            const { companionsSeeYou } = await import('./orchestrator.js');
+            await companionsSeeYou(c, greet);
+        }
     } else if (newRoom && !handoff) {
         const { companionCuriosity } = await import('./orchestrator.js');
         await companionCuriosity(c, newRoom);
@@ -1272,7 +1304,8 @@ export async function applyMapSync(c, ops) {
                 log.push(`${player} ${ch.op === 'hide' ? 'hides' : ch.op === 'pose' ? ch.how + 's' : 'goes'} by the ${thingLabel(place, to)}`);
                 continue;
             }
-            const went = await companionGoTo(c, ch.who, to, { hide: ch.op === 'hide', pose: ch.op === 'pose' ? ch.how : '' });
+            // Walking over to something keeps them following; only hiding or lying down means they stay put.
+            const went = await companionGoTo(c, ch.who, to, { hide: ch.op === 'hide', pose: ch.op === 'pose' ? ch.how : '', stay: ch.op !== 'move' });
             if (went) log.push(`${ch.who} → ${went}`);
         } else if (ch.op === 'gone') {
             const g = personByName(place, ch.who);
@@ -1352,7 +1385,8 @@ export function syncContext(c) {
         .map(p => ({ id: p.id, name: thingName(p), at: at(p.x, p.y), room: roomName(p.x, p.y) }));
     const doors = Object.values(place.doors).filter(d => d.floor === floorId && d.state !== 'hidden' && d.state !== 'walled' && (d.rooms.some(r => rooms.has(r)) || seen[d.y * map.w + d.x]))
         .map(d => ({ id: d.id, name: `${d.state} ${d.kind === 'cell' ? 'cell door' : 'door'}`, at: at(d.x, d.y), room: d.rooms.map(r => place.rooms[r]?.name).filter(Boolean).join(' / ') }));
-    const floorRooms = Object.values(place.rooms).filter(r => r.floor === floorId && (place.state.visited.includes(r.id) || rooms.has(r.id))).slice(0, 30).map(r => ({ id: r.id, name: r.name }));
+    // Every room on this floor (the ones the party knows first): the story can send a guard back to his post even if the party hasn't been there.
+    const floorRooms = Object.values(place.rooms).filter(r => r.floor === floorId).sort((a, b) => Number(place.state.visited.includes(b.id) || rooms.has(b.id)) - Number(place.state.visited.includes(a.id) || rooms.has(a.id))).slice(0, 40).map(r => ({ id: r.id, name: r.name }));
     const items = Object.values(place.items || {}).filter(i => i.state !== 'taken' && i.floor === floorId && (rooms.has(i.room) || seen[i.y * map.w + i.x])).slice(0, 20)
         .map(i => ({ id: i.id, name: i.name, room: place.rooms[i.room]?.name ?? 'here', hidden: i.hidden && !i.found }));
     const w = c.docs.world;

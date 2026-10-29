@@ -117,6 +117,11 @@ export function settings() {
         }
         s.defaultsV7 = true;
     }
+    // v0.30: the room note gained the rooms a companion knows and a no-invention line (untouched old default only).
+    if (!s.roomV30) {
+        if (s.templates?.room === OLD_DEFAULTS.room) s.templates.room = DEFAULT_TEMPLATES.room;
+        s.roomV30 = true;
+    }
     // v0.24: everyday jobs left on the main model move to the light one (Haiku), which hands big
     // moments up by itself. Jobs someone set to another model stay as they are.
     if (!s.lightV24) {

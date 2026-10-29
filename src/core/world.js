@@ -317,6 +317,21 @@ export function lookupModifier(stats, req) {
     return { mod: 0, source: 'flat' };
 }
 
+/**
+ * The damage dice for one of someone's sheet attacks, when the DM asked for a damage roll without
+ * saying what to roll: the attack named in `hint` (the roll's reason), else their first attack; the
+ * dice doubled on a critical hit ("1d4+5" -> "2d4+5"). '' when the sheet has none.
+ */
+export function attackDamage(stats, hint = '', { critical = false } = {}) {
+    const attacks = Array.isArray(stats?.attacks) ? stats.attacks.filter(a => a && a.damage) : [];
+    if (!attacks.length) return '';
+    const h = String(hint || '').toLowerCase();
+    const atk = attacks.find(a => a.name && h.includes(String(a.name).toLowerCase())) ?? attacks[0];
+    let dmg = String(atk.damage).trim();
+    if (critical) dmg = dmg.replace(/(\d*)d(\d+)/gi, (m, n, s) => `${(Number(n) || 1) * 2}d${s}`);
+    return dmg;
+}
+
 // ---------- Combat ----------
 
 /**

@@ -85,7 +85,7 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
         '"stalled": true if the conversation is going in circles with no progress for several messages.',
         '"refusing": true if the player refuses, resists, dodges or bargains against what another character is asking or trying to make them do (even calmly).',
         speakers.length
-            ? `"speakers": who would naturally reply next, 0, 1 or 2 names chosen ONLY from: ${speakers.map(s => JSON.stringify(s)).join(', ')}. Use [] when nobody nearby would answer (the player is acting alone, talking to themselves, or nothing calls for a reply). Nobody has to reply every time.`
+            ? `"speakers": who would naturally reply next, 0, 1 or 2 names chosen ONLY from: ${speakers.map(s => JSON.stringify(s)).join(', ')}. Use [] when nobody nearby would answer (the player is acting alone, talking to themselves, or nothing calls for a reply). Nobody has to reply every time. While the player is just moving about, searching, or working a lock (not talking to anyone), companions usually say nothing: use [] unless the player speaks to them or something right in front of them is worth a quick word.`
             : '"speakers": [] (nobody is with the player right now).',
         away.length ? `Not with the player (can't hear or reply): ${away.join('; ')}.` : '',
         '"addressed": the name of the character the player is speaking to or acting toward (any name, even if not in that list), or "" if nobody in particular.',
@@ -163,13 +163,17 @@ export function companionActionPrompt({ name, message, scene, places = [], askAt
     return { system, user };
 }
 
-export function parseCompanionAction(text, places = []) {
+/** Words that really mean a companion is staying behind (the classifier over-reads "I'll watch the door" as staying). */
+const STAY_WORDS = /\b(wait here|stay here|stay behind|stay put|staying here|staying behind|i('ll| will) stay|i('m| am) staying|i('ll| will) wait|not coming|go (on )?without me|leave me here|you go ahead|i('m| am) not (going|coming|leaving))\b/i;
+
+export function parseCompanionAction(text, places = [], message = '') {
     const data = extractJson(text) || {};
     const attempt = data.attempt === true || data.attempt === 'true';
     const go = String(data.go ?? '').trim();
     const ok = places.some(p => p.id === go);
     const pose = String(data.pose ?? '').trim().toLowerCase();
-    const stance = String(data.stance ?? '').trim().toLowerCase();
+    let stance = String(data.stance ?? '').trim().toLowerCase();
+    if (stance === 'stay' && message && !STAY_WORDS.test(String(message))) stance = '';
     return {
         attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '',
         ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}),
