@@ -58,6 +58,7 @@ export const DEFAULTS = Object.freeze({
     eventGrowth: 0.025,
     eventCap: 0.45,
     recentMessages: 24,         // transcript messages sent to the DM
+    injectionMaxTokens: 600,    // the most the bot's note may add to a local prompt (also capped by the live context)
 
     // What the roleplay model is told (editable, each with "reset to default")
     templates: { ...DEFAULT_TEMPLATES },

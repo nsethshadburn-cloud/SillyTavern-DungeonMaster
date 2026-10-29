@@ -8,6 +8,8 @@
 // SillyTavern's own macros ({{char}}, {{user}}, ...) also work. A line containing a plugin
 // placeholder that's empty is dropped, so empty fields never leave half-sentences behind.
 
+import { estimateTokens, trimToTokens } from './text.js';
+
 export const DEFAULT_TEMPLATES = Object.freeze({
     scene: [
         '[Roleplay notes for {{char}}. Follow them, never mention them.',
@@ -93,6 +95,48 @@ export function renderTemplate(template, vars) {
     let text = out.join('\n').trim();
     if (lostClosingBracket && text.startsWith('[') && !text.endsWith(']')) text += ']';
     return text;
+}
+
+/**
+ * How many tokens the note may take: the player's "max tokens added to local prompts" setting,
+ * and never more than a sixth of what the live context leaves after the response. The context size
+ * and response length are SillyTavern's current settings, so a smaller model is respected.
+ * @param {{injectionMaxTokens?: number}} s settings
+ * @param {{maxContext?: number, responseLength?: number}} live
+ */
+export function noteBudget(s, { maxContext = 0, responseLength = 0 } = {}) {
+    const wanted = Number(s?.injectionMaxTokens) || DEFAULT_NOTE_TOKENS;
+    const free = Number(maxContext) > 0 ? Math.floor(Math.max(0, Number(maxContext) - (Number(responseLength) || 0)) / 6) : Infinity;
+    return Math.max(MIN_NOTE_TOKENS, Math.min(wanted, free));
+}
+
+export const DEFAULT_NOTE_TOKENS = 600;
+export const MIN_NOTE_TOKENS = 150;
+
+/** When the note is too long, these parts give way first (the brief, "happened" and the combat line never do). */
+export const SHRINK_ORDER = Object.freeze(['avoid', 'knowledge', 'room', 'state', 'scene']);
+
+/**
+ * Fit the note's parts into a token budget. parts: [{key, text}] in display order. Parts are
+ * shortened in SHRINK_ORDER (the least important first, dropped entirely when they can't help),
+ * so the DM's brief and what just happened always arrive whole. Returns the texts, in order.
+ */
+export function fitNote(parts, maxTokens) {
+    const out = parts.map(p => ({ ...p }));
+    const total = () => out.reduce((n, p) => n + estimateTokens(p.text), 0);
+    let over = total() - maxTokens;
+    for (const key of SHRINK_ORDER) {
+        if (over <= 0) break;
+        const part = out.find(p => p.key === key && p.text);
+        if (!part) continue;
+        const have = estimateTokens(part.text);
+        // A little margin for the "…]" that closes a shortened part, so the cut never spills over.
+        const keep = have - over - 2;
+        // Too little left to say anything useful: drop the part instead of leaving a stub.
+        part.text = keep < 40 ? '' : trimToTokens(part.text, keep).replace(/\s*…$/, '…]');
+        over = total() - maxTokens;
+    }
+    return out.map(p => p.text).filter(Boolean);
 }
 
 /** Map a DM length word to the user's wording. */

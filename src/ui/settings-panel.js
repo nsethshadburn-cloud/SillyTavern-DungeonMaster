@@ -172,7 +172,7 @@ function panelHtml() {
         <label>World pace: the world moves on its own every N turns (faster when people are actively doing things to you)<input id="dm-checkin" type="number" min="1" max="20" class="text_pole" value="${s.checkinEvery}"></label>
         <label>Usual session length (min)<input id="dm-session" type="number" min="15" max="600" class="text_pole" value="${s.usualSessionMinutes}"></label>
         <label>Chat messages sent to the DM<input id="dm-recent" type="number" min="6" max="80" class="text_pole" value="${s.recentMessages}"></label>
-        <label>Max tokens added to local prompts<input id="dm-inject" type="number" min="100" max="2000" class="text_pole" value="${s.injectionMaxTokens}"></label>
+        <label>Max tokens the bot's note may add to a local prompt (never more than a sixth of your free context; the brief is always kept whole)<input id="dm-inject" type="number" min="100" max="2000" class="text_pole" value="${s.injectionMaxTokens}"></label>
       </div>
 
       <h4>What the bot is told</h4>

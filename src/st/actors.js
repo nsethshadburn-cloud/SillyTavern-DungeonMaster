@@ -11,7 +11,7 @@ import { dmType } from './messages.js';
 import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
 import { addNpcs, isAway, awareSummary } from '../core/world.js';
-import { renderTemplate, lengthText, pronounsFor } from '../core/notes.js';
+import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
 import { roomBrief, currentPlace } from './atlas.js';
@@ -86,28 +86,32 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
     if (!c) return '';
     const s = settings();
     const vars = sceneVars(c);
-    const parts = npc
-        ? [renderTemplate(s.templates.npc, {
-            ...vars,
-            npc: npc.name,
-            description: [npc.description, npc.stats ? `Capabilities: ${npc.stats}.` : ''].filter(Boolean).join(' '),
-            pronouns: pronounsFor(npc.gender),
-            attitude: npc.attitude || '',
-        })]
-        : [renderTemplate(s.templates.scene, vars)];
+    const parts = [];
+    parts.push({
+        key: 'scene', text: npc
+            ? renderTemplate(s.templates.npc, {
+                ...vars,
+                npc: npc.name,
+                description: [npc.description, npc.stats ? `Capabilities: ${npc.stats}.` : ''].filter(Boolean).join(' '),
+                pronouns: pronounsFor(npc.gender),
+                attitude: npc.attitude || '',
+            })
+            : renderTemplate(s.templates.scene, vars),
+    });
     const state = stateVars(c, speaker, { npc: Boolean(npc) });
-    parts.push(renderTemplate(s.templates.state, { ...vars, ...state }));
-    if (c.meta.happened) parts.push(renderTemplate(s.templates.happened, { ...vars, happened: c.meta.happened }));
+    parts.push({ key: 'state', text: renderTemplate(s.templates.state, { ...vars, ...state }) });
+    if (c.meta.happened) parts.push({ key: 'happened', text: renderTemplate(s.templates.happened, { ...vars, happened: c.meta.happened }) });
     const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
-    if (knowledge) parts.push(renderTemplate(s.templates.knowledge, { ...vars, knowledge }));
+    if (knowledge) parts.push({ key: 'knowledge', text: renderTemplate(s.templates.knowledge, { ...vars, knowledge }) });
     if (speaker) {
         const here = roomBrief(c, speaker);
-        if (here.room && s.templates.room) parts.push(renderTemplate(s.templates.room, { ...vars, ...here }));
+        if (here.room && s.templates.room) parts.push({ key: 'room', text: renderTemplate(s.templates.room, { ...vars, ...here }) });
     }
-    if (c.meta.pacing?.inCombat) parts.push(renderTemplate(s.templates.combat, vars));
-    if (state.avoid) parts.push(renderTemplate(s.templates.avoid, { ...vars, avoid: state.avoid }));
-    if (brief) parts.push(renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }));
-    return parts.filter(Boolean).join('\n');
+    if (c.meta.pacing?.inCombat) parts.push({ key: 'combat', text: renderTemplate(s.templates.combat, vars) });
+    if (state.avoid) parts.push({ key: 'avoid', text: renderTemplate(s.templates.avoid, { ...vars, avoid: state.avoid }) });
+    if (brief) parts.push({ key: 'brief', text: renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }) });
+    // Sized to the player's setting and the live context, so the note never crowds out the chat.
+    return fitNote(parts, noteBudget(s, { maxContext: ST.maxContext, responseLength: ST.responseLength })).join('\n');
 }
 
 /** The note for the next generation when it rides inside the player's turn (noteMode 'message'). */

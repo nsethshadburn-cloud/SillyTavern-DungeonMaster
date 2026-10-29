@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DEFAULT_TEMPLATES, renderTemplate, lengthText, pronounsFor } from '../src/core/notes.js';
+import { DEFAULT_TEMPLATES, renderTemplate, lengthText, pronounsFor, fitNote, noteBudget, DEFAULT_NOTE_TOKENS, MIN_NOTE_TOKENS } from '../src/core/notes.js';
+import { estimateTokens } from '../src/core/text.js';
 import { normalizeMap, parseCoord, toCoord, applyPositions, placeMissing, renderMapText, distance, isWalkable } from '../src/core/grid.js';
 
 test('templates drop lines whose fields are empty and keep the closing bracket', () => {
@@ -66,4 +67,35 @@ test('textured maps: themes, props that block, map text for Claude', async () =>
     assert.match(text, /Props: altar \(black altar\) b2, rug c3/);
     assert.ok(THEMES.includes('tavern') && PROPS.brazier.light > 0);
     assert.ok(Number.isFinite(map.seed));
+});
+
+test('the note is sized to the setting and the live context; the brief always arrives whole', () => {
+    // The setting wins when the context is roomy; a small context caps it; nothing goes below the floor.
+    assert.equal(noteBudget({ injectionMaxTokens: 600 }, { maxContext: 16384, responseLength: 2048 }), 600);
+    assert.equal(noteBudget({}, { maxContext: 16384, responseLength: 2048 }), DEFAULT_NOTE_TOKENS);
+    assert.equal(noteBudget({ injectionMaxTokens: 600 }, { maxContext: 2048, responseLength: 512 }), 256);
+    assert.equal(noteBudget({ injectionMaxTokens: 600 }, { maxContext: 600, responseLength: 512 }), MIN_NOTE_TOKENS);
+    assert.equal(noteBudget({ injectionMaxTokens: 400 }, {}), 400, 'no context known: the setting alone');
+
+    const long = n => '[' + 'word '.repeat(n).trim() + ']';
+    const parts = [
+        { key: 'scene', text: long(60) },
+        { key: 'state', text: long(120) },
+        { key: 'happened', text: '[Just happened: the bolt is out.]' },
+        { key: 'knowledge', text: long(300) },
+        { key: 'room', text: long(80) },
+        { key: 'avoid', text: long(30) },
+        { key: 'brief', text: '[Game master\'s note: she wants Amber to give up.]' },
+    ];
+    const whole = fitNote(parts, 100000);
+    assert.equal(whole.length, parts.length, 'plenty of room: nothing changes');
+    const budget = 350;
+    const fitted = fitNote(parts, budget);
+    assert.ok(estimateTokens(fitted.join('\n')) <= budget + 5, 'within the budget');
+    assert.ok(fitted.includes(parts[6].text), 'the brief is untouched');
+    assert.ok(fitted.includes(parts[2].text), '"happened" is untouched');
+    assert.ok(!fitted.some(t => t === parts[5].text), 'the repeated-phrases line goes first');
+    const knowledge = fitted.find(t => t.startsWith('[word') && t.endsWith('…]'));
+    assert.ok(knowledge, 'a shortened part still closes its bracket');
+    assert.ok(fitted.some(t => t === parts[0].text), 'the scene note is cut last');
 });

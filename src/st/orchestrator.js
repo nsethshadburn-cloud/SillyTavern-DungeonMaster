@@ -58,6 +58,16 @@ export function isRunning() {
     return running;
 }
 
+/**
+ * A player message sent while a side flow held the turn (a companion looking around, companions
+ * reacting to you coming and going, the opening) asked for a rerun: run it now that we're free.
+ */
+function runQueuedTurn() {
+    if (!rerunRequested) return;
+    rerunRequested = false;
+    setTimeout(() => runTurn(), 50);
+}
+
 function budget() {
     const s = settings();
     return budgetStatus({ ...currentSpend(), monthlyCap: Number(s.monthlyCap), nightlySoftCap: Number(s.nightlySoftCap) });
@@ -657,6 +667,7 @@ export async function companionCuriosity(c, roomId) {
         status.finish('');
     } finally {
         running = false;
+        runQueuedTurn();
     }
 }
 
@@ -703,6 +714,7 @@ export async function companionsSeeYou(c, list) {
         status.finish('');
     } finally {
         running = false;
+        runQueuedTurn();
     }
 }
 
@@ -1488,10 +1500,7 @@ export async function runOpening(opening) {
         toastr.error(String(error?.message || error), 'Dungeon Master');
     } finally {
         running = false;
-        if (rerunRequested) {
-            rerunRequested = false;
-            setTimeout(() => runTurn(), 50);
-        }
+        runQueuedTurn();
     }
 }
 
