@@ -4,7 +4,7 @@
 //
 // Placeholders the plugin fills in: {{player}} {{party}} {{location}} {{present}} {{situation}}
 // {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}} {{knowledge}}
-// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}} {{room}} {{things}} {{exits}}.
+// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}} {{room}} {{things}} {{exits}} {{here}} {{known}}.
 // SillyTavern's own macros ({{char}}, {{user}}, ...) also work. A line containing a plugin
 // placeholder that's empty is dropped, so empty fields never leave half-sentences behind.
 
@@ -43,6 +43,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
     room: [
         '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
         '{{room}}',
+        'Right here with {{char}}: {{here}}',
         'In it: {{things}}',
         'Ways out: {{exits}}',
         'Rooms {{char}} knows of in this place: {{known}}',
@@ -86,6 +87,14 @@ export const OLD_DEFAULTS = Object.freeze({
         'In it: {{things}}',
         'Ways out: {{exits}}]',
     ].join('\n'),
+    roomV33: [
+        '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
+        '{{room}}',
+        'In it: {{things}}',
+        'Ways out: {{exits}}',
+        'Rooms {{char}} knows of in this place: {{known}}',
+        'Never name a room, door, passage, route or item that is not listed above: {{char}} doesn\'t know the rest of this place.]',
+    ].join('\n'),
 });
 
 export const DEFAULT_LENGTHS = Object.freeze({
@@ -94,7 +103,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: '4-6 sentences at most',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid', 'room', 'things', 'exits', 'known'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid', 'room', 'things', 'exits', 'known', 'here'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**

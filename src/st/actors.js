@@ -16,6 +16,7 @@ import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases }
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
 import { roomBrief, currentPlace } from './atlas.js';
 import { personByName, isOut, EARSHOT } from '../core/explore.js';
+import { ensureClock, hhmm, WEATHER_WORDS } from '../core/clock.js';
 
 const KEY_NOTE = 'DM_NOTE';
 const LEGACY_KEYS = ['DM_DIRECTION', 'DM_STANDING'];
@@ -26,11 +27,12 @@ const HIDDEN_TYPES = new Set(['narration', 'ooc', 'roll', 'note']);
 
 function sceneVars(c) {
     const w = c.docs.world;
-    const npcsHere = (c.docs.npcs || []).filter(n => w.location && isHere(n, w.location)).map(n => n.name);
+    const clock = ensureClock(w);
+    const npcsHere = w.location ? npcsInReach(c).map(n => n.name) : [];
     return {
         player: c.meta.persona.name,
         party: c.meta.party.map(p => p.name).join(', '),
-        location: [w.location, w.time].filter(Boolean).join(', '),
+        location: [w.location, w.time ? `${w.time} (${hhmm(clock.minutes)})` : '', w.weather && w.weather !== 'clear' ? WEATHER_WORDS[w.weather] : ''].filter(Boolean).join(', '),
         present: npcsHere.join(', '),
         situation: c.meta.standing || '',
         goal: c.meta.objective || '',
@@ -228,11 +230,13 @@ export async function markSceneStart(messageId = ST.chat.length - 1) {
 // ---------------- Who can speak ----------------
 
 /** Names the extension can make speak: party members + NPCs in the roster here. */
-export function speakerCandidates() {
-    const c = campaign();
+/**
+ * The roster NPCs who are here and in reach. On a map, someone who is on it counts only from the
+ * same floor, within earshot, and awake (a warden two floors up, or a jailer asleep at his desk,
+ * is not in the conversation); tied up still talks.
+ */
+export function npcsInReach(c = campaign()) {
     if (!c) return [];
-    // On a map, someone who is on it answers only from within reach: the same floor, within earshot, and awake
-    // (a warden two floors up, or a jailer asleep at his desk, is not in the conversation).
     const here = currentPlace(c);
     const lead = here?.place.state.positions[c.meta.persona.name];
     const inReach = name => {
@@ -241,8 +245,13 @@ export function speakerCandidates() {
         if (isOut(g) && g.down !== 'bound') return false;
         return g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
     };
-    const npcsHere = (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && inReach(n.name)).map(n => n.name);
-    return [...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n)), ...npcsHere];
+    return (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && inReach(n.name));
+}
+
+export function speakerCandidates() {
+    const c = campaign();
+    if (!c) return [];
+    return [...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n)), ...npcsInReach(c).map(n => n.name)];
 }
 
 /**

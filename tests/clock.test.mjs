@@ -9,6 +9,9 @@ import { normalizeDmTurn } from '../src/core/protocol.js';
 import { applyStateChanges } from '../src/core/world.js';
 import { expireConditions, untilWords } from '../src/core/upkeep.js';
 import { dampen, ignite, tickFire } from '../src/core/fire.js';
+import { whenLabel } from '../src/core/state.js';
+import { renderTemplate, DEFAULT_TEMPLATES, OLD_DEFAULTS } from '../src/core/notes.js';
+import { parseBookkeeping } from '../src/core/bookkeeper.js';
 
 test('the time of day in words follows the hour', () => {
     assert.equal(wordFor(0), 'night');
@@ -164,4 +167,27 @@ test('rain damps a fire down and nothing catches', () => {
     assert.equal(r.caught.length, 0, 'in the rain nothing catches');
     assert.deepEqual(dampen(map, 2), ['4,2'], 'a storm puts it out');
     assert.equal(Object.keys(map.fire).length, 0);
+});
+
+test('timeline labels follow the clock: a night entry remembered by day is "last night"', () => {
+    assert.equal(whenLabel({ day: 2, time: 'night' }, { day: 2, time: 'night' }), 'Earlier tonight');
+    assert.equal(whenLabel({ day: 2, time: 'night' }, { day: 2, time: 'morning' }), 'Last night');
+    assert.equal(whenLabel({ day: 2, time: 'afternoon' }, { day: 2, time: 'night' }), 'Earlier today');
+    assert.equal(whenLabel({ day: 1, time: 'evening' }, { day: 2, time: 'morning' }), 'Last night');
+    assert.equal(whenLabel({ day: 1, time: 'noon' }, { day: 4, time: 'morning' }), '3 days ago');
+});
+
+test('the room note names who is right there, and the old default template moves to it', () => {
+    const text = renderTemplate(DEFAULT_TEMPLATES.room, { char: 'Judy', room: 'Cell block', here: 'Turnkey Wren (a turnkey, 3 squares away, asleep); Amber (1 squares away)', things: 'a bench', exits: 'door to the yard', known: 'Cell block' });
+    assert.match(text, /Right here with \{\{char\}\}: Turnkey Wren .*asleep/);
+    assert.notEqual(OLD_DEFAULTS.roomV33, DEFAULT_TEMPLATES.room, 'the migration has something to move from');
+    assert.ok(DEFAULT_TEMPLATES.room.includes('{{here}}'));
+});
+
+test('the books cover the people on the map: the narration knocks a guard out', () => {
+    const story = 'Dungeon Master: Amber\'s cudgel cracks across the turnkey\'s skull and Turnkey Wren slumps to the floor, out cold.';
+    const changes = parseBookkeeping('{"conditions_add": {"Turnkey Wren": ["unconscious"]}, "conditions_remove": {}, "items_add": {}, "items_remove": {}}', {
+        names: ['Amber', 'Turnkey Wren'], itemNames: ['Amber'], story, conditionsOf: () => [], itemsOf: () => [], allItems: [],
+    });
+    assert.deepEqual(changes, { conditions_add: { 'Turnkey Wren': ['unconscious'] } });
 });

@@ -1,5 +1,6 @@
 // Undo for deleted DM turns. Before each turn the game state is put aside (HP, conditions, items,
-// gold, the fight, who's away, the map the party is on, a roll the DM is waiting for); after the
+// gold, the fight, who's away, the clock, the map the party is on, a roll the DM is waiting for,
+// the timeline, what the companions know and feel, the notes, the plot, the NPC roster); after the
 // turn, the messages it wrote are noted. Deleting that turn's DM narration (or every message it
 // wrote) puts the state back the way it was before the turn, so the story and the books agree.
 // Only the newest turns can be undone (in order): undoing an older one would also wipe out what
@@ -11,6 +12,8 @@ import { currentPlace, replacePlace } from './atlas.js';
 
 const KEEP = 6;
 let stack = [];
+const META_KEYS = ['turn', 'timeline', 'happened', 'knowledge', 'minds', 'standing', 'objective', 'pacing', 'tableRules', 'eventHistory', 'recentEventTypes', 'lastDriftStageCalled', 'lastHandledPlayer'];
+const DOC_KEYS = ['npcs', 'notes', 'story', 'plot'];
 
 const keyOf = m => `${m?.send_date ?? ''}|${String(m?.mes ?? '').slice(0, 60)}`;
 const clone = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -27,6 +30,9 @@ export function snapshotTurn(c = campaign()) {
         place: cur ? clone(cur.place) : null,
         pendingRoll: clone(c.meta.pendingRoll ?? null),
         stance: clone(c.meta.stance ?? {}),
+        // What else a turn writes: the companions' knowledge and minds, the timeline, the pacing, the notes.
+        meta: clone(Object.fromEntries(META_KEYS.map(k => [k, c.meta[k]]))),
+        docs: clone(Object.fromEntries(DOC_KEYS.map(k => [k, c.docs[k]]))),
         messages: [],
         narration: [],
     };
@@ -66,10 +72,14 @@ export async function onMessagesDeleted() {
     saveDoc('world');
     c.meta.pendingRoll = restore.pendingRoll;
     c.meta.stance = restore.stance;
+    for (const [k, v] of Object.entries(restore.meta ?? {})) if (v !== undefined) c.meta[k] = v;
     saveMeta();
+    for (const [k, v] of Object.entries(restore.docs ?? {})) if (v !== undefined) { c.docs[k] = v; saveDoc(k); }
     if (restore.placeKey && restore.place) replacePlace(restore.placeKey, restore.place, c);
     const { refreshMap } = await import('../ui/map.js');
     refreshMap();
-    toastr.info(`Rolled back ${undone > 1 ? `${undone} turns` : 'that turn'}: HP, conditions, items and the map are as they were before it.`, 'Dungeon Master', { timeOut: 6000 });
+    const { refreshStandingPrompt } = await import('./actors.js');
+    refreshStandingPrompt();
+    toastr.info(`Rolled back ${undone > 1 ? `${undone} turns` : 'that turn'}: HP, conditions, items, the clock, the map, the notes and what the companions know are as they were before it.`, 'Dungeon Master', { timeOut: 6000 });
     return undone;
 }

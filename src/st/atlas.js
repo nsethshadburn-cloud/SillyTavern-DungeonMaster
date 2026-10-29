@@ -195,14 +195,55 @@ export function roomBrief(c, name) {
     if (!pos) return { room: '', things: '', exits: '' };
     const rm = roomAt(cur.place, pos.floor, pos.x, pos.y);
     const known = knownRooms(c, cur.place, name, rm);
-    if (!rm) return { room: 'A passage between rooms.', things: '', exits: '', known };
+    const here = peopleWith(c, cur.place, name, pos, rm);
+    if (!rm) return { room: 'A passage between rooms.', things: '', exits: '', known, here };
     const t = trespassOf(cur.place, name, roomAt);
     return {
         room: `${rm.name}${rm.description ? `: ${rm.description}` : ''}${t ? ` (${name} is not supposed to be here: ${t.why === 'escaped' ? 'an escaped prisoner' : t.why}; anyone who belongs here would object)` : ''}`,
         things: thingsIn(cur.place, rm).map(t => t.name).join(', '),
         exits: exitsOf(cur.place, rm).join('; '),
         known,
+        here,
     };
+}
+
+/**
+ * Who is in the same room as `name` right now (or close by, in a corridor), from the map: party
+ * members and the place's people, with how far off they are and their state. "nobody else" when
+ * they're alone, so the model knows that too.
+ */
+function peopleWith(c, place, name, pos, rm) {
+    const dist = p => Math.max(Math.abs(p.x - pos.x), Math.abs(p.y - pos.y));
+    const withMe = p => p && p.floor === pos.floor && (rm ? roomAt(place, p.floor, p.x, p.y)?.id === rm.id : dist(p) <= 3);
+    const out = [];
+    for (const [n, p] of Object.entries(place.state.positions)) {
+        if (n === name || !withMe(p) || (isAway(c.docs.world, n) && !place.state.held?.[n])) continue;
+        out.push(`${n} (${dist(p)} squares away${place.state.held?.[n] ? ', held here' : ''})`);
+    }
+    for (const g of Object.values(place.guards)) {
+        if (g.state === 'gone' || !withMe(g)) continue;
+        const state = g.state === 'dead' ? 'dead' : g.down ? DOWN_WORDS[g.down] : outBy(conditionsOf(c.docs.world, g.name)) ? DOWN_WORDS[outBy(conditionsOf(c.docs.world, g.name))] : g.hostile === true ? 'hostile' : g.role === 'guard' ? 'a guard' : '';
+        out.push(`${g.name} (${g.description || 'someone'}, ${dist(g)} squares away${state ? `, ${state}` : ''})`);
+    }
+    return out.join('; ') || 'nobody else';
+}
+
+/**
+ * A condition the DM or the books put on one of the place's people (unconscious, asleep, tied up)
+ * takes them out of it on the map too, and its removal brings them back. Returns how many changed.
+ */
+export function syncDownFromConditions(c = campaign()) {
+    const cur = currentPlace(c);
+    if (!cur) return 0;
+    let n = 0;
+    for (const g of Object.values(cur.place.guards)) {
+        if (g.state === 'dead' || g.state === 'gone') continue;
+        const kind = outBy(conditionsOf(c.docs.world, g.name));
+        if (kind && g.down !== kind) { g.down = kind; g.downBy = 'conditions'; n++; }
+        else if (!kind && g.downBy === 'conditions') { delete g.down; delete g.downBy; n++; }
+    }
+    if (n) savePlace(cur.key, c);
+    return n;
 }
 
 /**

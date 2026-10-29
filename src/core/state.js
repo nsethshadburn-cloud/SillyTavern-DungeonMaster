@@ -113,7 +113,9 @@ const NIGHT = /night|evening|dusk/;
 export function whenLabel(entry, now) {
     const diff = (Number(now?.day) || 1) - (Number(entry?.day) || Number(now?.day) || 1);
     const night = NIGHT.test(String(entry?.time || ''));
-    if (diff <= 0) return night ? 'Earlier tonight' : 'Earlier today';
+    const nowNight = NIGHT.test(String(now?.time || ''));
+    // Something that happened in the night, remembered by day: last night (the day turns at midnight).
+    if (diff <= 0) return night ? (nowNight ? 'Earlier tonight' : 'Last night') : 'Earlier today';
     if (diff === 1) return night ? 'Last night' : `Yesterday${entry?.time ? ` (${entry.time})` : ''}`;
     return `${diff} days ago`;
 }

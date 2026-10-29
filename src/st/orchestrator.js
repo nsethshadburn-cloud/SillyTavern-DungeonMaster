@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky } from './atlas.js';
+import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -183,6 +183,8 @@ async function turnBody(c, opts, status, signal) {
     const autoRoll = meta.pendingRoll?.autoResult ?? null;
     const playerText = opts.force === 'manual' || autoRoll ? '' : lastPlayerMessage();
     meta.stats.lastTurnUsd = 0;
+    // A fight is on when the code has one; a scene the DM labelled "combat" without one never freezes the map.
+    if (pacing.inCombat && !c.docs.world.combat) { pacing.inCombat = false; status.note('No fight is running: the map moves again'); }
     // Last turn's map sync finishes first, so this turn starts from a map that matches the story.
     await mapSyncing;
     let turnUsd = 0;
@@ -648,7 +650,11 @@ async function bookkeep(c, fromIndex) {
     const story = trimToTokens(said.map(m => `${m.name}: ${m.mes}`).join('\n\n'), 1200, true);
     const w = c.docs.world;
     const party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
-    const present = [];
+    // The people on the map near the party are on the books too: knocked out, tied up or asleep in the
+    // narration takes them out of it on the map.
+    const here = currentPlace(c);
+    const lead = here?.place.state.positions[c.meta.persona.name];
+    const present = here && lead ? Object.values(here.place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= 12).map(g => g.name) : [];
     const own = n => w.inventory?.[matchName(n, Object.keys(w.inventory || {})) ?? ''] ?? [];
     const { system, user } = bookkeeperPrompt({
         status: party.map(n => ({ name: n, hp: w.party[n] ? `${w.party[n].hp}/${w.party[n].hp_max}` : '', conditions: conditionsOf(w, n), items: own(n) })),
@@ -658,7 +664,7 @@ async function bookkeep(c, fromIndex) {
     });
     const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 300, profileId: s.helperProfileId });
     const changes = parseBookkeeping(raw, {
-        names: party,
+        names: [...party, ...present],
         itemNames: party,
         story,
         conditionsOf: n => conditionsOf(w, n),
@@ -669,6 +675,7 @@ async function bookkeep(c, fromIndex) {
     const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name), { turn: c.meta.turn });
     if (!log.length) return;
     saveDoc('world');
+    syncDownFromConditions(c);
     await postDiceCard(`📜 Bookkeeping: ${log.join(' · ')}`, { state: true });
     refreshMap();
 }
@@ -1150,6 +1157,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
 
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
+    syncDownFromConditions(c);
     let initiativeCard = '';
     let mapChanged = false;
     // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.
