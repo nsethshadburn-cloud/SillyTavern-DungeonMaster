@@ -74,6 +74,9 @@ export const DEFAULTS = Object.freeze({
     mapBubbles: true,           // speech bubbles over figures on the map when companions and NPCs speak
     turnPrompts: true,          // in a fight: ask "done with your turn?" after your action, and whether you react before a hit lands
     guardsTalk: true,           // a guard or local who sees you may say one short line through the local model (else canned lines only)
+    sounds: false,              // EXPERIMENTAL: synthesized sound effects and ambient beds for the map (no files)
+    sfxVolume: 0.6,             // 0..1
+    ambientVolume: 0.3,         // 0..1
     figures: {},                // "p:<persona avatar>" / "c:<character avatar>" -> the look Claude described
 
     // Surprises Claude may add

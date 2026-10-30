@@ -23,6 +23,7 @@ import { fireAt } from '../core/fire.js';
 import { drawFigure } from './sprite-render.js';
 import { figureFor } from '../st/figures.js';
 import { setBubbleStage, clearBubbleStage } from './bubbles.js';
+import { sfx, syncAmbient, setAmbient } from './sound.js';
 import { nameKey } from '../core/text.js';
 import { ensureClock, clockText, hhmm, timeIcon, WEATHER_ICON, WEATHER_WORDS } from '../core/clock.js';
 
@@ -103,6 +104,7 @@ export function openMap() {
 export function closeMap() {
     panel?.classList.add('dm-hidden');
     clearBubbleStage();
+    setAmbient(null);
     choosing?.done(null);
 }
 
@@ -300,6 +302,7 @@ function renderMap(center = false) {
     panel.classList.toggle('dm-map-trespassing', Boolean(b.trespass));
     panel.classList.toggle('dm-map-night', Boolean(b.night));
     panel.classList.toggle('dm-map-busy', busy);
+    syncAmbient(c, b);
     panel.classList.toggle('dm-map-choosing', Boolean(choosing));
     anchorAboveForm();
     panel.innerHTML = `
@@ -469,6 +472,8 @@ function nameOffset(name) {
 
 /** Play an animation on someone's figure (attack, hurt) from the turn code. */
 export function playAnim(name, anim, ms = anim === 'attack' ? 420 : 500) {
+    if (anim === 'attack') sfx('whoosh');
+    else if (anim === 'hurt') sfx('hit');
     const m = motion.get(name) ?? {};
     Object.assign(m, { anim, animStart: performance.now(), animUntil: performance.now() + ms });
     motion.set(name, m);

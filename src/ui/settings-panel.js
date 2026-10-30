@@ -1,6 +1,7 @@
 // Settings drawer in SillyTavern's Extensions panel.
 
 import { ST } from '../st/st.js';
+import { refreshSoundSettings } from './sound.js';
 import { settings, saveSettings, connectionProfiles, currentSpend, SURPRISES } from '../st/settings.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } from '../core/notes.js';
 import { buildNote, refreshStandingPrompt } from '../st/actors.js';
@@ -237,6 +238,10 @@ function panelHtml() {
       <label class="checkbox_label"><input id="dm-show-status" type="checkbox" ${s.showStatus ? 'checked' : ''}> Show the live status bar</label>
       <label class="checkbox_label"><input id="dm-collapse-status" type="checkbox" ${s.statusAutoCollapse ? 'checked' : ''}> Collapse it when a turn finishes</label>
 
+      <h4>Experimental</h4>
+      <label class="checkbox_label"><input id="dm-sounds" type="checkbox" ${s.sounds === true ? 'checked' : ''}> Sound. Short effects for what happens on the map (lock picks, footsteps, doors, swings and hits, traps, cuffs, dice, a guard's shout) and a quiet ambient bed for where you are (a dripping dungeon, a still room, wind, rain, a storm, crickets, a fire). All of it is made in the browser as you play: no files. The bed steps back while a voice line plays.</label>
+      <div class="dm-row"><label>Effects <input id="dm-sfx-volume" type="range" min="0" max="1" step="0.05" value="${Number.isFinite(Number(s.sfxVolume)) ? s.sfxVolume : 0.6}"></label> <label>Ambient <input id="dm-ambient-volume" type="range" min="0" max="1" step="0.05" value="${Number.isFinite(Number(s.ambientVolume)) ? s.ambientVolume : 0.3}"></label></div>
+
       <h4>Character sheets</h4>
       <div id="dm-sheets" class="dm-sheets"></div>
     </div>
@@ -399,6 +404,10 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindCheck('dm-map-bubbles', 'mapBubbles');
     bindCheck('dm-turn-prompts', 'turnPrompts');
     bindCheck('dm-guards-talk', 'guardsTalk');
+    bindCheck('dm-sounds', 'sounds', refreshSoundSettings);
+    bindNumber('dm-sfx-volume', 'sfxVolume');
+    bindNumber('dm-ambient-volume', 'ambientVolume');
+    $('#dm-sfx-volume, #dm-ambient-volume').on('input change', refreshSoundSettings);
     bindNumber('dm-monthly', 'monthlyCap');
     bindNumber('dm-nightly', 'nightlySoftCap');
     bindCheck('dm-caching', 'cachingEnabled');

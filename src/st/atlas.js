@@ -24,6 +24,7 @@ import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
 import { inferStanding, setStanding, standingOf, standingFor, trespassOf, zoneOf, givesIn } from '../core/access.js';
 import { lineRole } from '../core/lines.js';
+import { sfx } from '../ui/sound.js';
 import { watchParty } from './watch.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
@@ -677,6 +678,7 @@ export async function pickLock(doorId, redraw = () => { }) {
     c.docs.rolls_log.push({ at: new Date().toISOString(), who: player, what: `${skill} (picking ${door.id})`, kind: 'check', natural, mod, total, dc, success: ok });
     saveDoc('rolls_log');
     if (ok) {
+        sfx('lockpick', { ok: true });
         setDoorState(place, door, 'open');
         delete door.picks;
         await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✔ · it clicks open.`, { roll: { who: player, what: skill, natural, total, success: true } });
@@ -689,6 +691,7 @@ export async function pickLock(doorId, redraw = () => { }) {
         return;
     }
     const { count, alarm } = notePickFailure(door, player, natural);
+    sfx('lockpick', { ok: false, snap: natural === 1 });
     savePlace(key, c);
     await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✘${natural === 1 ? ' · the pick snaps with a loud scrape.' : ` · it won't give (${count} tr${count > 1 ? 'ies' : 'y'}).`}`, { roll: { who: player, what: skill, natural, total, success: false } });
     if (!alarm) return;
@@ -1286,6 +1289,7 @@ export async function takeToCell(c, guard, room, { cuffs = false } = {}) {
         if (!w.party[player].conditions.some(x => /cuff/i.test(x))) w.party[player].conditions.push('cuffed');
         saveDoc('world');
         refreshMap();
+        sfx('chains');
         await sleep(900);
     }
     const others = new Set([
@@ -1305,6 +1309,7 @@ export async function takeToCell(c, guard, room, { cuffs = false } = {}) {
     const gSpot = door ? openSquareNear(place, room.floor, door.x, door.y, taken, 2) : openSquareNear(place, room.floor, at.x, at.y, taken, 2);
     if (gSpot) Object.assign(guard, { floor: room.floor, x: gSpot.x, y: gSpot.y, room: roomAt(place, room.floor, gSpot.x, gSpot.y)?.id ?? outsideRoom ?? guard.room });
     for (const d of cellDoors) setDoorState(place, d, 'locked');
+    sfx('lock');
     // He has them: no longer after anyone, not an enemy; and whoever else was after them stands down.
     for (const g of Object.values(place.guards)) {
         if (g.seize?.target === player) delete g.seize;
@@ -1583,9 +1588,10 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     try {
         for (const [x, y] of path) {
             const d = doorAt(place, floorId, x, y);
-            if (d && d.state === 'closed') setDoorState(place, d, 'open');
+            if (d && d.state === 'closed') { setDoorState(place, d, 'open'); sfx('door'); }
             lead.x = x; lead.y = y;
             walked++;
+            sfx('step', { theme: floorById(place, floorId).map.theme });
             advance();
             // Anyone after the party keeps after them, a step for each of the player's.
             const caught = moveHunters(place, floorId, quarry, 1, { skip: g => outByWorld(c, g) });
@@ -1595,6 +1601,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             // A trap here. Hidden ones stay hidden until someone searches the room (a Perception or
             // Investigation roll) or steps on one: then it springs.
             const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
+            if (sprung) sfx('trap');
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             if (caught.length) { redraw(); event = hunterEvent(caught); break; }
             // A guard after the player has reached them: he grabs (the dice card asks the player to slip free).

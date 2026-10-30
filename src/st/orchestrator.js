@@ -34,6 +34,7 @@ import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
 import { drainTalk } from './talk.js';
+import { sfx } from '../ui/sound.js';
 import { readsAsRunning } from '../core/notice.js';
 import { lineRole } from '../core/lines.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
@@ -1645,7 +1646,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             savePlace(here.key, c);
         }
     }
-    if (initiativeCard) await postDiceCard(initiativeCard, { combat: true });
+    if (initiativeCard) { sfx('drum'); await postDiceCard(initiativeCard, { combat: true }); }
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
 
     // Companion/NPC/enemy rolls: code-rolled, shown openly WITH what happened.

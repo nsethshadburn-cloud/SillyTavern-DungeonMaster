@@ -3,6 +3,6 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "test": "node tests/check-syntax.mjs && node --test tests/core.test.mjs tests/held.test.mjs tests/seen.test.mjs tests/notes-grid.test.mjs tests/state.test.mjs tests/places.test.mjs tests/sprites.test.mjs tests/restraints.test.mjs tests/fire.test.mjs tests/bookkeeper.test.mjs tests/tracking.test.mjs tests/architect.test.mjs tests/upkeep.test.mjs tests/minds.test.mjs tests/mapfix.test.mjs tests/leash.test.mjs tests/speech.test.mjs tests/access.test.mjs tests/night.test.mjs tests/clock.test.mjs"
+        "test": "node tests/check-syntax.mjs && node --test tests/core.test.mjs tests/held.test.mjs tests/seen.test.mjs tests/sound.test.mjs tests/notes-grid.test.mjs tests/state.test.mjs tests/places.test.mjs tests/sprites.test.mjs tests/restraints.test.mjs tests/fire.test.mjs tests/bookkeeper.test.mjs tests/tracking.test.mjs tests/architect.test.mjs tests/upkeep.test.mjs tests/minds.test.mjs tests/mapfix.test.mjs tests/leash.test.mjs tests/speech.test.mjs tests/access.test.mjs tests/night.test.mjs tests/clock.test.mjs"
     }
 }

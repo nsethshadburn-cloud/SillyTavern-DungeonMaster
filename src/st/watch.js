@@ -15,6 +15,7 @@ import { settings } from './settings.js';
 import { floorById, personByName, setIntent } from '../core/explore.js';
 import { lineRole } from '../core/lines.js';
 import { matchName } from '../core/text.js';
+import { sfx } from '../ui/sound.js';
 
 /** Did this person speak in the last few messages (a conversation is going on)? */
 function spokeLately(name, within = 8) {
@@ -74,5 +75,6 @@ export function watchParty(c, cur, names) {
         place.state.said = [...(place.state.said || []).slice(-5), { name: l.name, text: l.text, turn: c.meta.turn }];
         postNpc(l.name, `"${l.text}"`).catch(error => console.warn('[Dungeon Master] could not post a line', error));
     }
+    if (r.events.length) sfx('alert');
     return { events: r.events, lines: r.lines };
 }

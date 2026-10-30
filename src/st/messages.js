@@ -3,6 +3,7 @@
 // try to voice names that aren't characters; our own voice player handles them.
 
 import { ST, EXT_PATH } from './st.js';
+import { sfx } from '../ui/sound.js';
 
 export const DM_NAME = 'Dungeon Master';
 export const DM_AVATAR = `${EXT_PATH}/assets/dm.svg`;
@@ -73,6 +74,7 @@ export async function postNpc(name, text, npc = null) {
 
 /** A dice card. Hidden from the local model; the DM sees results through its own summaries. */
 export async function postDiceCard(markdown, data = {}) {
+    if (data.roll) sfx('dice');
     return push(baseMessage('Dice', markdown, { avatar: DICE_AVATAR, hidden: true, type: 'roll', data }), { emitReceived: false });
 }
 
