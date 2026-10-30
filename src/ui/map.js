@@ -300,6 +300,7 @@ function renderMap(center = false) {
     panel.classList.toggle('dm-map-trespassing', Boolean(b.trespass));
     panel.classList.toggle('dm-map-night', Boolean(b.night));
     panel.classList.toggle('dm-map-busy', busy);
+    panel.classList.toggle('dm-map-choosing', Boolean(choosing));
     anchorAboveForm();
     panel.innerHTML = `
 <div class="dm-map-head">
@@ -355,7 +356,7 @@ ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
         closeMenu();
         const sq = squareFromEvent(ev, canvas, map);
         if (!sq) return;
-        if (busy) { toastr.info('The DM is still working on the last turn. Wait for it to finish.', 'Dungeon Master'); return; }
+        // A choice the turn is waiting on ("which guard?", "which chest?") always takes the tap.
         if (choosing) {
             const hit = choosing.choices.find(ch => sq.x >= ch.x - 0 && sq.x < ch.x + (ch.w || 1) && sq.y >= ch.y && sq.y < ch.y + (ch.h || 1))
                 ?? choosing.choices.find(ch => sq.x >= ch.x - 1 && sq.x <= ch.x + (ch.w || 1) && sq.y >= ch.y - 1 && sq.y <= ch.y + (ch.h || 1));
@@ -363,6 +364,7 @@ ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
             else toastr.info(`${choosing.title} Tap one of the numbered ones.`, 'Map', { timeOut: 2000 });
             return;
         }
+        if (busy) { toastr.info('The DM is still working on the last turn. Wait for it to finish.', 'Dungeon Master'); return; }
         // Anyone (you included): a little card with their name, health and what they're doing. What
         // people do goes through the chat, so the story and the characters decide it.
         const who = exploring ? whoAt(b.positions, map, sq) : null;

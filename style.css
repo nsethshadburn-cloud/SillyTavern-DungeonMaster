@@ -216,6 +216,10 @@
 .dm-map.dm-map-busy .dm-map-busy-note { display: flex; }
 .dm-map.dm-map-busy .dm-map-view { opacity: 0.8; }
 .dm-map.dm-map-busy .dm-map-actions .menu_button { opacity: 0.4; pointer-events: none; }
+/* The turn is waiting on the player to pick something on the map: that is not "busy" for them. */
+.dm-map.dm-map-choosing .dm-map-busy-note { display: none; }
+.dm-map.dm-map-choosing .dm-map-view { opacity: 1; }
+.dm-map.dm-map-choosing .dm-map-actions .menu_button { opacity: 1; pointer-events: auto; }
 .dm-map-pending { flex: 1; font-size: 0.85em; opacity: 0.85; min-width: 140px; }
 .dm-map-actions .menu_button { margin: 0; padding: 4px 10px; }
 .dm-map-actions .menu_button[disabled] { opacity: 0.4; pointer-events: none; }

@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.40.2 (a choice on the map is never "busy")
+- The busy guard sat in front of the "pick one on the map" prompt (`chooseOnMap` runs inside the turn, so `running` is true): taps were refused and the choice buttons greyed out. A pending choice now takes the tap first, and `dm-map-choosing` hides the busy banner and re-enables the buttons.
+
 ### v0.40 (a fight keeps count: whose turn, squares moved)
 - `world.combat` carries `speed` (squares per fighter, set at start_combat), `moved` (squares used this round) and `dash` (who dashed, which round). `moveBudget/spendMove/markDash/newRound` in core/world.js. The DM's positions for the party are clamped to what's LEFT this round (not a fresh speed per message, which let the player's "Not yet" turn move 14 squares) and the cost is spent; the round resets `moved`. The COMBAT line tells the DM used/allowed per fighter.
 - The map's reach (lit squares) and the tap check use what's left; the actions text says squares left or "no movement left (say you Dash)".
