@@ -142,6 +142,20 @@
 .dm-map-btn:hover { opacity: 1; }
 .dm-map-btn.dm-map-off { opacity: 0.3; }
 .dm-map-body { overflow: auto; padding: 8px 10px 10px; }
+/* The fight's turn strip: round, whose turn, the player's movement left, the initiative order. */
+.dm-map-turn { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 5px 10px; font-size: 0.82em; border-bottom: 1px solid var(--SmartThemeBorderColor); background: rgba(0, 0, 0, 0.18); }
+.dm-turn-round { font-weight: 700; }
+.dm-turn-who { padding: 1px 8px; border-radius: 9px; font-weight: 700; letter-spacing: 0.03em; }
+.dm-turn-who.you { background: #2e7d32; color: #fff; animation: dm-yourturn 1.4s infinite ease-in-out; }
+.dm-turn-who.wait { background: rgba(255, 255, 255, 0.12); opacity: 0.85; }
+@keyframes dm-yourturn { 0%, 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.6); } 50% { box-shadow: 0 0 0 5px rgba(76, 175, 80, 0); } }
+.dm-turn-move { opacity: 0.9; }
+.dm-turn-order { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.dm-turn-chip { padding: 0 6px; border-radius: 8px; background: rgba(255, 255, 255, 0.08); border: 1px solid transparent; font-size: 0.95em; }
+.dm-turn-chip.me { border-color: #ffd54a; }
+.dm-turn-chip.foe { border-color: rgba(229, 57, 53, 0.7); }
+.dm-turn-chip.friend { border-color: rgba(76, 175, 80, 0.7); }
+.dm-turn-chip.active { background: #ffd54a; color: #222; font-weight: 700; }
 .dm-map.dm-map-min .dm-map-body { display: none; }
 .dm-map-grid { display: grid; gap: 1px; user-select: none; touch-action: manipulation; }
 .dm-map-label { font-size: 0.7em; opacity: 0.7; display: flex; align-items: center; justify-content: center; }

@@ -8,7 +8,7 @@ import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, set
 import { noticeParty } from '../src/core/notice.js';
 import { setStanding, standingFor, givesIn } from '../src/core/access.js';
 import { dialogueOf, typingMs } from '../src/core/speech.js';
-import { combatSummary } from '../src/core/world.js';
+import { combatSummary, moveBudget, spendMove, markDash, newRound } from '../src/core/world.js';
 
 function tiny({ w = 9, h = 5, kind = 'prison', theme = 'dungeon', fog = true, rooms = {}, doors = {} } = {}) {
     const rows = [];
@@ -90,6 +90,22 @@ test('a guard who sees the escapee is set on taking them in; a fellow prisoner i
 test('giving in is the player\'s own words, and refusals are not', () => {
     for (const t of ['*amber raises his hands* fine, take me back', 'ok ok, I\'ll go', '"Alright. Lead the way."', 'i surrender', 'no trouble, I\'ll walk']) assert.equal(givesIn(t), true, t);
     for (const t of ['', '*amber runs*', 'never! come and get me', 'I refuse', 'what do you want', 'fine, make me']) assert.equal(givesIn(t), false, t);
+});
+
+test('movement in a fight is counted over the whole round, doubled by a Dash, reset by the next round', () => {
+    const world = { combat: { round: 1, order: [{ name: 'Amber', init: 12 }], enemies: {}, speed: { Amber: 6 } } };
+    assert.deepEqual(moveBudget(world, 'Amber', 6), { max: 6, used: 0, left: 6, dashing: false });
+    spendMove(world, 'Amber', 4);
+    assert.equal(moveBudget(world, 'Amber', 6).left, 2, 'two messages, one budget');
+    spendMove(world, 'Amber', 5);
+    assert.equal(moveBudget(world, 'Amber', 6).left, 0, 'never below zero');
+    assert.match(combatSummary(world, 'Amber'), /Movement this round[^\n]*Amber 9\/6/);
+    markDash(world, 'Amber');
+    assert.deepEqual(moveBudget(world, 'Amber', 6), { max: 12, used: 9, left: 3, dashing: true });
+    newRound(world);
+    assert.equal(world.combat.round, 2);
+    assert.deepEqual(moveBudget(world, 'Amber', 6), { max: 6, used: 0, left: 6, dashing: false }, 'the dash was last round');
+    assert.deepEqual(moveBudget({ combat: null }, 'Amber', 6), { max: 6, used: 0, left: 6, dashing: false }, 'no fight: no limit kept');
 });
 
 test('the COMBAT line says whose part of the round it is', () => {

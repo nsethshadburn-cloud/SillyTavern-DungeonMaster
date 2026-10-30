@@ -390,6 +390,44 @@ export function endCombat(world) {
     world.combat = null;
 }
 
+/**
+ * Movement in a fight, per round: squares used so far, the round's allowance (speed, doubled by a
+ * Dash this round), and what's left. The code stops anyone at their allowance, however many
+ * messages their turn takes.
+ */
+export function moveBudget(world, name, speed = 6) {
+    const cb = world?.combat;
+    if (!cb) return { max: speed, used: 0, left: speed, dashing: false };
+    const dashing = cb.dash?.[name] === (cb.round || 1);
+    const max = speed * (dashing ? 2 : 1);
+    const used = cb.moved?.[name] ?? 0;
+    return { max, used, left: Math.max(0, max - used), dashing };
+}
+
+/** Squares spent this round. */
+export function spendMove(world, name, squares) {
+    const cb = world?.combat;
+    if (!cb || !(squares > 0)) return;
+    cb.moved ??= {};
+    cb.moved[name] = (cb.moved[name] ?? 0) + squares;
+}
+
+/** A Dash this round: the allowance doubles for it. */
+export function markDash(world, name) {
+    const cb = world?.combat;
+    if (!cb) return;
+    cb.dash ??= {};
+    cb.dash[name] = cb.round || 1;
+}
+
+/** The next round: everyone's movement starts over. */
+export function newRound(world) {
+    const cb = world?.combat;
+    if (!cb) return;
+    cb.round = (cb.round || 1) + 1;
+    cb.moved = {};
+}
+
 export function combatSummary(world, player = '') {
     if (!world.combat) return 'Not in combat.';
     const lines = [`Round ${world.combat.round}. Initiative: ${world.combat.order.map(o => `${o.name} ${o.init}`).join(', ')}.`];
@@ -405,6 +443,8 @@ export function combatSummary(world, player = '') {
     if (enemies.length) {
         lines.push('Enemies: ' + enemies.map(([n, e]) => `${n} HP ${e.hp}/${e.hp_max} AC ${e.ac}${e.conditions?.length ? ` (${e.conditions.join(', ')})` : ''}`).join('; ') + '.');
     }
+    const moved = Object.entries(world.combat.speed ?? {}).map(([n, sp]) => { const b = moveBudget(world, n, sp); return `${n} ${b.used}/${b.max}${b.dashing ? ' (dashing)' : ''}`; });
+    if (moved.length) lines.push(`Movement this round, squares used/allowed (the code stops each of them at their allowance, over all their messages this round; "dashing" doubles it): ${moved.join('; ')}.`);
     return lines.join('\n');
 }
 

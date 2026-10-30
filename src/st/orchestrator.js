@@ -14,7 +14,7 @@ import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } f
 import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
-import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares } from '../core/grid.js';
+import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
@@ -28,7 +28,7 @@ import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPromp
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage } from '../core/world.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
@@ -1217,6 +1217,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const companions = inFight.map(n => ({ name: n, stats: statsForName(n, meta) }));
         const combat = startCombat(world, t.start_combat, companions);
         combat.party = inFight;
+        // The round's movement: each fighter's speed in squares, what they've used, who dashed.
+        combat.speed = Object.fromEntries([meta.persona.name, ...inFight].map(n => [n, speedSquares(statsForName(n, meta))]));
+        combat.moved = {};
+        combat.dash = {};
         // Inside a place the fight is always on the place's own map, where everyone already stands
         // (never a new battle map). Elsewhere: a mapped room becomes the battle map unless the DM sent one.
         const here = currentPlace(c);
@@ -1270,9 +1274,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
             if (!from || !to || t.start_combat) continue;
             const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== name && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
-            const max = speedSquares(statsForName(name, meta)) * (t.dashing.some(n => nameKey(n) === nameKey(name)) ? 2 : 1);
-            const ok = clampMove(world.combat.map, from, to, max, others);
-            if (ok.x !== to.x || ok.y !== to.y) status.note(`${name} can only get to ${toCoord(ok.x, ok.y)} this round`);
+            if (t.dashing.some(n => nameKey(n) === nameKey(name))) markDash(world, name);
+            const budget = moveBudget(world, name, speedSquares(statsForName(name, meta)));
+            const ok = clampMove(world.combat.map, from, to, budget.left, others);
+            const cost = reachable(world.combat.map, from, budget.left, others).get(`${ok.x},${ok.y}`) ?? Math.max(Math.abs(ok.x - from.x), Math.abs(ok.y - from.y));
+            spendMove(world, name, cost);
+            if (ok.x !== to.x || ok.y !== to.y) status.note(`${name} can only get to ${toCoord(ok.x, ok.y)} this round (${budget.left} of ${budget.max} squares were left)`);
             moves[name] = toCoord(ok.x, ok.y);
         }
         const { positions, rejected } = applyPositions(world.combat.map, world.combat.positions, moves);
@@ -1288,9 +1295,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         mapChanged = true;
     }
     // Each DM combat turn is a new round (a roll's result finishes the round it was asked in).
-    const newRound = turnPromptsOn() ? reasons.includes('end_turn') : (reasons.includes('combat_round') && !reasons.includes('roll_result'));
-    if (world.combat && !t.start_combat && newRound) {
-        world.combat.round = (world.combat.round || 1) + 1;
+    const roundOver = turnPromptsOn() ? reasons.includes('end_turn') : (reasons.includes('combat_round') && !reasons.includes('roll_result'));
+    if (world.combat && !t.start_combat && roundOver) {
+        newRound(world);
         const joined = joinLateFighters(c);
         if (joined.length) await postDiceCard(`⚔️ ${joined.join(' · ')}`, { combat: true });
         const ended = expireConditions(world, { round: world.combat.round });

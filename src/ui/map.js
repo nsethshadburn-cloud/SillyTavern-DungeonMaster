@@ -11,7 +11,7 @@ import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HI
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
 import { currentPlace, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
-import { conditionsOf } from '../core/world.js';
+import { moveBudget, conditionsOf } from '../core/world.js';
 import { restraintOf } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
 import { trespassOf } from '../core/access.js';
@@ -42,13 +42,34 @@ function playerSpeed(c) {
     return speedSquares(statsForName(c.meta.persona.name, c.meta));
 }
 
-/** Squares the player can reach this round (fights): around walls, not onto other people. */
+/** The player's movement this round: used, allowed, left (a fight keeps the count over all their messages). */
+function moveLeft(c) {
+    return moveBudget(c.docs.world, c.meta.persona.name, playerSpeed(c));
+}
+
+/** Squares the player can still reach this round (fights): around walls, not onto other people. */
 function reachFor(c, b) {
     const me = parseCoord(b.positions[c.meta.persona.name], b.map);
     if (!me) return null;
     if (lockedReason(c, c.meta.persona.name)) return new Set();
     const blocked = new Set(Object.entries(b.positions).filter(([n]) => n !== c.meta.persona.name && !(hpOf(c, n)?.hp <= 0 && b.enemies.has(n))).map(([, cd]) => parseCoord(cd, b.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
-    return reachable(b.map, me, playerSpeed(c), blocked);
+    return reachable(b.map, me, moveLeft(c).left, blocked);
+}
+
+/** The fight's turn strip: the round, whose turn it is, the player's movement left, the order. */
+function turnStrip(c) {
+    const w = c.docs.world, cb = w.combat;
+    if (!cb) return '';
+    const me = c.meta.persona.name;
+    const inOrder = (cb.order || []).some(o => o.name === me);
+    const budget = moveLeft(c);
+    const others = (cb.order || []).map(o => o.name).filter(n => n !== me);
+    let who, cls;
+    if (!inOrder) { who = 'Roll your initiative first'; cls = 'wait'; }
+    else if (busy) { who = cb.phase === 'others' ? `The DM runs ${others.length ? others.join(', ') : 'the others'}` : 'The DM is resolving your action'; cls = 'wait'; }
+    else { who = 'YOUR TURN'; cls = 'you'; }
+    const chips = (cb.order || []).map(o => `<span class="dm-turn-chip ${o.name === me ? 'me' : cb.enemies?.[o.name] ? 'foe' : 'friend'}${o.name === me && cls === 'you' ? ' active' : ''}">${escapeHtml(o.name)} <b>${o.init}</b></span>`).join('');
+    return `<span class="dm-turn-round">⚔️ Round ${cb.round ?? 1}</span><span class="dm-turn-who ${cls}">${who}</span>${inOrder ? `<span class="dm-turn-move" title="Squares moved this round / allowed (a Dash doubles it)">Move ${budget.used}/${budget.max}${budget.dashing ? ' · dashing' : ''} · ${budget.left * 5} ft left</span>` : ''}<span class="dm-turn-order">${chips}</span>`;
 }
 
 function ensurePanel() {
@@ -244,6 +265,9 @@ let busy = false;
 export function setMapBusy(on) {
     busy = Boolean(on);
     panel?.classList.toggle('dm-map-busy', busy);
+    const strip = panel?.querySelector('.dm-map-turn');
+    const c = strip ? campaign() : null;
+    if (strip && c) strip.innerHTML = turnStrip(c);
 }
 
 function renderMap(center = false) {
@@ -287,6 +311,7 @@ function renderMap(center = false) {
   <span class="dm-map-btn fa-solid fa-window-minimize" data-act="min" title="Minimize"></span>
   <span class="dm-map-btn fa-solid fa-xmark" data-act="close" title="Close (reopen from the wand menu)"></span>
 </div>
+${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
 <div class="dm-map-body">
   <div class="dm-map-busy-note"><i class="fa-solid fa-hourglass-half"></i> The DM is thinking. Hold on: nobody moves until it's done.</div>
   <div class="dm-map-view"><div class="dm-map-stage"><canvas class="dm-map-canvas"></canvas><div class="dm-map-bubbles"></div></div></div>
@@ -296,7 +321,7 @@ function renderMap(center = false) {
         ? choosing ? `<div class="dm-map-actions dm-map-choose"><span class="dm-map-pending"><b>${escapeHtml(choosing.title)}</b> Tap one on the map, or pick:</span>${choosing.choices.map((ch, i) => `<div class="menu_button" data-pick="${i}" title="${escapeHtml(ch.where || '')}"><b>${i + 1}</b> ${escapeHtml(ch.name)}<small> · ${escapeHtml(ch.where || '')}</small></div>`).join('')}<div class="menu_button" data-pick="-1">Never mind</div></div>`
         : `<div class="dm-map-actions"><span class="dm-map-pending">${lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : 'Tap a square to walk there, or tap someone for options. Doors open as you go; locked ones need a key or a plan.'}</span></div>`
         : `<div class="dm-map-actions">
-    <span class="dm-map-pending">${pending ? escapeHtml(pending) : lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : b.kind === 'combat' ? `Your move this round: tap a lit square (up to ${playerSpeed(c)} squares, ${playerSpeed(c) * 5} ft), or an enemy to target.` : 'Tap a square to move, or an enemy to target.'}</span>
+    <span class="dm-map-pending">${pending ? escapeHtml(pending) : lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : b.kind === 'combat' ? (moveLeft(c).left > 0 ? `Your move: tap a lit square (${moveLeft(c).left} of ${moveLeft(c).max} squares left this round, ${moveLeft(c).left * 5} ft), or an enemy to target.` : 'No movement left this round (say you Dash for more). Tap an enemy to target.') : 'Tap a square to move, or an enemy to target.'}</span>
     <div class="menu_button" data-act="add" ${pending ? '' : 'disabled'}>Add to message</div>
     <div class="menu_button" data-act="clear">Clear</div>
   </div>`}
@@ -786,7 +811,7 @@ async function onSquare(sq, positions) {
         const b = board(c);
         const reach = b?.kind === 'combat' ? reachFor(c, b) : null;
         if (reach && !reach.has(`${sq.x},${sq.y}`)) {
-            toastr.info(`Too far: ${c.meta.persona.name} can move ${playerSpeed(c)} squares (${playerSpeed(c) * 5} ft) this round. Tell the DM if you Dash.`, 'Map', { timeOut: 3500 });
+            toastr.info(`Too far: ${c.meta.persona.name} has ${moveLeft(c).left} of ${moveLeft(c).max} squares left this round (${moveLeft(c).left * 5} ft). Tell the DM if you Dash.`, 'Map', { timeOut: 3500 });
             return;
         }
         selection.move = selection.move === coord ? '' : coord;
