@@ -18,9 +18,9 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
-import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
+import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
@@ -33,6 +33,7 @@ import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction } from './prompts.js';
+import { lineRole } from '../core/lines.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
 import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
@@ -40,6 +41,11 @@ import { mergeMind } from '../core/minds.js';
 import { standingOf, setStanding, standingFor } from '../core/access.js';
 
 let running = false;
+/** A turn (the DM, a walk the DM ordered, the opening) is in progress: the map shows it and takes no taps that move anyone. */
+function setRunning(on) {
+    running = on;
+    setMapBusy(on);
+}
 let rerunRequested = false;
 let deck = null;
 
@@ -114,7 +120,7 @@ export async function runTurn(opts = {}) {
         rerunRequested = true;
         return;
     }
-    running = true;
+    setRunning(true);
     const controller = new AbortController();
     const onStop = () => controller.abort();
     ST.eventSource.on(ST.eventTypes.GENERATION_STOPPED, onStop);
@@ -147,7 +153,7 @@ export async function runTurn(opts = {}) {
     } finally {
         ST.eventSource.removeListener(ST.eventTypes.GENERATION_STOPPED, onStop);
         saveMeta();
-        running = false;
+        setRunning(false);
         // A companion set off a trap while walking somewhere after the DM had already ruled: rule on it now.
         const sprung = takeTrapEvents();
         if (sprung.length) setTimeout(() => runTurn({ force: 'explore', placeEvent: sprung.join(' ') }), 50);
@@ -725,7 +731,7 @@ export async function companionCuriosity(c, roomId) {
     const name = free[Math.floor(random01() * free.length)];
     const things = goTargets(c, name).filter(t => !/next door/.test(t.name));
     if (!things.length) return;
-    running = true;
+    setRunning(true);
     const status = beginTurn(`${name} looks around`);
     try {
         const member = c.meta.party.find(p => p.name === name);
@@ -767,7 +773,7 @@ export async function companionCuriosity(c, roomId) {
         console.warn('[Dungeon Master] companion curiosity failed', error);
         status.finish('');
     } finally {
-        running = false;
+        setRunning(false);
         runQueuedTurn();
     }
 }
@@ -782,7 +788,7 @@ export async function companionCuriosity(c, roomId) {
 export async function companionsSeeYou(c, list) {
     const s = settings();
     if (running || !s.useHelper || c.docs.world.combat || !list.length) return;
-    running = true;
+    setRunning(true);
     const player = c.meta.persona.name;
     const status = beginTurn('Your companions');
     try {
@@ -814,7 +820,7 @@ export async function companionsSeeYou(c, list) {
         console.warn('[Dungeon Master] companion reaction failed', error);
         status.finish('');
     } finally {
-        running = false;
+        setRunning(false);
         runQueuedTurn();
     }
 }
@@ -1116,7 +1122,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const world = c.docs.world;
     // Maps off: anything about maps in the DM's answer is ignored (the story stays in the chat).
     if (!mapsOn()) {
-        Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {} });
+        Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {}, escort: null });
         if (t.start_combat) t.start_combat.map = null;
     }
 
@@ -1371,12 +1377,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const inside = currentPlace(c);
     const partyNames = [meta.persona.name, ...meta.party.map(p => p.name)];
     const strays = inside ? adoptStrays(inside.place, partyNames) : 0;
-    if (inside && (strays || t.place_changes || (!world.combat && Object.keys(t.positions || {}).length))) {
+    if (inside && (strays || t.place_changes || t.escort || (!world.combat && Object.keys(t.positions || {}).length))) {
         const { key, place } = inside;
         const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
         if (t.place_changes) {
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
+        }
+        // The player gave in to a guard: walked to their cell, door locked (the code checks their words).
+        if (t.escort && !world.combat) {
+            const note = await escortToCell(c, t.escort, lastPlayerMessage());
+            if (note) status.note(note);
+            if (/^escort ignored/.test(note)) console.warn('[Dungeon Master]', note);
         }
         if (!world.combat) {
             const map = floorById(place, floorId).map;
@@ -1528,7 +1540,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const seen = applyNoticed(world, t.noticed);
         if (seen.length) status.note(seen.join('; '));
         const here = currentPlace(c);
-        if (here) { for (const [seer, list] of Object.entries(t.noticed)) for (const n of [].concat(list ?? [])) markNoticed(here.place, seer, String(n), true); savePlace(here.key, c); }
+        if (here) {
+            for (const [seer, list] of Object.entries(t.noticed)) {
+                for (const n of [].concat(list ?? [])) markNoticed(here.place, seer, String(n), true);
+                const g = [].concat(list ?? []).length ? personByName(here.place, seer) : null;
+                if (g && lineRole(g) !== 'prisoner') g.alertAt = meta.turn;
+            }
+            savePlace(here.key, c);
+        }
     }
     if (initiativeCard) await postDiceCard(initiativeCard, { combat: true });
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
@@ -1712,7 +1731,7 @@ export async function runOpening(opening) {
     const c = campaign();
     if (!c) return;
     // A message sent during the opening waits for it, like during any turn.
-    running = true;
+    setRunning(true);
     const status = beginTurn('Opening scene');
     try {
         await applyDmTurn(c, opening, status, new AbortController().signal, { reasons: ['opening'] });
@@ -1722,7 +1741,7 @@ export async function runOpening(opening) {
         status.finish('Opening had a problem');
         toastr.error(String(error?.message || error), 'Dungeon Master');
     } finally {
-        running = false;
+        setRunning(false);
         runQueuedTurn();
     }
 }

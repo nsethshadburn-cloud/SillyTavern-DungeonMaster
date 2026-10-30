@@ -238,6 +238,14 @@ function anchorAboveForm() {
     panel.style.setProperty('--dm-form-top', `${Math.round(top || (window.innerHeight - 100))}px`);
 }
 
+let busy = false;
+
+/** The DM (or a walk it ordered) is working: say so on the map and take no taps that move anyone until it's done. */
+export function setMapBusy(on) {
+    busy = Boolean(on);
+    panel?.classList.toggle('dm-map-busy', busy);
+}
+
 function renderMap(center = false) {
     const c = campaign();
     const b = c ? board(c) : null;
@@ -267,6 +275,7 @@ function renderMap(center = false) {
     panel.classList.toggle('dm-map-wide', exploring || map.w > 16);
     panel.classList.toggle('dm-map-trespassing', Boolean(b.trespass));
     panel.classList.toggle('dm-map-night', Boolean(b.night));
+    panel.classList.toggle('dm-map-busy', busy);
     anchorAboveForm();
     panel.innerHTML = `
 <div class="dm-map-head">
@@ -279,6 +288,7 @@ function renderMap(center = false) {
   <span class="dm-map-btn fa-solid fa-xmark" data-act="close" title="Close (reopen from the wand menu)"></span>
 </div>
 <div class="dm-map-body">
+  <div class="dm-map-busy-note"><i class="fa-solid fa-hourglass-half"></i> The DM is thinking. Hold on: nobody moves until it's done.</div>
   <div class="dm-map-view"><div class="dm-map-stage"><canvas class="dm-map-canvas"></canvas><div class="dm-map-bubbles"></div></div></div>
   <div class="dm-map-hover dm-muted">&nbsp;</div>
   <div class="dm-map-roster">${roster}</div>
@@ -320,6 +330,7 @@ function renderMap(center = false) {
         closeMenu();
         const sq = squareFromEvent(ev, canvas, map);
         if (!sq) return;
+        if (busy) { toastr.info('The DM is still working on the last turn. Wait for it to finish.', 'Dungeon Master'); return; }
         if (choosing) {
             const hit = choosing.choices.find(ch => sq.x >= ch.x - 0 && sq.x < ch.x + (ch.w || 1) && sq.y >= ch.y && sq.y < ch.y + (ch.h || 1))
                 ?? choosing.choices.find(ch => sq.x >= ch.x - 1 && sq.x <= ch.x + (ch.w || 1) && sq.y >= ch.y - 1 && sq.y <= ch.y + (ch.h || 1));
@@ -522,6 +533,9 @@ function figureFx(c, b) {
         const hp = hpOf(c, name);
         if (rest?.pose === 'sleep' || /asleep|sleeping/.test(conds)) out.push({ kind: 'z', x: pt.x, y: pt.y });
         else if (hp?.hp_max && hp.hp > 0 && hp.hp / hp.hp_max <= 0.25) out.push({ kind: 'drop', x: pt.x, y: pt.y });
+        // Someone of the place who has seen you where you shouldn't be, or is after you: "!"
+        const g = b.kind === 'place' ? b.place.guards?.[name] : null;
+        if (g && !g.down && g.state !== 'dead' && ((g.alertAt !== undefined && c.meta.turn - g.alertAt <= 2) || g.intent === 'attack' || g.intent === 'follow')) out.push({ kind: 'alert', x: pt.x, y: pt.y });
     }
     return out;
 }

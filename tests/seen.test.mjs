@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent } from '../src/core/explore.js';
 import { noticeParty } from '../src/core/notice.js';
-import { setStanding, standingFor } from '../src/core/access.js';
+import { setStanding, standingFor, givesIn } from '../src/core/access.js';
 import { dialogueOf, typingMs } from '../src/core/speech.js';
 import { combatSummary } from '../src/core/world.js';
 
@@ -56,6 +56,24 @@ test('a watcher the party cannot see (in the dark) rolls to notice a trespasser;
     const r = noticeParty(near, ['Amber'], { turn: 1, canSee: () => false });
     assert.doesNotMatch(r.events[0], /Roll whether he notices/, 'right beside him: no missing that');
     assert.deepEqual(r.seen, [{ seer: 'Wren', seen: 'Amber' }]);
+});
+
+test('"!": a guard who has seen the escapee is marked alert; a fellow prisoner does not care', () => {
+    const place = cellBlock();
+    noticeParty(place, ['Amber'], { turn: 4, canSee: () => true });
+    assert.equal(place.guards.Wren.alertAt, 4, 'the mark');
+    assert.equal(place.guards.Wren.state, 'alert');
+    const cells = cellBlock();
+    cells.guards = { Magnus: person('Magnus', 4, 2, { description: 'a prisoner', role: 'prisoner' }) };
+    const r = noticeParty(cells, ['Amber'], { turn: 4, canSee: () => true, rng: () => 0.01 });
+    assert.deepEqual(r.events, [], 'no alarm from a fellow prisoner');
+    assert.equal(cells.guards.Magnus.alertAt, undefined);
+    assert.deepEqual(r.seen, [{ seer: 'Magnus', seen: 'Amber' }], 'she did see him');
+});
+
+test('giving in is the player\'s own words, and refusals are not', () => {
+    for (const t of ['*amber raises his hands* fine, take me back', 'ok ok, I\'ll go', '"Alright. Lead the way."', 'i surrender', 'no trouble, I\'ll walk']) assert.equal(givesIn(t), true, t);
+    for (const t of ['', '*amber runs*', 'never! come and get me', 'I refuse', 'what do you want', 'fine, make me']) assert.equal(givesIn(t), false, t);
 });
 
 test('the COMBAT line says whose part of the round it is', () => {

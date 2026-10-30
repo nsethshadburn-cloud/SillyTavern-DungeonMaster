@@ -60,6 +60,10 @@ export function noticeParty(place, names, ctx) {
         if (!seen.length) continue;
         g.spotted ??= {};
         g.reported ??= {};
+        // He has seen them and minds: the map shows a "!" over him for a couple of turns.
+        const alert = () => { g.alertAt = turn; if (!isOut(g)) g.state = 'alert'; };
+        // A fellow prisoner doesn't raise the alarm over an escapee or a trespasser.
+        const minds = lineRole(g) !== 'prisoner';
         for (const n of seen) {
             const p = place.state.positions[n];
             const room = roomAt(place, floorId, p.x, p.y);
@@ -75,7 +79,7 @@ export function noticeParty(place, names, ctx) {
             }
             const hp = hpOf(n);
             const down = outBy(condsOf(n)) ?? (hp && hp.hp_max && hp.hp <= 0 ? 'unconscious' : null);
-            const t = trespassOf(place, n, roomAt);
+            const t = minds ? trespassOf(place, n, roomAt) : null;
             // Someone lying there out cold (or tied up): found, whoever they are.
             if (down && down !== 'asleep') {
                 if (settled(g.reported, `down:${n}`, turn)) continue;
@@ -91,6 +95,7 @@ export function noticeParty(place, names, ctx) {
                     // and nothing has stopped them: that's not a sighting, it's a confrontation.
                     if (dist(g, p) <= 1 && g.reported[`near:${n}`] !== turn) {
                         g.reported[`near:${n}`] = turn;
+                        alert();
                         out.events.push(`${n} is right beside ${who}, who has already seen them ${t.why === 'escaped' ? 'out of their cell' : `where they are not allowed (${t.why})`}, and nothing has stopped them. He acts now (grabs them, blocks the way, raises the alarm, attacks), or you say why he doesn't.`);
                     }
                     continue;
@@ -101,7 +106,7 @@ export function noticeParty(place, names, ctx) {
                 const unseen = !hid && Boolean(ctx?.canSee) && !ctx.canSee(g) && dist(g, p) > 1;
                 const does = (lineRole(g) === 'guard' ? 'a guard: he challenges them, raises the alarm or moves to stop them' : 'not a guard: he may shout for help, run, or confront them') + '. Narrate what he does and STOP there: the player decides how to answer (talk, run, fight, give up). Never ask the player for a roll of something they have not tried';
                 out.events.push(`${who} can see ${n}${hid ? ` hiding ${hid.mode} the ${hid.what} (roll whether he notices: his Perception against their Stealth, with "spot")` : unseen ? ' (the party can\'t see him: he is in the dark or out of their sight. Roll whether he notices them at all: his Perception against their passive Stealth, with "spot". Don\'t narrate him seeing them before the roll)' : ''} in ${t.room}, where ${n} is not allowed (${t.why === 'escaped' ? 'an escaped prisoner, out of their cell' : t.why}). ${g.name} is ${does}; decide what he does, brief him if he speaks, and set his intent if he goes after them.`);
-                if (!hid && !unseen) out.seen.push({ seer: g.name, seen: n });
+                if (!hid && !unseen) { out.seen.push({ seer: g.name, seen: n }); alert(); }
                 continue;
             }
             if (hid) continue;

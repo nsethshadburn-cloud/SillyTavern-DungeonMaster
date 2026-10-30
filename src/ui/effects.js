@@ -237,6 +237,7 @@ function step(dt, o, { fire, effects, src, air, at, shown }) {
         if (!shown(f.x, f.y)) continue;
         const [cx, cy] = at(f.x, f.y);
         if (f.kind === 'z' && chance(0.7)) spawn({ kind: 'z', x: cx + tile * 0.12, y: cy - tile * 0.3, vx: tile * 0.18, vy: -tile * 0.32, life: 2, max: 2, size: Math.max(9, tile * 0.28) });
+        if (f.kind === 'alert' && chance(2.5)) spawn({ kind: 'alert', x: cx + tile * 0.3, y: cy - tile * 0.62, vx: 0, vy: 0, life: 0.5, max: 0.5, size: Math.max(11, tile * 0.42) });
         if (f.kind === 'drop' && chance(0.3)) spawn({ kind: 'drop', x: cx + rnd(-0.15, 0.15) * tile, y: cy - tile * 0.05, vx: 0, vy: tile * 0.7, life: 0.5, max: 0.5, size: Math.max(1.5, tile / 22) });
     }
     // How many to make this frame for a rate per second (weather can need several a frame).
@@ -277,6 +278,7 @@ function step(dt, o, { fire, effects, src, air, at, shown }) {
 function drawPart(ctx, p, tile, now) {
     const fade = Math.max(0, Math.min(1, p.life / p.max));
     switch (p.kind) {
+        case 'alert': { const a = Math.min(1, fade * 3); ctx.font = `bold ${Math.round(p.size)}px sans-serif`; ctx.textAlign = 'center'; ctx.lineWidth = Math.max(2, p.size / 5); ctx.strokeStyle = `rgba(20,10,0,${0.9 * a})`; ctx.strokeText('!', p.x, p.y); ctx.fillStyle = `rgba(255,210,40,${a})`; ctx.fillText('!', p.x, p.y); ctx.textAlign = 'start'; break; }
         case 'z': { const a = Math.sin(fade * Math.PI); ctx.fillStyle = `rgba(225,232,255,${0.85 * a})`; ctx.font = `bold ${Math.round(p.size * (1.3 - fade * 0.5))}px sans-serif`; ctx.fillText('z', p.x, p.y); break; }
         case 'drop': ctx.fillStyle = `rgba(170,10,10,${0.85 * fade})`; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size, p.size * 1.4, 0, 0, Math.PI * 2); ctx.fill(); break;
         case 'ember': ctx.fillStyle = `rgba(255,${Math.round(120 + 100 * fade)},40,${0.9 * fade})`; ctx.fillRect(p.x, p.y, p.size, p.size); break;

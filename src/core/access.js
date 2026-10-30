@@ -30,6 +30,17 @@ function kindOf(place) {
 }
 
 /** What kind of place this is for access: 'wild' | 'lockup' | 'public' | 'private'. */
+/**
+ * Does the player's own message give in to a guard (so a DM "escort" may stand)? Their words only:
+ * "fine", "I'll go", "take me back", hands up, surrender. Nothing from silence or anyone else.
+ */
+export function givesIn(text) {
+    const t = String(text ?? '').toLowerCase().replace(/[*_~`]/g, ' ');
+    if (!t.trim()) return false;
+    if (/\b(never|no way|not a chance|won'?t go|will not go|refuse|get lost|make me|try me|come and get me|over my dead body)\b/.test(t)) return false;
+    return /\b(fine|okay|ok|alright|all right|i give (up|in)|give up|i surrender|surrender|i yield|yield|take me( back| in)?|lead (the way|on)|i'?ll go|i go( with)?( you)?|i'?ll come|i come( quietly)?|go back( to (my|the) cell)?|back to (my|the) cell|i submit|hands up|(raise|put up|put)s? (my|his|her|their) hands|i'?ll cooperate|cooperate|don'?t hurt me|no fight|i won'?t fight|i'?ll behave|you win|as you say|i'?ll follow|you got me|you've got me|no trouble|i'?m not going anywhere|lock me up|i'?ll walk)\b/.test(t);
+}
+
 export function placeClass(place) {
     const k = kindOf(place);
     if (place.kind === 'town' || place.kind === 'wilds') return place.kind === 'town' ? 'public' : 'wild';
