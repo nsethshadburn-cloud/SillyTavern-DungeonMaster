@@ -1505,7 +1505,7 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const lead = st.positions[partyNames[0]];
     const floor = floorById(place, lead?.floor ?? st.floor);
     const room = lead ? roomAt(place, floor.id, lead.x, lead.y) : null;
-    const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `in a corridor at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
+    const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `${OUTDOOR.has(floor.map.theme) ? 'in the open' : 'in a corridor'} at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
     if (OUTDOOR.has(floor.map.theme) && st.weather && st.weather !== 'clear') lines.push(`Weather here: ${WEATHER_WORDS[st.weather] ?? st.weather}${st.weather === 'fog' ? ` (nobody sees past ${FOG_SIGHT} squares)` : st.weather === 'storm' ? ' (sound carries half as far; tracks wash out)' : st.weather === 'snow' ? ' (tracks show; slow going)' : st.weather === 'rain' ? ' (tracks wash out; torches gutter)' : ''}.`);
     if (st.night) lines.push(`It is ${st.late ? 'NIGHT' : 'DARK out (evening)'}: outdoors is dark; a room is lit only with someone awake in it or a light burning; ${st.late ? 'residents are asleep and shops and homes are shut (taverns, inns, guardhouses and jails are up); ' : ''}in the dark people see two squares, lantern-bearers three around them.`);
     if (st.visited.length) lines.push(`Rooms the party has been in: ${st.visited.join(', ')}.`);

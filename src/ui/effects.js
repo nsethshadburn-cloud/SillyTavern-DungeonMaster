@@ -10,14 +10,14 @@ import { terrainAt, PROPS } from '../core/grid.js';
 
 const MAX = 150;
 /** Most particles of one kind at once (weather stays a sprinkle, not a storm). */
-const CAP = { z: 6, drop: 8, rain: 55, snow: 40, dust: 14, ash: 24, mist: 6, leaves: 6, fireflies: 10, sand: 18, ember: 50, smoke: 26, glint: 16, spark: 18, bubble: 16 };
+const CAP = { z: 6, drop: 8, rain: 55, snow: 40, dust: 14, ash: 24, mist: 6, leaves: 6, fireflies: 10, sand: 18, ember: 50, smoke: 26, glint: 16, spark: 18, bubble: 16, embers: 36 };
 /** What the air is like by default, by kind of map. Rain only when the DM says it's raining. */
 const DEFAULT_AMBIENCE = {
-    snow: 'snow', desert: 'sand', swamp: 'mist', jungle: 'fireflies', forest: 'leaves',
+    snow: 'snow', desert: 'sand', swamp: 'mist', jungle: 'fireflies', forest: 'leaves', camp: 'embers',
     dungeon: 'dust', crypt: 'dust', cave: 'dust', mine: 'dust', sewer: 'dust', prison: 'dust', castle: 'dust', library: 'dust', temple: 'dust', mansion: 'dust',
 };
-const FLICKER = new Set(['torch', 'brazier', 'campfire', 'fireplace', 'candles', 'forge', 'lamppost', 'chandelier']);
-const SPITS = new Set(['brazier', 'campfire', 'fireplace', 'forge']);
+const FLICKER = new Set(['torch', 'brazier', 'campfire', 'bonfire', 'fireplace', 'candles', 'forge', 'lamppost', 'chandelier', 'watchtower']);
+const SPITS = new Set(['brazier', 'campfire', 'bonfire', 'fireplace', 'forge']);
 
 let parts = [];
 let lastT = 0;
@@ -227,6 +227,7 @@ function step(dt, o, { fire, effects, src, air, at, shown }) {
         p.life -= dt;
         p.x += p.vx * dt; p.y += p.vy * dt;
         if (p.kind === 'snow' || p.kind === 'leaves') p.x += Math.sin((p.life + p.seed) * 2) * tile * 0.25 * dt;
+        if (p.kind === 'embers') { p.x += Math.sin((p.life + p.seed) * 1.7) * tile * 0.35 * dt; p.y += Math.cos((p.life * 0.8 + p.seed) * 1.3) * tile * 0.2 * dt; }
         if (p.kind === 'fireflies' || p.kind === 'dust') { p.vx += rnd(-1, 1) * tile * 0.3 * dt; p.vy += rnd(-1, 1) * tile * 0.3 * dt; }
         if (p.grow) p.size += p.grow * dt;
     }
@@ -273,6 +274,8 @@ function step(dt, o, { fire, effects, src, air, at, shown }) {
     if (air === 'dust' && chance(2.2 * area)) { const p = anywhere(); spawn({ kind: 'dust', ...p, vx: tile * rnd(-0.06, 0.06), vy: tile * rnd(-0.06, 0.04), life: rnd(4, 7), max: 7, size: rnd(1, 1.8) }); }
     if (air === 'fireflies' && chance(1.5 * area)) { const p = anywhere(); spawn({ kind: 'fireflies', ...p, vx: 0, vy: 0, life: rnd(3, 6), max: 6, size: tile * 0.1, seed: Math.random() * 9 }); }
     if (air === 'mist' && chance(0.6 * area)) { const p = anywhere(); spawn({ kind: 'mist', x: view.x - tile * 3, y: p.y, vx: tile * rnd(0.3, 0.6), vy: 0, life: 30, max: 30, size: tile * rnd(3, 5) }); }
+    // Embers from the fires of a hostile camp: slow glowing specks drifting up and across the whole screen.
+    if (air === 'embers' && chance(2.4 * area)) { const fromRight = Math.random() < 0.5, p = anywhere(); spawn({ kind: 'embers', x: fromRight ? view.x + view.w + tile * 0.5 : p.x, y: fromRight ? p.y : view.y + view.h + tile * 0.5, vx: -tile * rnd(0.15, 0.45), vy: -tile * rnd(0.12, 0.35), life: rnd(9, 15), max: 15, size: rnd(1.6, 3), seed: Math.random() * 9 }); }
 }
 
 function drawPart(ctx, p, tile, now) {
@@ -282,6 +285,7 @@ function drawPart(ctx, p, tile, now) {
         case 'z': { const a = Math.sin(fade * Math.PI); ctx.fillStyle = `rgba(225,232,255,${0.85 * a})`; ctx.font = `bold ${Math.round(p.size * (1.3 - fade * 0.5))}px sans-serif`; ctx.fillText('z', p.x, p.y); break; }
         case 'drop': ctx.fillStyle = `rgba(170,10,10,${0.85 * fade})`; ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size, p.size * 1.4, 0, 0, Math.PI * 2); ctx.fill(); break;
         case 'ember': ctx.fillStyle = `rgba(255,${Math.round(120 + 100 * fade)},40,${0.9 * fade})`; ctx.fillRect(p.x, p.y, p.size, p.size); break;
+        case 'embers': { const pulse = 0.55 + 0.45 * Math.sin(now / 160 + p.seed * 7); const a = Math.min(1, fade * 2.5, (p.max - p.life) * 1.5) * pulse; ctx.globalAlpha = 0.8 * a; ctx.drawImage(softDot('255,150,60', 32), p.x - p.size * 2.2, p.y - p.size * 2.2, p.size * 4.4, p.size * 4.4); ctx.globalAlpha = 1; ctx.fillStyle = `rgba(255,${Math.round(200 - 90 * pulse)},70,${a})`; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); break; }
         case 'smoke': { ctx.globalAlpha = 0.15 * fade * Math.min(1, (p.max - p.life) * 2); const s = softDot('120,114,108', 48); ctx.drawImage(s, p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); ctx.globalAlpha = 1; break; }
         case 'glint': { ctx.strokeStyle = `rgba(230,245,255,${0.55 * Math.sin(fade * Math.PI)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(p.x - p.size, p.y); ctx.lineTo(p.x + p.size, p.y); ctx.stroke(); break; }
         case 'spark': { const a = Math.sin(fade * Math.PI); ctx.fillStyle = `rgba(${p.color},${0.85 * a})`; ctx.fillRect(p.x - p.size / 2, p.y - p.size * 1.5, p.size, p.size * 3); ctx.fillRect(p.x - p.size * 1.5, p.y - p.size / 2, p.size * 3, p.size); break; }

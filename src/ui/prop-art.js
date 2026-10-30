@@ -198,7 +198,17 @@ export const PROP_ART = {
     stalagmite(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.08, cy + s * 0.1, s * 0.3, s * 0.2); ellipse(ctx, cx, cy, s * 0.3, s * 0.3, hsl(28, 12, 30)); ellipse(ctx, cx - s * 0.03, cy - s * 0.03, s * 0.17, s * 0.17, hsl(28, 12, 42)); ellipse(ctx, cx - s * 0.05, cy - s * 0.05, s * 0.06, s * 0.06, hsl(28, 12, 58)); },
     crystal(ctx, r, cx, cy, s) { blob(ctx, cx, cy, s * 0.6, 'rgba(120,200,255,0.25)'); for (let i = 0; i < 4; i++) { const x = cx + between(r, -0.18, 0.18) * s; ctx.fillStyle = hsl(between(r, 190, 280), 70, between(r, 55, 75), 0.9); ctx.beginPath(); ctx.moveTo(x, cy - s * between(r, 0.2, 0.36)); ctx.lineTo(x + s * 0.07, cy + s * 0.15); ctx.lineTo(x - s * 0.07, cy + s * 0.15); ctx.fill(); } },
     mushroom(ctx, r, cx, cy, s) { for (let i = 0; i < 4; i++) { const x = cx + between(r, -0.25, 0.25) * s, y = cy + between(r, -0.25, 0.25) * s, rad = s * between(r, 0.05, 0.1); ellipse(ctx, x, y, rad, rad, pick(r, ['#c0392b', '#b98a54', '#7e57c2'])); ellipse(ctx, x - rad * 0.3, y - rad * 0.3, rad * 0.25, rad * 0.25, 'rgba(255,255,255,0.7)'); } },
-    tent(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.06, cy + s * 0.1, s * 0.45, s * 0.35); ctx.fillStyle = hsl(40, 25, 48); ctx.beginPath(); ctx.moveTo(cx - s * 0.45, cy + s * 0.35); ctx.lineTo(cx, cy - s * 0.4); ctx.lineTo(cx + s * 0.45, cy + s * 0.35); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.4); ctx.lineTo(cx + s * 0.45, cy + s * 0.35); ctx.lineTo(cx, cy + s * 0.35); ctx.fill(); },
+    tent(ctx, r, cx, cy, s0, w = 1, h = 1, p = {}) {
+        // Canvas in its own colour (hue/tone on the prop), a shaded side, a seam down the ridge, a flap and a stain or two.
+        const s = s0 * Math.min(w, h), hue = p.hue ?? 40, tone = p.tone ?? 48;
+        shadow(ctx, cx + s * 0.06, cy + s * 0.1, s * 0.45, s * 0.35);
+        ctx.fillStyle = hsl(hue, 25, tone); ctx.beginPath(); ctx.moveTo(cx - s * 0.45, cy + s * 0.35); ctx.lineTo(cx, cy - s * 0.4); ctx.lineTo(cx + s * 0.45, cy + s * 0.35); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.4); ctx.lineTo(cx + s * 0.45, cy + s * 0.35); ctx.lineTo(cx, cy + s * 0.35); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = Math.max(1, s / 40); ctx.beginPath(); ctx.moveTo(cx, cy - s * 0.4); ctx.lineTo(cx, cy + s * 0.35); ctx.stroke();
+        ctx.fillStyle = hsl(hue, 25, tone - 14); ctx.beginPath(); ctx.moveTo(cx - s * 0.1, cy + s * 0.35); ctx.lineTo(cx, cy + s * 0.05); ctx.lineTo(cx + s * 0.1, cy + s * 0.35); ctx.fill();
+        for (let i = 0; i < 2; i++) if (r() < 0.6) ellipse(ctx, cx + between(r, -0.3, 0.3) * s, cy + between(r, -0.05, 0.3) * s, s * between(r, 0.03, 0.07), s * between(r, 0.02, 0.05), 'rgba(40,25,10,0.3)');
+        line(ctx, cx - s * 0.45, cy + s * 0.35, cx - s * 0.52, cy + s * 0.46, hsl(28, 30, 22), Math.max(1, s / 40)); line(ctx, cx + s * 0.45, cy + s * 0.35, cx + s * 0.52, cy + s * 0.46, hsl(28, 30, 22), Math.max(1, s / 40));
+    },
     cart(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.06, cy + s * 0.1, s * 0.42, s * 0.3); rrect(ctx, cx - s * 0.38, cy - s * 0.26, s * 0.76, s * 0.52, 2, hsl(28, 40, 36), hsl(28, 40, 18), 2); for (const dx of [-0.42, 0.42]) ellipse(ctx, cx + dx * s, cy, s * 0.06, s * 0.2, '#3a2a1a'); },
 
     // ---------- furniture ----------
@@ -341,4 +351,48 @@ export const PROP_ART = {
         if (r() < 0.5) { const x = cx + between(r, -0.2, 0.2) * s, y = cy + between(r, -0.2, 0.2) * s; for (let k = 0; k < 5; k++) ellipse(ctx, x + Math.cos(k * 1.26) * s * 0.03, y + Math.sin(k * 1.26) * s * 0.03, s * 0.03, s * 0.02, '#f6c1d6'); ellipse(ctx, x, y, s * 0.015, s * 0.015, '#f5d64a'); }
     },
     stain(ctx, r, cx, cy, s) { for (let i = 0; i < 4; i++) blob(ctx, cx + between(r, -0.15, 0.15) * s, cy + between(r, -0.15, 0.15) * s, s * between(r, 0.2, 0.4), `rgba(${pick(r, ['50,35,20', '30,40,20', '60,20,20'])},0.45)`); },
+    // Camps and forts
+    bonfire(ctx, r, cx, cy, s0, w = 1, h = 1) {
+        // A ring of stones round a bed of ash and coals, logs stacked across each other, a blaze of flames above; big when it covers 3x3.
+        const s = s0 * (0.55 + Math.min(w, h) * 0.45);
+        blob(ctx, cx, cy, s * 1.3, 'rgba(255,150,60,0.16)');
+        blob(ctx, cx, cy + s * 0.04, s * 0.42, 'rgba(25,18,12,0.7)');
+        for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2 + r() * 0.3; ellipse(ctx, cx + Math.cos(a) * s * 0.42, cy + Math.sin(a) * s * 0.38, s * between(r, 0.06, 0.1), s * between(r, 0.05, 0.08), hsl(30, 6, between(r, 36, 52)), 'rgba(0,0,0,0.4)', 1); }
+        ctx.save(); ctx.translate(cx, cy);
+        for (const a of [0.5, -0.7, 1.6, 2.4, 0.1]) { ctx.rotate(a); ctx.fillStyle = hsl(26, 45, between(r, 16, 26)); ctx.fillRect(-s * 0.32, -s * 0.05, s * 0.64, s * 0.1); ctx.fillStyle = 'rgba(255,120,40,0.35)'; ctx.fillRect(-s * 0.12, -s * 0.05, s * 0.24, s * 0.1); }
+        ctx.restore();
+        for (let i = 0; i < 8; i++) ellipse(ctx, cx + between(r, -0.2, 0.2) * s, cy + between(r, -0.15, 0.15) * s, s * 0.03, s * 0.025, 'rgba(255,170,60,0.9)');
+        flame(ctx, cx, cy - s * 0.08, s * 0.36); flame(ctx, cx - s * 0.14, cy + s * 0.02, s * 0.24); flame(ctx, cx + s * 0.15, cy + s * 0.03, s * 0.22); flame(ctx, cx + s * 0.02, cy + s * 0.1, s * 0.18);
+    },
+    spikes(ctx, r, cx, cy, s, w = 1, h = 1, p = {}) {
+        // Four sharpened stakes leaning outward from a trodden patch; a gory one wears a head and blood at its foot.
+        shadow(ctx, cx + s * 0.05, cy + s * 0.14, s * 0.4, s * 0.15);
+        blob(ctx, cx, cy + s * 0.2, s * 0.3, 'rgba(30,20,10,0.35)');
+        if (p.gory) for (let i = 0; i < 3; i++) ellipse(ctx, cx + between(r, -0.3, 0.3) * s, cy + between(r, 0.05, 0.3) * s, s * between(r, 0.06, 0.14), s * between(r, 0.04, 0.08), 'rgba(120,10,10,0.75)');
+        for (let i = 0; i < 4; i++) {
+            const a = -0.95 + i * 0.63 + between(r, -0.15, 0.15), bx = cx + (i - 1.5) * s * 0.2, by = cy + s * 0.24;
+            ctx.save(); ctx.translate(bx, by); ctx.rotate(a);
+            ctx.fillStyle = hsl(30, 40, between(r, 34, 46)); ctx.beginPath(); ctx.moveTo(-s * 0.07, 0); ctx.lineTo(s * 0.07, 0); ctx.lineTo(0, -s * 0.62); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(s * 0.07, 0); ctx.lineTo(0, -s * 0.62); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = 'rgba(255,235,200,0.75)'; ctx.beginPath(); ctx.moveTo(-s * 0.025, -s * 0.42); ctx.lineTo(s * 0.025, -s * 0.42); ctx.lineTo(0, -s * 0.62); ctx.closePath(); ctx.fill();
+            if (p.gory && i === 1) { ellipse(ctx, 0, -s * 0.5, s * 0.1, s * 0.11, '#e9e2d0', '#555', 1); ellipse(ctx, -s * 0.035, -s * 0.52, s * 0.025, s * 0.03, '#222'); ellipse(ctx, s * 0.035, -s * 0.52, s * 0.025, s * 0.03, '#222'); }
+            ctx.restore();
+        }
+    },
+    watchtower(ctx, r, cx, cy, s, w = 2, h = 2) {
+        // A plank platform on four posts with a rail round it, a ladder on the near side and a brazier burning on top.
+        const k = Math.min(w, h) * s;
+        shadow(ctx, cx + k * 0.06, cy + k * 0.08, k * 0.42, k * 0.3);
+        for (const [px, py] of [[-0.36, -0.36], [0.36, -0.36], [-0.36, 0.36], [0.36, 0.36]]) ellipse(ctx, cx + px * k, cy + py * k, k * 0.05, k * 0.05, hsl(26, 36, 14));
+        rrect(ctx, cx - k * 0.38, cy - k * 0.38, k * 0.76, k * 0.76, k * 0.03, hsl(28, 38, 28), hsl(26, 36, 12), Math.max(1.5, k / 40));
+        ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1; for (let i = 1; i < 6; i++) { ctx.beginPath(); ctx.moveTo(cx - k * 0.38, cy - k * 0.38 + i * k * 0.76 / 6); ctx.lineTo(cx + k * 0.38, cy - k * 0.38 + i * k * 0.76 / 6); ctx.stroke(); }
+        ctx.strokeStyle = hsl(28, 36, 20); ctx.lineWidth = Math.max(2, k / 26); ctx.strokeRect(cx - k * 0.33, cy - k * 0.33, k * 0.66, k * 0.66);
+        // Cross-braces under the rail, and a dark outline so it reads as a thing standing up off the ground.
+        ctx.strokeStyle = 'rgba(40,25,10,0.7)'; ctx.lineWidth = Math.max(1.5, k / 36); for (const [a, b] of [[[-0.33, -0.33], [0, -0.2]], [[0, -0.2], [0.33, -0.33]], [[-0.33, 0.33], [0, 0.2]], [[0, 0.2], [0.33, 0.33]], [[-0.33, -0.33], [-0.2, 0]], [[-0.2, 0], [-0.33, 0.33]], [[0.33, -0.33], [0.2, 0]], [[0.2, 0], [0.33, 0.33]]]) { ctx.beginPath(); ctx.moveTo(cx + a[0] * k, cy + a[1] * k); ctx.lineTo(cx + b[0] * k, cy + b[1] * k); ctx.stroke(); }
+        ctx.strokeStyle = 'rgba(20,12,5,0.85)'; ctx.lineWidth = Math.max(2, k / 30); ctx.strokeRect(cx - k * 0.38, cy - k * 0.38, k * 0.76, k * 0.76);
+        for (const [px, py] of [[-0.33, -0.33], [0.33, -0.33], [-0.33, 0.33], [0.33, 0.33], [0, -0.33], [0, 0.33], [-0.33, 0], [0.33, 0]]) ellipse(ctx, cx + px * k, cy + py * k, k * 0.035, k * 0.035, hsl(28, 36, 16));
+        ctx.strokeStyle = hsl(28, 36, 22); ctx.lineWidth = Math.max(1, k / 50); for (const ox of [-0.06, 0.06]) { ctx.beginPath(); ctx.moveTo(cx + ox * k, cy + k * 0.38); ctx.lineTo(cx + ox * k, cy + k * 0.49); ctx.stroke(); }
+        ellipse(ctx, cx + k * 0.18, cy - k * 0.18, k * 0.1, k * 0.1, '#3a3a3a', '#222', 1.5); flame(ctx, cx + k * 0.18, cy - k * 0.2, k * 0.1);
+    },
+    skullpole(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.06, cy + s * 0.3, s * 0.12, s * 0.06); ctx.fillStyle = hsl(26, 36, 20); ctx.fillRect(cx - s * 0.04, cy - s * 0.38, s * 0.08, s * 0.72); line(ctx, cx - s * 0.22, cy - s * 0.2, cx + s * 0.22, cy - s * 0.2, hsl(26, 36, 20), s * 0.06); for (const [dx, dy, k] of [[0, -0.36, 0.13], [-0.22, -0.18, 0.1], [0.22, -0.18, 0.1]]) { ellipse(ctx, cx + dx * s, cy + dy * s, s * k, s * k * 1.05, hsl(45, 20, 86)); ellipse(ctx, cx + dx * s - s * k * 0.35, cy + dy * s - s * k * 0.1, s * k * 0.25, s * k * 0.3, '#222'); ellipse(ctx, cx + dx * s + s * k * 0.35, cy + dy * s - s * k * 0.1, s * k * 0.25, s * k * 0.3, '#222'); } for (let i = 0; i < 3; i++) line(ctx, cx + s * 0.04, cy + s * (0.05 + i * 0.08), cx + s * 0.18, cy + s * (0.1 + i * 0.08), hsl(0, 50, 30), 1.5); },
 };

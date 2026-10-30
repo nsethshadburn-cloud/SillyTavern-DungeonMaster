@@ -26,7 +26,7 @@ const THEME_STYLE = {
     town: { floor: 'grass', floorC: [100, 32, 32], wall: 'plaster', wallC: [40, 25, 66], dark: 0, moss: 0.02 },
     forest: { floor: 'grass', floorC: [100, 35, 30], wall: 'hedge', wallC: [120, 35, 16], dark: 0.05, moss: 0 },
     jungle: { floor: 'grass', floorC: [112, 44, 24], wall: 'hedge', wallC: [125, 45, 13], dark: 0.12, moss: 0.15 },
-    camp: { floor: 'dirt', floorC: [32, 30, 30], wall: 'hedge', wallC: [120, 30, 16], dark: 0.3, moss: 0 },
+    camp: { floor: 'dirt', floorC: [32, 30, 30], wall: 'palisade', wallC: [26, 38, 26], dark: 0.12, moss: 0 },
     swamp: { floor: 'mud', floorC: [70, 25, 20], wall: 'hedge', wallC: [95, 30, 13], dark: 0.2, moss: 0.2 },
     snow: { floor: 'snow', floorC: [210, 30, 88], wall: 'rock', wallC: [215, 10, 45], dark: 0, moss: 0 },
     desert: { floor: 'sand', floorC: [40, 55, 62], wall: 'sandstone', wallC: [32, 45, 48], dark: 0, moss: 0 },
@@ -39,7 +39,7 @@ const MATERIAL = {
 };
 const WALL_MATERIAL = {
     brick: [25, 7, 28], stoneblock: [30, 8, 36], wallpaper: [350, 30, 26], panel: [24, 35, 18], log: [26, 42, 28], timber: [38, 22, 54],
-    plaster: [40, 25, 66], rock: [24, 14, 20], hedge: [120, 35, 16], sandstone: [32, 45, 48],
+    plaster: [40, 25, 66], rock: [24, 14, 20], hedge: [120, 35, 16], sandstone: [32, 45, 48], palisade: [26, 38, 26],
 };
 const OUTDOOR = new Set(['forest', 'jungle', 'camp', 'swamp', 'snow', 'desert', 'town']);
 /** Terrain that is drawn on top of a floor: its ground comes from the squares around it. */
@@ -191,7 +191,7 @@ const CAP = 0.4;
 function capColor(st) {
     const c = st.wallC;
     if (['wallpaper', 'panel', 'timber', 'plaster'].includes(st.wall)) return [25, 22, 15];
-    if (st.wall === 'log') return [28, 34, 30];
+    if (st.wall === 'log' || st.wall === 'palisade') return [28, 34, 30];
     if (st.wall === 'rock') return [c[0], c[1], c[2] + 6];
     return [c[0], Math.round(c[1] * 0.7), Math.min(c[2] + 6, 46)];
 }
@@ -200,7 +200,7 @@ function capColor(st) {
 function wallCap(ctx, r, x, y, s, h, st, open, gx, gy) {
     const [ch, cs, cl] = capColor(st);
     ctx.fillStyle = hsl(ch, cs, cl + between(r, -2, 2)); ctx.fillRect(x, y, s, h);
-    if (['wallpaper', 'panel', 'timber', 'plaster', 'log'].includes(st.wall)) {
+    if (['wallpaper', 'panel', 'timber', 'plaster', 'log', 'palisade'].includes(st.wall)) {
         // A wooden top: grain along the wall.
         grain(ctx, r, x, y, s, h, Boolean(open.left || open.right) && !open.above, 0.18);
     } else {
@@ -238,6 +238,7 @@ function flatWall(ctx, r, x, y, s, st, open, gx, gy) {
 
 function wall(ctx, r, x, y, s, st, open, gx, gy) {
     const style = st.wall, c = st.wallC;
+    if (style === 'palisade') { palisade(ctx, r, x, y, s, st, open); return; }
     if (st.flatWalls && style !== 'hedge') { flatWall(ctx, r, x, y, s, st, open, gx, gy); return; }
     if (style === 'hedge') {
         ctx.fillStyle = hsl(c[0], c[1], c[2] - 4); ctx.fillRect(x, y, s, s);
@@ -264,6 +265,33 @@ function wall(ctx, r, x, y, s, st, open, gx, gy) {
     // The cap's lip throws a thin shadow on the face; the face meets the floor in a dark line.
     ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(x, y + s * CAP, s, Math.max(2, s * 0.04));
     ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x, y + s - Math.max(1.5, s * 0.025), s, Math.max(1.5, s * 0.025));
+}
+
+/**
+ * A palisade seen from above: a row of sharpened log ends along the wall (a cluster at a corner),
+ * each with its bark ring, cut face and point, lashed together with rope, a dark gap between.
+ */
+function palisade(ctx, r, x, y, s, st, open) {
+    const c = st.wallC;
+    ctx.fillStyle = hsl(28, 18, 11); ctx.fillRect(x, y, s, s);
+    const hWall = !open.left || !open.right, vWall = !open.above || !open.below;
+    const n = 3, d = s / n, logs = [];
+    if (hWall && vWall) { for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i === 1 || j === 1 || r() < 0.6) logs.push([x + (i + 0.5) * d, y + (j + 0.5) * d]); }
+    else if (hWall || !vWall) for (let i = 0; i < n; i++) { logs.push([x + (i + 0.5) * d, y + s * 0.3 + between(r, -0.03, 0.03) * s]); logs.push([x + (i + 0.5) * d + d / 2, y + s * 0.7 + between(r, -0.03, 0.03) * s]); }
+    else for (let j = 0; j < n; j++) { logs.push([x + s * 0.3 + between(r, -0.03, 0.03) * s, y + (j + 0.5) * d]); logs.push([x + s * 0.7 + between(r, -0.03, 0.03) * s, y + (j + 0.5) * d + d / 2]); }
+    for (const [lx, ly] of logs) {
+        const rad = d * between(r, 0.5, 0.6);
+        ellipse(ctx, lx + s * 0.04, ly + s * 0.05, rad, rad, 'rgba(0,0,0,0.4)');
+        ellipse(ctx, lx, ly, rad, rad, hsl(c[0] + between(r, -4, 4), c[1], c[2] - 8));
+        ellipse(ctx, lx, ly, rad * 0.78, rad * 0.78, hsl(c[0], c[1] + 5, c[2] + between(r, 6, 14)));
+        ellipse(ctx, lx, ly, rad * 0.42, rad * 0.42, hsl(c[0], c[1] + 8, c[2] + between(r, 16, 24)));
+        ellipse(ctx, lx - rad * 0.22, ly - rad * 0.22, rad * 0.15, rad * 0.15, 'rgba(255,255,255,0.35)');
+        ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(lx, ly, rad * 0.6, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.strokeStyle = hsl(38, 35, 42, 0.75); ctx.lineWidth = Math.max(1, s / 40);
+    if (hWall || !vWall) for (const oy of [0.5]) { ctx.beginPath(); ctx.moveTo(x, y + s * oy); ctx.lineTo(x + s, y + s * oy); ctx.stroke(); }
+    else for (const ox of [0.5]) { ctx.beginPath(); ctx.moveTo(x + s * ox, y); ctx.lineTo(x + s * ox, y + s); ctx.stroke(); }
+    if (open.below) { const g = ctx.createLinearGradient(0, y + s * 0.7, 0, y + s); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.35)'); ctx.fillStyle = g; ctx.fillRect(x, y + s * 0.7, s, s * 0.3); }
 }
 
 /** The wall's surface texture (bricks, wallpaper, logs...), drawn over the whole square. */
@@ -411,8 +439,30 @@ function tree(ctx, r, x, y, s, theme = 'forest') {
     for (let i = 0; i < 4; i++) ellipse(ctx, cx - s * between(r, 0.02, 0.2), cy - s * between(r, 0.02, 0.2), s * 0.1, s * 0.08, 'rgba(200,255,150,0.10)');
 }
 function pillarTile(ctx, r, x, y, s) { PROP_ART.pillar(ctx, r, x + s / 2, y + s / 2, s); }
-function door(ctx, r, x, y, s, kind, horizontal) {
+function door(ctx, r, x, y, s, kind, horizontal, gate = false) {
     ctx.save(); ctx.translate(x + s / 2, y + s / 2); if (!horizontal) ctx.rotate(Math.PI / 2);
+    if (gate) {
+        // A camp's gate: two heavy leaves of planks with iron bands between the wall's ends, a bar
+        // across when it's locked, swung back against the posts when it's open.
+        ctx.fillStyle = hsl(26, 36, 16); ctx.fillRect(-s / 2, -s * 0.34, s * 0.12, s * 0.68); ctx.fillRect(s * 0.38, -s * 0.34, s * 0.12, s * 0.68);
+        ellipse(ctx, -s * 0.44, -s * 0.34, s * 0.07, s * 0.07, hsl(28, 36, 30)); ellipse(ctx, s * 0.44, -s * 0.34, s * 0.07, s * 0.07, hsl(28, 36, 30));
+        if (kind === 'open') {
+            ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(-s * 0.38, -s * 0.16, s * 0.76, s * 0.32);
+            for (const sx of [-1, 1]) { ctx.save(); ctx.translate(sx * s * 0.38, 0); ctx.rotate(sx * 1.25); ctx.fillStyle = hsl(28, 40, 30); ctx.fillRect(-s * 0.06, -s * 0.04, s * 0.12, s * 0.52); ctx.fillStyle = '#4a4a4a'; ctx.fillRect(-s * 0.06, s * 0.12, s * 0.12, s * 0.05); ctx.restore(); }
+        } else {
+            for (const sx of [-1, 1]) {
+                const x0 = sx < 0 ? -s * 0.38 : s * 0.02;
+                ctx.fillStyle = hsl(28, 42, 30); ctx.fillRect(x0, -s * 0.28, s * 0.36, s * 0.56);
+                ctx.fillStyle = 'rgba(0,0,0,0.3)'; for (let i = 1; i < 4; i++) ctx.fillRect(x0 + i * s * 0.09, -s * 0.28, 1, s * 0.56);
+                ctx.fillStyle = '#4a4a4a'; ctx.fillRect(x0, -s * 0.2, s * 0.36, s * 0.06); ctx.fillRect(x0, s * 0.14, s * 0.36, s * 0.06);
+                for (const bx of [0.05, 0.3]) for (const by of [-0.17, 0.17]) ellipse(ctx, x0 + s * bx, s * by, s * 0.025, s * 0.025, '#8a8a8a');
+            }
+            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(-s * 0.01, -s * 0.28, 2, s * 0.56);
+            if (kind === 'locked') { ctx.fillStyle = hsl(24, 30, 22); ctx.fillRect(-s * 0.46, -s * 0.05, s * 0.92, s * 0.1); ctx.fillStyle = '#5c5c5c'; ctx.fillRect(-s * 0.13, -s * 0.075, s * 0.26, s * 0.15); ellipse(ctx, 0, 0, s * 0.035, s * 0.04, '#c9a227'); }
+        }
+        ctx.restore();
+        return;
+    }
     ctx.fillStyle = hsl(25, 20, 18); ctx.fillRect(-s / 2, -s * 0.16, s * 0.12, s * 0.32); ctx.fillRect(s * 0.38, -s * 0.16, s * 0.12, s * 0.32); // frame
     if (kind === 'open') {
         ctx.fillStyle = hsl(28, 40, 32); ctx.fillRect(-s * 0.38, -s * 0.12, s * 0.08, s * 0.62);
@@ -832,6 +882,8 @@ export function paintMapBase(map, tile) {
     const isWall = ch => ch === '#' || ch === '|' || ch === 'H' || ch === 'U';
     const isWater = ch => ch === '~' || ch === 'w' || ch === 'b';
     const areaAt = areaFinder(map);
+    // A camp's gates (heavy timber, not a house door).
+    const gates = new Set(map.gates || []);
     const floorKind = (ch, st) => ({ '_': 'planks', '=': 'cobble', ',': 'grass', ':': st.floor === 'mud' ? 'mud' : 'dirt' })[ch] ?? st.floor;
     // Ground under doors, trees and stairs: whatever plain floor is around them.
     const groundChar = (x, y) => {
@@ -890,7 +942,7 @@ export function paintMapBase(map, tile) {
             if (ch === 'o') pit(ctx, r, px, py, tile);
             else if (ch === '^') rubble(ctx, r, px, py, tile);
             else if (ch === 'T') { if (outdoor) trees.push([r, px, py]); else pillarTile(ctx, r, px, py, tile); }
-            else if (ch === '+' || ch === '/' || ch === 'D') door(ctx, r, px, py, tile, ch === '/' ? 'open' : ch === 'D' ? 'locked' : 'closed', isWall(at(x - 1, y)) || isWall(at(x + 1, y)));
+            else if (ch === '+' || ch === '/' || ch === 'D') door(ctx, r, px, py, tile, ch === '/' ? 'open' : ch === 'D' ? 'locked' : 'closed', isWall(at(x - 1, y)) || isWall(at(x + 1, y)), gates.has(`${x},${y}`));
             else if (ch === '<' || ch === '>') stairs(ctx, r, px, py, tile, ch === '<');
             else if (ch === 'I' || ch === 'J' || ch === 'j') {
                 const barLike = c => c === 'I' || c === 'J' || c === 'j' || isWall(c);

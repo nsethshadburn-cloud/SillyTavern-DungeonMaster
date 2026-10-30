@@ -117,7 +117,7 @@ export function presetFor(text) {
         [w('nobles?|nobleman|lord|king|prince|duke|count|baron|aristocrats?|magistrate'), 'human_noble'], [w('cultists?|acolytes?|zealots?'), 'human_cultist'],
         [w('priests?|priestess|clerics?|monks?|nuns?|bishops?|abbots?|abbess|brother|friars?'), 'human_priest'], [w('healers?|physicians?|surgeons?|herbalists?|midwife|apothecary'), 'human_healer'],
         [w('mages?|wizards?|sorcerers?|sorceress|warlocks?|witch|witches|alchemists?|magician'), 'human_mage'], [w('scholars?|scribes?|librarians?|sages?|clerks?|tutors?|archivists?'), 'human_scholar'],
-        [w('archers?|hunters?|rangers?|scouts?|trappers?|poachers?'), 'human_archer'], [w('bandits?|thie(f|ves)|rogues?|cutpurses?|assassins?|smugglers?|highwaym[ae]n|pickpockets?'), 'human_bandit'],
+        [w('archers?|hunters?|rangers?|scouts?|trappers?|poachers?'), 'human_archer'], [w('bandits?|thie(f|ves)|rogues?|cutpurses?|assassins?|smugglers?|highwaym[ae]n|pickpockets?|raiders?|marauders?|brigands?|reavers?|outlaws?|cutthroats?|cannibals?|flesh-eaters?|skinners?|bone-gnawers?|lookouts?'), 'human_bandit'],
         [w('executioners?|headsm[ae]n|torturers?'), 'human_executioner'],
         [w('ogres?|giants?|brutes?|bruisers?|groundskeepers?'), 'human_brute'], [w('thugs?|enforcers?|heavies|bouncers?|mercenar(y|ies)'), 'human_thug'],
         [w('(black|silver|gold|lock|white)?smiths?|farriers?|armou?rers?'), 'human_smith'], [w('miners?|diggers?|prospectors?'), 'human_miner'],

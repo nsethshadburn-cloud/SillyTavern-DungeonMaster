@@ -529,6 +529,9 @@ export function normalizeBrief(raw, req = {}) {
         guards: num(d.guards) === null ? null : Math.max(0, Math.min(6, Math.round(num(d.guards)))),
         creatures: str(d.creatures ?? d.guard_kind).slice(0, 40),
         traps: ['none', 'few', 'many'].includes(str(d.traps).toLowerCase()) ? str(d.traps).toLowerCase() : '',
+        walls: ['palisade', 'stone', 'none'].includes(str(d.walls).toLowerCase()) ? str(d.walls).toLowerCase() : '',
+        gates: ['open', 'closed', 'locked'].includes(str(d.gates).toLowerCase()) ? str(d.gates).toLowerCase() : '',
+        shape: ['round', 'square'].includes(str(d.shape).toLowerCase()) ? str(d.shape).toLowerCase() : '',
         floors: num(d.floors) === null ? null : Math.max(1, Math.min(5, Math.round(num(d.floors)))),
         exterior: d.exterior && typeof d.exterior === 'object' ? d.exterior : null,
     };

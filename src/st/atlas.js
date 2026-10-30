@@ -28,6 +28,7 @@ import { sfx } from '../ui/sound.js';
 import { watchParty } from './watch.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
+import { isCamp, campFromBrief, generateCamp } from '../core/camp.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
 import { voiceLine } from './voices.js';
@@ -1077,7 +1078,8 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     }
     if (building) return null;
     const big = req.size === 'big';
-    const town = /town|village|hamlet|city|outpost|settlement/.test(String(req.kind || '').toLowerCase());
+    const camp = isCamp(req.kind, req.name);
+    const town = !camp && /town|village|hamlet|city|outpost|settlement/.test(String(req.kind || '').toLowerCase());
     const byClaude = settings().mapBuilder === 'claude';
     if ((big || ask) && confirm) {
         const ok = await ST.callGenericPopup(
@@ -1093,7 +1095,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     const anim = await startBuildAnimation(req.name, { big });
     try {
         const { askPlacePlan, askPlaceBrief } = await import('./dm.js');
-        anim.cycle(big ? ['Drawing floor plans', 'Deciding what lives where', 'Hiding traps and secret doors', 'Placing keys and locks'] : town ? ['Laying out the streets', 'Raising buildings', 'Painting shop signs'] : ['Sketching the place', 'Furnishing it']);
+        anim.cycle(camp ? ['Raising the palisade', 'Pitching tents', 'Setting stakes and traps', 'Posting lookouts'] : big ? ['Drawing floor plans', 'Deciding what lives where', 'Hiding traps and secret doors', 'Placing keys and locks'] : town ? ['Laying out the streets', 'Raising buildings', 'Painting shop signs'] : ['Sketching the place', 'Furnishing it']);
         const seed = Math.floor(Math.random() * 1e9);
         // A short brief (the local helper or Haiku), then the architect builds every room from it by algorithm.
         // Claude plans every room itself only when the settings say so.
@@ -1102,15 +1104,15 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         if (!raw) {
             const brief = normalizeBrief(await askPlaceBrief({ ...req, town }, { signal }).catch(error => { console.warn('[Dungeon Master] brief failed, building from the request', error); return {}; }), req);
             if (town) brief.kind = brief.kind && /town|village|city|hamlet/.test(brief.kind) ? brief.kind : 'town';
-            raw = town ? townFromBrief(brief, seed) : WILD_KINDS.test(`${brief.kind} ${brief.name}`.toLowerCase()) && !blueprintFor(brief.kind).building ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
+            raw = town ? townFromBrief(brief, seed) : camp ? campFromBrief(brief, seed) : WILD_KINDS.test(`${brief.kind} ${brief.name}`.toLowerCase()) && !blueprintFor(brief.kind).building ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
         }
-        anim.step(town ? 'Building the town' : 'Building the floors');
+        anim.step(town ? 'Building the town' : camp ? 'Building the camp' : 'Building the floors');
         await sleep(300);
         // (Not 'plan': that's the ready plan this was called with, read above.)
-        const placePlan = town ? null : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
+        const placePlan = town ? null : camp ? raw : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
         // A wild place (a jungle, a forest, a swamp, a camp) is land: clearings joined by trails, not rooms.
-        const wild = !town && !placePlan.building && WILD_KINDS.test(`${placePlan.kind} ${placePlan.name}`.toLowerCase());
-        const place = town ? generateTown(normalizeTownPlan(raw), seed) : wild ? generateWilds(placePlan, seed) : generatePlace(placePlan, seed);
+        const wild = !town && !camp && !placePlan.building && WILD_KINDS.test(`${placePlan.kind} ${placePlan.name}`.toLowerCase());
+        const place = town ? generateTown(normalizeTownPlan(raw), seed) : camp ? generateCamp(placePlan, seed) : wild ? generateWilds(placePlan, seed) : generatePlace(placePlan, seed);
         if (place) {
             // Nobody of the place may be named like a party member: "Judy" in a cage IS Judy Hopps, whom
             // the code puts where the setup keeps her (placeHeld). From now on the place takes only a few newcomers.
@@ -1120,7 +1122,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
             place.state.newcomers = 0;
             place.state.fallen = [];
         }
-        anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
+        anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : camp ? `Posting ${Object.keys(place.guards).length} people` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
         const key = placeKey(place.name || req.name);
         // A building is two maps: its grounds outside (with the front door) and its inside. The front
@@ -1147,6 +1149,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         await flushWrites();
         const summary = town
             ? `🗺️ **${place.name}** is ready: ${Object.keys(place.buildings).length} buildings. Their insides are built when you walk in.`
+            : camp ? `🗺️ **${place.name}** is ready: ${{ small: 'a small camp', medium: 'a camp', big: 'a big camp', massive: 'a sprawling war camp' }[place.camp?.size] ?? 'a camp'} ${place.camp?.walls === 'stone' ? 'behind stone walls' : place.camp?.walls === 'palisade' ? 'behind a palisade' : 'in the open'}, ${Object.keys(place.guards).length} people. The inside shows itself as you see it.`
             : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} rooms${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
         await anim.finish(summary);
         await enterPlace(enterKey, { quiet });

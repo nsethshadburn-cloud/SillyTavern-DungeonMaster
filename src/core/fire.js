@@ -21,7 +21,7 @@ const OUTDOOR = new Set(['forest', 'camp', 'swamp', 'snow', 'desert', 'town', 'j
 /** [how easily it catches 0-1, how many turns it burns]. Anything not listed doesn't burn. */
 const MATERIAL_BURN = {
     planks: [0.3, 4], deck: [0.3, 4], parquet: [0.3, 4], carpet: [0.45, 3], grass: [0.45, 1],
-    timber: [0.22, 7], log: [0.2, 8], panel: [0.28, 5], wallpaper: [0.22, 5], hedge: [0.4, 3],
+    timber: [0.22, 7], log: [0.2, 8], panel: [0.28, 5], wallpaper: [0.22, 5], hedge: [0.4, 3], palisade: [0.25, 8],
 };
 export const PROP_BURN = {
     hay: [0.95, 3], sack: [0.7, 2], papers: [0.95, 1], web: [0.95, 1], banner: [0.8, 2], rug: [0.6, 3], tent: [0.8, 3], bush: [0.6, 2], flowers: [0.3, 1],
@@ -30,6 +30,7 @@ export const PROP_BURN = {
     pew: [0.35, 6], counter: [0.35, 7], workbench: [0.35, 6], kennel: [0.5, 4], petbed: [0.7, 2], stall: [0.6, 4], fence: [0.45, 3], cart: [0.4, 5],
     log: [0.3, 7], coffin: [0.35, 5], weaponrack: [0.3, 3], painting: [0.6, 2], stocks: [0.35, 4], rack: [0.35, 4], plant: [0.3, 2], mushroom: [0.1, 1],
     throne: [0.3, 6], trough: [0.2, 3], sign: [0.4, 2], bigtree: [0.3, 10], palm: [0.35, 6], fern: [0.6, 1], tallgrass: [0.8, 1], reeds: [0.6, 1],
+    spikes: [0.4, 4], watchtower: [0.3, 9], skullpole: [0.3, 3],
 };
 /** Turns a door or a tree burns, and how easily. */
 const DOOR_BURN = [0.4, 4], TREE_BURN = [0.35, 8], BRIDGE_BURN = [0.35, 5];
@@ -38,7 +39,7 @@ export const FIRE_DAMAGE = { 1: '1d4', 2: '1d6', 3: '2d6' };
 /** Spell and hazard effects the DM can put on the map. lightning/thunder are a one-off flash. */
 export const EFFECT_TYPES = ['fog', 'smoke', 'darkness', 'ice', 'web', 'poison', 'acid', 'holy', 'water', 'lightning', 'thunder'];
 /** The air of a place, just for the look. */
-export const AMBIENCES = ['rain', 'snow', 'dust', 'ash', 'mist', 'leaves', 'fireflies', 'sand', 'none'];
+export const AMBIENCES = ['rain', 'snow', 'dust', 'ash', 'mist', 'leaves', 'fireflies', 'sand', 'embers', 'none'];
 
 const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 const key = (x, y) => `${x},${y}`;

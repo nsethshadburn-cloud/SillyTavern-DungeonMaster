@@ -55,6 +55,8 @@ export const PROPS = Object.freeze({
     bones: { name: 'bones' }, skull: { name: 'skull' }, web: { name: 'spider web' }, pot: { name: 'pot or urn' }, sack: { name: 'sacks' }, trap: { name: 'trap (known)' },
     boulder: { name: 'boulder', blocks: true, cover: true }, bush: { name: 'bush', cover: true }, log: { name: 'fallen log', cover: true }, stalagmite: { name: 'stalagmite', blocks: true, cover: true },
     crystal: { name: 'crystals', blocks: true }, mushroom: { name: 'mushrooms' }, tent: { name: 'tent', blocks: true }, cart: { name: 'cart', blocks: true, cover: true },
+    // Camps and forts. A watchtower is a platform: a lookout stands on it (and has cover up there).
+    bonfire: { name: 'bonfire', blocks: true, light: 5 }, spikes: { name: 'sharpened stakes', blocks: true }, watchtower: { name: 'watchtower', cover: true, light: 4, size: [2, 2], platform: true }, skullpole: { name: 'skull pole', blocks: true },
     // Furniture
     wardrobe: { name: 'wardrobe', blocks: true, cover: true }, dresser: { name: 'dresser', blocks: true }, nightstand: { name: 'nightstand', blocks: true },
     desk: { name: 'desk', blocks: true, cover: true }, sofa: { name: 'sofa', blocks: true, cover: true, size: [2, 1] }, armchair: { name: 'armchair', blocks: true },
@@ -96,7 +98,7 @@ export const SEATS = Object.freeze({
     bed: 'lie', petbed: 'lie', hay: 'lie', bathtub: 'lie', coffin: 'lie', slab: 'lie',
 });
 
-export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence']);
+export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence', 'bonfire', 'spikes', 'watchtower', 'skullpole']);
 
 /** Furniture with a back and a front: drawn turned so its back is against the wall it stands by. */
 export const ORIENTED = new Set(['bed', 'sofa', 'armchair', 'chair', 'piano', 'wardrobe', 'dresser', 'desk', 'cabinet', 'throne', 'clock', 'weaponrack', 'pew', 'kennel', 'altar', 'workbench', 'iron_maiden', 'bookshelf', 'counter', 'nightstand']);
