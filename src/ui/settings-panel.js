@@ -147,6 +147,7 @@ function panelHtml() {
       <label class="checkbox_label"><input id="dm-map-ambience" type="checkbox" ${s.mapAmbience !== false ? 'checked' : ''}> Weather and ambient particles on the map (rain, snow, dust, fireflies, glints on water, flickering torches). Fire and spell effects always show. Also a button on the map.</label>
       <label class="checkbox_label"><input id="dm-map-bubbles" type="checkbox" ${s.mapBubbles !== false ? 'checked' : ''}> Speech bubbles on the map: what a companion or NPC says appears over their figure, word by word, in time with their voice (right away when voices are off), and stays a few seconds after they finish.</label>
       <label class="checkbox_label"><input id="dm-turn-prompts" type="checkbox" ${s.turnPrompts !== false ? 'checked' : ''}> Turn prompts in a fight: after your action, a popup asks whether your turn is done (you may still move); before an enemy's hit lands, it asks whether you react (Uncanny Dodge halves it; anything else goes to the DM).</label>
+      <label class="checkbox_label"><input id="dm-guards-talk" type="checkbox" ${s.guardsTalk !== false ? 'checked' : ''}> Guards and locals talk: when one sees you and has a word to say, now and then it comes from the local model (one short line) instead of the canned pool.</label>
       <small>Profiles come from SillyTavern's Connection Manager. A profile brings its own saved formats, so update old profiles before using them here.</small>
 
       <h4>Budget</h4>
@@ -397,6 +398,7 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindCheck('dm-map-ambience', 'mapAmbience');
     bindCheck('dm-map-bubbles', 'mapBubbles');
     bindCheck('dm-turn-prompts', 'turnPrompts');
+    bindCheck('dm-guards-talk', 'guardsTalk');
     bindNumber('dm-monthly', 'monthlyCap');
     bindNumber('dm-nightly', 'nightlySoftCap');
     bindCheck('dm-caching', 'cachingEnabled');

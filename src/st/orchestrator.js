@@ -33,6 +33,8 @@ import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
+import { drainTalk } from './talk.js';
+import { readsAsRunning } from '../core/notice.js';
 import { lineRole } from '../core/lines.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
@@ -188,7 +190,10 @@ async function turnBody(c, opts, status, signal) {
     const meta = c.meta;
     const pacing = meta.pacing;
     const autoRoll = meta.pendingRoll?.autoResult ?? null;
-    const playerText = opts.force === 'manual' || autoRoll ? '' : lastPlayerMessage();
+    // Only a real player turn acts on their message. A forced turn (a sprung trap, a walk that went far,
+    // the end of a combat turn, a reaction) must not read the last message again: "searches the chest"
+    // would walk them back to the chest and run the search a second time, every time.
+    const playerText = opts.force || autoRoll ? '' : lastPlayerMessage();
     meta.stats.lastTurnUsd = 0;
     // A fight is on when the code has one; a scene the DM labelled "combat" without one never freezes the map.
     if (pacing.inCombat && !c.docs.world.combat) { pacing.inCombat = false; status.note('No fight is running: the map moves again'); }
@@ -328,7 +333,7 @@ async function turnBody(c, opts, status, signal) {
         const watched = watchTurn(c);
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
-        const hunt = await huntersTurn(c, { still });
+        const hunt = await huntersTurn(c, { still, fleeing: readsAsRunning(playerText) });
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
         await playMoves(c);
     }
@@ -464,6 +469,8 @@ async function turnBody(c, opts, status, signal) {
         meta.stats.localTurns = (meta.stats.localTurns || 0) + 1;
         await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal, { moved: taskWent ? [triage.task.who] : [] });
     }
+    // A guard or local who saw the party this turn may say one short line through the local model.
+    if (!signal.aborted) await drainTalk();
 }
 
 
@@ -708,6 +715,11 @@ async function bookkeep(c, fromIndex) {
         allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
     });
     if (!changes) return;
+    // Someone still on their feet in the fight isn't knocked out by a turn of phrase: the dice decide that.
+    for (const [n, list] of Object.entries(changes.conditions_add || {})) {
+        const e = w.combat?.enemies?.[n];
+        if (e && e.hp > 0) changes.conditions_add[n] = list.filter(x => !/unconscious|incapacitated|out cold|dead|dying|senseless/i.test(x));
+    }
     const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name), { turn: c.meta.turn });
     if (!log.length) return;
     saveDoc('world');

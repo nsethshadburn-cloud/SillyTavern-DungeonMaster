@@ -324,6 +324,13 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.42 (the soft lock; grabs only when you run; a range to noticing; guards talk)
+- The soft lock: `turnBody` read the player's last message on every turn, including forced ones (`force: 'explore'` after a walk or a sprung trap, `moved`, `end_turn`, `reaction`). "Searches the chest" was then handled again: the target walk pulled the player back to the chest (or the body), the DM re-narrated the search, the items were added again, and a walk away triggered it once more. Forced turns now carry no player text (the chat history is context enough).
+- Grabs (`grabAttempts`) only when the player gets away from a guard who has them: on a walk, only if the player isn't walking up to him (distance at the walk's start, `from`); on a turn, only when their own words say they run (`readsAsRunning`); never a guard their message is about (`still`). Attacking him is a fight for the DM; standing and talking is talk.
+- `noticeReach(rng, time)`: a watcher pays attention over 4-8 squares by day, 3-6 by night, rolled each look (`ctx.reach` overrides); beyond that, someone in his line of sight is not noticed this turn. The Stealth "spot" rolls and the unseen-watcher Perception roll stay as they were.
+- The bookkeeper can't add unconscious/incapacitated/dead to a combat enemy above 0 HP ("bent over his wound" is not out cold).
+- Guards and locals talk (`guardsTalk`, `st/talk.js`): when a canned line would be said and the watcher is in sight, 60% of the time the line is queued for the local model instead (`makeSpeak` through the NPC's card, length short, brief: one gruff sentence, an order, a warning, a remark); one such line per turn at most, the rest canned; drained at the end of the turn or the walk; canned on any failure. Lines carry `to`, `prisoner`, `room`, `dist` from `noticeParty`.
+
 ### v0.41.1 (the map header on a phone)
 - With a floor picker (a place with several floors) the header row overflowed on a phone and pushed the minimize and close buttons off screen. The header is now a title part (name, room, clock, badge: shrinks first) and a tools part (floor picker, buttons: never shrinks); on a phone they stack, tools right-aligned on their own line, the floor picker on the left of it.
 

@@ -1349,15 +1349,20 @@ export const GRAB_TRIES = 3;
  * a miss means cuffs and the cell, a slip means the chase goes on, the third slip means a fight).
  * Returns the text for the DM ('' when nobody grabbed).
  */
-export async function grabAttempts(c) {
+export async function grabAttempts(c, { still = [], from = null } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || c.meta.pendingRoll) return '';
     const { key, place } = cur;
     const player = c.meta.persona.name;
     const lead = place.state.positions[player];
     if (!lead) return '';
+    const stillSet = new Set(still);
+    const dist = x => Math.max(Math.abs(x.x - lead.x), Math.abs(x.y - lead.y));
+    // Only a guard the player is getting away from grabs: not one they walked up to, not one their
+    // message is about (an attack, a word: the DM rules on that).
     const g = Object.values(place.guards).find(x => x.seize?.asked && x.seize.target === player && x.intent === 'follow' && !isOut(x) && x.state !== 'gone'
-        && x.floor === lead.floor && Math.max(Math.abs(x.x - lead.x), Math.abs(x.y - lead.y)) <= 1 && x.seize.lastGrabTurn !== c.meta.turn);
+        && x.floor === lead.floor && dist(x) <= 1 && x.seize.lastGrabTurn !== c.meta.turn && !stillSet.has(x.name)
+        && !(from && from[x.name] !== undefined && dist(x) < from[x.name]));
     if (!g) return '';
     g.seize.attempts += 1;
     g.seize.lastGrabTurn = c.meta.turn;
@@ -1521,6 +1526,8 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
     const quarry = names.filter(n => !(place.state.held?.[n] && isAway(c.docs.world, n)));
+    // How far each guard after the player was when the walk began: walking up to him is not running from him.
+    const chaseFrom = Object.fromEntries(Object.values(place.guards).filter(g => g.seize && g.floor === floorId).map(g => [g.name, Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y))]));
     let event = null, handoff = null, newRoom = null;
     const greet = []; // companions you came back to or walked away from: they may speak
     try {
@@ -1541,7 +1548,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             if (caught.length) { redraw(); event = hunterEvent(caught); break; }
             // A guard after the player has reached them: he grabs (the dice card asks the player to slip free).
-            if (await grabAttempts(c)) { redraw(); break; }
+            if (await grabAttempts(c, { from: chaseFrom })) { redraw(); break; }
             // Guards and residents who see the party: a trespasser stops the walk (the DM rules on it).
             const watched = watchParty(c, cur, quarry);
             if (watched.events.length) { event = watched.events.join(' '); break; }
@@ -1639,6 +1646,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         if (event) trapEvents.push(event);
         return;
     }
+    if (!event) { const { drainTalk } = await import('./talk.js'); await drainTalk(); }
     if (event) {
         walked = 0;
         const { runTurn } = await import('./orchestrator.js');
@@ -1745,7 +1753,7 @@ export async function playMoves(c = campaign()) {
  * movement), followers keep up, the frightened get away. Returns what the DM should hear (someone
  * reached the party), or ''.
  */
-export async function huntersTurn(c = campaign(), { still = [] } = {}) {
+export async function huntersTurn(c = campaign(), { still = [], fleeing = false } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || !Object.values(cur.place.guards).some(g => g.intent)) return '';
     const { key, place } = cur;
@@ -1755,7 +1763,9 @@ export async function huntersTurn(c = campaign(), { still = [] } = {}) {
     const caught = moveHunters(place, floorId, partyActive(c), 6, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
     look(c, key, place);
     savePlace(key, c);
-    const grabbed = await grabAttempts(c);
+    // A grab outside a walk only when the player's own words say they run: standing, talking or
+    // attacking is the DM's to rule on (a guard who is attacked fights; one who is talked to talks).
+    const grabbed = fleeing ? await grabAttempts(c, { still }) : '';
     return [caught.length ? hunterEvent(caught) : '', grabbed].filter(Boolean).join(' ');
 }
 

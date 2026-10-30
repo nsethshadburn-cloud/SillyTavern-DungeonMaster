@@ -10,6 +10,8 @@ import { sayOnMap } from '../ui/bubbles.js';
 import { postNpc } from './messages.js';
 import { ST } from './st.js';
 import { look } from './atlas.js';
+import { queueTalk } from './talk.js';
+import { settings } from './settings.js';
 import { floorById, personByName, setIntent } from '../core/explore.js';
 
 /** Did this person speak in the last few messages (a conversation is going on)? */
@@ -53,6 +55,17 @@ export function watchParty(c, cur, names) {
         setIntent(g, 'follow', s.target);
     }
     for (const l of r.lines) {
+        // Now and then the line comes from the local model instead of the canned pool (one a turn, short).
+        const g = personByName(place, l.name);
+        if (g && settings().guardsTalk !== false && Math.random() < 0.6) {
+            const who = l.prisoner ? `${l.to}, a prisoner in their own cell` : `${l.to}, who is allowed to be there`;
+            queueTalk({
+                name: l.name,
+                fallback: l.text,
+                brief: `You are ${g.name}${g.description ? `, ${g.description}` : ''}, on duty in ${place.name}. You can see ${who}, ${l.dist} squares away${l.room ? ` in ${l.room}` : ''}. Say ONE short line, a sentence at most, plain and gruff: an order, a warning, a passing remark, to ${l.to} or under your breath. Nothing else: no narration, no action beyond a glance.`,
+            });
+            continue;
+        }
         sayOnMap({ name: l.name, text: l.text, voiced: false });
         place.state.said = [...(place.state.said || []).slice(-5), { name: l.name, text: l.text, turn: c.meta.turn }];
         postNpc(l.name, `"${l.text}"`).catch(error => console.warn('[Dungeon Master] could not post a line', error));

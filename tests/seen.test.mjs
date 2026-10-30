@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent, looksLikeThing, notAPerson, searchRadius } from '../src/core/explore.js';
-import { noticeParty } from '../src/core/notice.js';
+import { noticeParty, noticeReach, readsAsRunning } from '../src/core/notice.js';
 import { setStanding, standingFor, givesIn } from '../src/core/access.js';
 import { dialogueOf, typingMs } from '../src/core/speech.js';
 import { combatSummary, moveBudget, spendMove, markDash, newRound } from '../src/core/world.js';
@@ -69,6 +69,24 @@ test('"!": a guard who has seen the escapee is marked alert; a fellow prisoner d
     assert.deepEqual(r.events, [], 'no alarm from a fellow prisoner');
     assert.equal(cells.guards.Magnus.alertAt, undefined);
     assert.deepEqual(r.seen, [{ seer: 'Magnus', seen: 'Amber' }], 'she did see him');
+});
+
+test('a watcher pays attention over a range rolled each look: no x-ray down the corridor', () => {
+    assert.equal(noticeReach(() => 0, 'day'), 4);
+    assert.equal(noticeReach(() => 0.99, 'day'), 8);
+    assert.equal(noticeReach(() => 0, 'night'), 3);
+    assert.equal(noticeReach(() => 0.99, 'night'), 6);
+    const place = tiny({ w: 12, h: 3, rooms: { H: room('H', 'Hallway', 'hallway', 0, 0, 12, 3) } });
+    place.guards = { Wren: person('Wren', 0, 1, { description: 'a turnkey', role: 'guard' }) };
+    place.state.positions.Amber = { floor: 'F0', x: 7, y: 1 };
+    setStanding(place, 'Amber', standingFor('prisoner', { home: 'H' }));
+    place.rooms.C = room('C', 'Cell', 'cell', 10, 0, 2, 3); place.state.positions.Amber = { floor: 'F0', x: 7, y: 1 };
+    setStanding(place, 'Amber', standingFor('prisoner', { home: 'C' }));
+    assert.deepEqual(noticeParty(place, ['Amber'], { turn: 1, rng: () => 0, canSee: () => true }).events, [], 'seven squares off with a short look: not this turn');
+    assert.equal(noticeParty(place, ['Amber'], { turn: 2, rng: () => 0.99, canSee: () => true }).events.length, 1, 'a long look: seen');
+    assert.equal(noticeParty(tiny({ w: 12, h: 3 }), ['Amber'], { turn: 1 }).events.length, 0);
+    for (const t of ['*amber runs for the stairs*', 'I bolt', 'Amber backs away and makes a break for it']) assert.ok(readsAsRunning(t), t);
+    for (const t of ['*amber attacks the jailer*', 'fine, take me', '', 'I stand my ground']) assert.ok(!readsAsRunning(t), t);
 });
 
 test('a guard who sees the escapee is set on taking them in; a fellow prisoner is not', () => {

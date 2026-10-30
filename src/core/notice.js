@@ -18,6 +18,22 @@ import { nameKey } from './text.js';
 /** A watcher doesn't react again to the same person (in the same room, for lines) for this many turns. */
 export const SETTLE_TURNS = 6;
 
+/**
+ * How far a watcher is paying attention this look, in squares: 4 to 8 by day, 3 to 6 by night,
+ * rolled each time. Someone in his line of sight but further off is simply not noticed this turn.
+ */
+export function noticeReach(rng = Math.random, time = 'day') {
+    const r = Math.max(0, Math.min(0.999, Number(rng()) || 0));
+    return time === 'night' ? 3 + Math.floor(r * 4) : 4 + Math.floor(r * 5);
+}
+
+/** Does the player's own message say they run (from a guard who has them)? */
+export const RUN_WORDS = /\b(run|runs|running|ran|flee|flees|fled|bolt|bolts|sprint|sprints|dash|dashes|escape|escapes|back away|backs away|retreat|retreats|slip away|slips away|make a break|makes a break|take off|takes off|leg it|legs it)\b/i;
+export function readsAsRunning(text) {
+    const t = String(text ?? '');
+    return Boolean(t.trim()) && RUN_WORDS.test(t);
+}
+
 const OUT = [
     [/unconscious|knocked out|out cold|senseless|stunned|paralyz|paralys|petrified|incapacit|dying|dead/i, 'unconscious'],
     [/asleep|sleeping|drugged|passed out/i, 'asleep'],
@@ -37,7 +53,7 @@ const settled = (store, key, turn) => store?.[key] !== undefined && turn - store
 /**
  * @param {object} place
  * @param {string[]} names party members on the map (the player first)
- * @param {{turn: number, time?: string, canSee?: (g: object) => boolean, condsOf?: (name: string) => string[], hpOf?: (name: string) => ({hp: number, hp_max: number} | null), spokeLately?: (name: string) => boolean, rng?: () => number}} ctx
+ * @param {{turn: number, time?: string, reach?: number, canSee?: (g: object) => boolean, condsOf?: (name: string) => string[], hpOf?: (name: string) => ({hp: number, hp_max: number} | null), spokeLately?: (name: string) => boolean, rng?: () => number}} ctx
  * @returns {{events: string[], lines: {name: string, text: string}[], seen: {seer: string, seen: string}[], seize: {guard: string, target: string}[]}}
  *  events = what the DM must rule on; lines = canned lines to say; seen = sightings to record
  */
@@ -56,7 +72,8 @@ export function noticeParty(place, names, ctx) {
     const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     for (const g of Object.values(place.guards || {})) {
         if (isOut(g) || g.floor !== floorId || g.hostile === true || g.intent === 'attack' || g.intent === 'follow' || outBy(condsOf(g.name))) continue;
-        const seen = guardSees(place, floorId, g, here);
+        const reach = Number.isFinite(Number(ctx?.reach)) ? Number(ctx.reach) : noticeReach(ctx?.rng ?? Math.random, time);
+        const seen = guardSees(place, floorId, g, here).filter(n => { const p = place.state.positions[n]; return dist(g, p) <= reach; });
         if (!seen.length) continue;
         g.spotted ??= {};
         g.reported ??= {};
@@ -123,7 +140,7 @@ export function noticeParty(place, names, ctx) {
             const prisoner = st.label === 'prisoner' && Boolean(room) && (st.home === room.id || st.rooms.includes(room.id));
             const hurt = Boolean(hp && hp.hp_max && hp.hp / hp.hp_max < 0.5);
             const line = cannedLine(g, { hurt, time, prisoner, rng: ctx?.rng });
-            if (line) out.lines.push({ name: g.name, text: line });
+            if (line) out.lines.push({ name: g.name, text: line, to: n, prisoner, room: room?.name ?? '', dist: dist(g, p) });
         }
     }
     return out;
