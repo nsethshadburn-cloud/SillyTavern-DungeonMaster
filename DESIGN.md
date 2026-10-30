@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.35.1 (the minimized map on a phone)
+- Minimized on a phone, the map bar vanished: it was anchored with `bottom`, but SillyTavern's mobile styles make `<body>` position: fixed and `<html>` carries a transform, so a fixed panel's `bottom` measures from a zero-height root box at the top of the screen. The bar is now placed by its top edge from where the message box starts (`--dm-form-top` from `getBoundingClientRect`, `translateY(-100%)`).
+
 ### v0.35 (a third pass: what the companions, the books and undo were missing)
 - Companions are told who is right there with them (`roomBrief.here` / the room note's `{{here}}`: party members and the place's people in the same room, with distance and state; "nobody else" when alone), and "Also here" lists only roster NPCs in reach (`actors.npcsInReach`: same floor, within earshot, awake). The note's "Where" carries the hour and the weather. Settings migration `roomV35` (untouched room template only; `OLD_DEFAULTS.roomV33`).
 - The bookkeeper's names include the people on the map near the party, so "the turnkey slumps, out cold" in the narration puts `unconscious` on him (`world.others`) and `syncDownFromConditions` takes him out of it on the map (`g.down`, `g.downBy = 'conditions'`); the DM's own `conditions_add` on map people does the same, and removing the condition brings them back.

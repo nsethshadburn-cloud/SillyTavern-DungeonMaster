@@ -229,6 +229,15 @@ function clockChip(c) {
     return `<span class="dm-map-clock" title="${escapeHtml(`${clockText(w)} · ${weather}`)}">${timeIcon(clock.minutes)} ${hhmm(clock.minutes)} <i>day ${clock.day}</i> ${WEATHER_ICON[w.weather] ?? ''}</span>`;
 }
 
+/**
+ * Minimized on a phone, the map is a bar just above the message box, never over it. The bar is placed by its
+ * top edge from where the message box starts on screen (see .dm-map-min in style.css for why not "bottom").
+ */
+function anchorAboveForm() {
+    const top = document.getElementById('form_sheld')?.getBoundingClientRect().top;
+    panel.style.setProperty('--dm-form-top', `${Math.round(top || (window.innerHeight - 100))}px`);
+}
+
 function renderMap(center = false) {
     const c = campaign();
     const b = c ? board(c) : null;
@@ -258,8 +267,7 @@ function renderMap(center = false) {
     panel.classList.toggle('dm-map-wide', exploring || map.w > 16);
     panel.classList.toggle('dm-map-trespassing', Boolean(b.trespass));
     panel.classList.toggle('dm-map-night', Boolean(b.night));
-    // Minimized on a phone, the map sits just above the message box, never over it.
-    panel.style.setProperty('--dm-form-h', `${document.getElementById('form_sheld')?.offsetHeight || 100}px`);
+    anchorAboveForm();
     panel.innerHTML = `
 <div class="dm-map-head">
   <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>${clockChip(c)}${b.trespass ? `<span class="dm-map-trespass" title="${escapeHtml(`You're not allowed in ${b.trespass.room}: ${b.trespass.why === 'escaped' ? 'you are an escaped prisoner' : b.trespass.why}. Anyone who belongs here will object.`)}">⚠ ${b.trespass.why === 'escaped' ? 'ESCAPED' : 'TRESPASSING'}</span>` : ''}
@@ -350,7 +358,7 @@ function renderMap(center = false) {
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
     panel.querySelector('[data-act="ambience"]')?.addEventListener('click', () => { settings().mapAmbience = settings().mapAmbience === false; saveSettings(); renderMap(); });
     panel.querySelector('[data-act="min"]').addEventListener('click', () => {
-        panel.style.setProperty('--dm-form-h', `${document.getElementById('form_sheld')?.offsetHeight || 100}px`);
+        anchorAboveForm();
         panel.classList.toggle('dm-map-min');
         ensureLoop();
         if (panel.classList.contains('dm-map-min')) return;

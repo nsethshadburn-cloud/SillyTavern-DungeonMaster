@@ -208,7 +208,11 @@
 @media (max-width: 700px) {
     /* Phone: a sheet across the bottom 70% of the screen, still anchored from the top. */
     .dm-map { left: 0; right: 0; top: 30dvh; width: 100vw; max-height: 70dvh; border-radius: 12px 12px 0 0; }
-    .dm-map.dm-map-min { top: auto; bottom: calc(var(--dm-form-h, 100px) + 8px); border-radius: 12px; }
+    /* Minimized: a bar just above the message box. Anchored by its top edge, not "bottom": on a phone SillyTavern
+       makes <body> position: fixed and <html> carries a transform, so a fixed panel's "bottom" measures from a
+       zero-height root box at the top of the screen and the bar lands above the viewport. --dm-form-top is where
+       the message box starts (set by map.js); the translate lifts the bar by its own height. */
+    .dm-map.dm-map-min { top: calc(var(--dm-form-top, calc(100dvh - 100px)) - 8px); transform: translateY(-100%); border-radius: 12px; }
     .dm-map-head { gap: 2px; padding: 4px 6px; }
     .dm-map-head .dm-muted { display: none; }
     .dm-map-head .dm-map-btn { padding: 8px 9px; font-size: 1.1em; }
