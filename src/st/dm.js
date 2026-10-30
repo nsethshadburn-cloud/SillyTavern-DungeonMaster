@@ -212,7 +212,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
         const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
         if (lead && pts.length) sections.push('Battle area (the floor\'s own squares; columns a.., rows 1.. from the bottom):', cropText(here.place, w.combat.inPlace.floor, { x: Math.min(...xs) - 3, y: Math.min(...ys) - 3, w: Math.max(...xs) - Math.min(...xs) + 7, h: Math.max(...ys) - Math.min(...ys) + 7 }, pos));
     } else if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
-    else if (here) sections.push(`# INSIDE ${here.place.name.toUpperCase()}`, placeView(here.place, partyOnMap(c)));
+    else if (here) sections.push(`# INSIDE ${here.place.name.toUpperCase()}`, placeView(here.place, partyOnMap(c), { away: partyOnMap(c).filter(n => isAway(w, n)) }));
     else if (w.sceneMap?.map) sections.push(`Scene map "${w.sceneMap.title}" (columns a.., rows 1.. from the bottom; send "scene_map": "close" when they leave):`, renderMapText(w.sceneMap.map, w.sceneMap.positions || {}));
     // Fire, spell effects and the air on the map in play.
     const board = activeBoard(c);

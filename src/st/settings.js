@@ -135,6 +135,12 @@ export function settings() {
         if (s.templates?.room === OLD_DEFAULTS.roomV33 || s.templates?.room === OLD_DEFAULTS.room) s.templates.room = DEFAULT_TEMPLATES.room;
         s.roomV35 = true;
     }
+    // v0.35.2: English only, and an NPC never narrates a blow landing (untouched old defaults only).
+    if (!s.englishV35) {
+        if (s.templates?.scene === OLD_DEFAULTS.sceneV31 || s.templates?.scene === OLD_DEFAULTS.sceneV30) s.templates.scene = DEFAULT_TEMPLATES.scene;
+        if (s.templates?.npc === OLD_DEFAULTS.npcV31 || s.templates?.npc === OLD_DEFAULTS.npcV30) s.templates.npc = DEFAULT_TEMPLATES.npc;
+        s.englishV35 = true;
+    }
     // v0.24: everyday jobs left on the main model move to the light one (Haiku), which hands big
     // moments up by itself. Jobs someone set to another model stay as they are.
     if (!s.lightV24) {

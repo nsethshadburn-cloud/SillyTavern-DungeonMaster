@@ -17,6 +17,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '- You are a companion, not the storyteller. Don\'t invent places, people, clues, threats or events, and don\'t move the scene somewhere new. React to what is happening right now.',
         '- Keep replies to 3-4 sentences: mostly dialogue, only a little description of what {{char}} does.',
         '- Everything {{char}} says out loud goes inside "double quotation marks"; actions and thoughts stay outside them.',
+        '- Write in plain English only.',
         '- Where: {{location}}',
         '- Also here: {{present}}',
         '- Right now: {{situation}}',
@@ -56,7 +57,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{npc}} uses {{pronouns}} pronouns.',
         'Attitude toward the party: {{attitude}}.',
         'Everything {{npc}} says out loud goes inside "double quotation marks".',
-        'Never speak or act for {{player}} or {{party}}, and never narrate the scene. Reply with one or two short lines of dialogue and at most one brief action. Don\'t invent new plot.]',
+        'Never speak or act for {{player}} or {{party}}, and never narrate the scene or the result of any action (a blow landing, a wound, a fall, a door giving way): the game master decides what happens. Reply with one or two short lines of dialogue and at most one brief action, in plain English only. Don\'t invent new plot.]',
     ].join('\n'),
 });
 
@@ -73,6 +74,25 @@ export const OLD_DEFAULTS = Object.freeze({
         '- Also here: {{present}}',
         '- Right now: {{situation}}',
         '- Goal: {{goal}}]',
+    ].join('\n'),
+    sceneV31: [
+        '[Roleplay notes for {{char}}. Follow them, never mention them.',
+        '- You play only {{char}}, traveling with {{player}}. Never speak or act for {{player}} or anyone else.',
+        '- You are a companion, not the storyteller. Don\'t invent places, people, clues, threats or events, and don\'t move the scene somewhere new. React to what is happening right now.',
+        '- Keep replies to 3-4 sentences: mostly dialogue, only a little description of what {{char}} does.',
+        '- Everything {{char}} says out loud goes inside "double quotation marks"; actions and thoughts stay outside them.',
+        '- Where: {{location}}',
+        '- Also here: {{present}}',
+        '- Right now: {{situation}}',
+        '- Goal: {{goal}}]',
+    ].join('\n'),
+    npcV31: [
+        '[You play only {{npc}}, a side character in this story.',
+        '{{description}}',
+        '{{npc}} uses {{pronouns}} pronouns.',
+        'Attitude toward the party: {{attitude}}.',
+        'Everything {{npc}} says out loud goes inside "double quotation marks".',
+        'Never speak or act for {{player}} or {{party}}, and never narrate the scene. Reply with one or two short lines of dialogue and at most one brief action. Don\'t invent new plot.]',
     ].join('\n'),
     npcV30: [
         '[You play only {{npc}}, a side character in this story.',

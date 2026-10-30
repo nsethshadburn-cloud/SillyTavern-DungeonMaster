@@ -1191,7 +1191,12 @@ export function setIntent(g, intent, target = '') {
     const want = String(intent ?? '').toLowerCase().trim();
     if (want === '' || !INTENTS.includes(want)) { if (intent !== undefined && want === '') { delete g.intent; delete g.target; } return; }
     g.intent = want;
-    if (want === 'attack') { g.hostile = true; g.state = 'alert'; delete g.fought; delete g.down; }
+    if (want === 'attack') {
+        // Whether they were an enemy before being set on the party: when the fight ends, a guard
+        // who was only doing his job (or a sync's guess) is not an enemy any more; a monster is.
+        if (g.wasHostile === undefined) g.wasHostile = g.hostile === true;
+        g.hostile = true; g.state = 'alert'; delete g.fought; delete g.down;
+    }
     if (target) g.target = String(target).slice(0, 60); else if (want !== 'attack' && want !== 'follow') delete g.target;
 }
 
@@ -1393,7 +1398,7 @@ export function cropText(place, floorId, rect, people = {}) {
 }
 
 /** What's going on in the place right now, for every DM call while the party is inside. */
-export function placeView(place, partyNames) {
+export function placeView(place, partyNames, { away = [] } = {}) {
     const st = place.state;
     const lead = st.positions[partyNames[0]];
     const floor = floorById(place, lead?.floor ?? st.floor);
@@ -1425,19 +1430,24 @@ export function placeView(place, partyNames) {
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it; describe only what the party can sense of each, as noted): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     if (st.fight?.hears?.length) lines.push(`The fight is loud. Within earshot of it but not in it: ${st.fight.hears.join('; ')}. Decide whether they come running (place_changes.guards with intent "attack", or "following" to watch), hide, or raise the alarm.`);
     if (st.said?.length) lines.push(`Said lately by the place's people on their own (their own words, already in the chat): ${st.said.slice(-4).map(s => `${s.name}: "${s.text}"`).join('; ')}.`);
-    const party = partyNames.filter(n => st.positions[n]).map(n => {
+    // Someone the DM sent away and the code locked up in a room here (a companion the player hasn't
+    // found yet) is not with the party: nobody's quarry, nobody to narrate as present.
+    const awaySet = new Set(away);
+    const notHere = partyNames.filter(n => st.positions[n] && st.held?.[n] && awaySet.has(n));
+    const party = partyNames.filter(n => st.positions[n] && !notHere.includes(n)).map(n => {
         const p = st.positions[n], h = hiddenNow(place, n);
         const rm = roomAt(place, p.floor, p.x, p.y);
         const trapped = caughtNow(place, n);
         const rest = poseNow(place, n);
         const resting = rest ? `, ${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what} (${rest.prop})` : '';
         const t = trespassOf(place, n, roomAt);
-        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}${trapped ? `, CAUGHT in the ${trapped.kind} (${trapped.trap}): held until their save succeeds or you free them (place_changes.free)` : ''}${t ? `, TRESPASSING (${t.why === 'escaped' ? 'an escaped prisoner, out of their cell' : t.why})` : placeClass(place) === 'wild' ? '' : ', where they are allowed to be'}`;
+        return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${rm?.name ?? 'a corridor'}${st.held?.[n] ? ' [LOCKED UP here: can\'t come along]' : ''}: ${h ? `HIDING ${h.mode} the ${h.what} (${h.prop})` : 'not hiding, out in the open'}${resting}${trapped ? `, CAUGHT in the ${trapped.kind} (${trapped.trap}): held until their save succeeds or you free them (place_changes.free)` : ''}${t ? `, TRESPASSING (${t.why === 'escaped' ? 'an escaped prisoner, out of their cell' : t.why})` : placeClass(place) === 'wild' ? '' : ', where they are allowed to be'}`;
     });
     if (party.length) lines.push(`Party now (live from the map, the truth whatever earlier messages said): ${party.join('; ')}.`);
+    if (notHere.length) lines.push(`NOT with the player, locked up elsewhere in this place and not reached yet (they can't see or hear the party and the party can't see or hear them; never narrate them as present, acting, or being acted on, and nobody goes after them, until the player reaches them): ${notHere.map(n => { const p = st.positions[n]; return `${n} at ${coord(p.x, p.y)}${p.floor !== floor.id ? ` (floor ${p.floor})` : ''} in ${roomAt(place, p.floor, p.x, p.y)?.name ?? 'a corridor'}`; }).join('; ')}.`);
     const access = accessSummary(place, partyNames.filter(n => st.positions[n]), roomAt);
     if (access) lines.push(access);
-    const waiting = Object.entries(st.waiting || {}).filter(([, w]) => w).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
+    const waiting = Object.entries(st.waiting || {}).filter(([n, w]) => w && !notHere.includes(n)).map(([n]) => `${n} (stayed at ${coord(st.positions[n]?.x ?? 0, st.positions[n]?.y ?? 0)}${st.positions[n] ? `, ${roomAt(place, st.positions[n].floor, st.positions[n].x, st.positions[n].y)?.name ?? 'a corridor'}` : ''})`);
     if (waiting.length) lines.push(`Companions who chose not to follow: ${waiting.join('; ')}.`);
     const people = { ...st.positions };
     for (const g of Object.values(place.guards)) if (g.state !== 'gone') people[g.name] = { floor: g.floor, x: g.x, y: g.y };

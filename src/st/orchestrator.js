@@ -1574,7 +1574,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const outcome = judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {
             const key = matchName(r.who, [...meta.party.map(p => p.name), ...c.docs.npcs.map(n => n.name)]) || r.who;
-            outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'}: ${outcome}`;
+            outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'} (already told by the game master; react to it, don't describe it again): ${outcome}`;
         }
     }
     if (t.npc_rolls.length) {

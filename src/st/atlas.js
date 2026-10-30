@@ -136,6 +136,16 @@ export function partyOnMap(c = campaign()) {
     return [c.meta.persona.name, ...c.meta.party.map(p => p.name).filter(n => !isAway(c.docs.world, n) || waiting[n])];
 }
 
+/**
+ * The party members the place reacts to and the story moves: on the map, and not locked up away
+ * from the player (a companion held in a cell the player hasn't reached yet is nobody's quarry, nobody
+ * to notice, and not someone the story just said something about). The player is always first.
+ */
+export function partyActive(c = campaign()) {
+    const place = currentPlace(c)?.place;
+    return partyOnMap(c).filter(n => !(place?.state.held?.[n] && isAway(c.docs.world, n)));
+}
+
 /** Why someone can't move themselves right now (tied up, caged, held...), or null. Others can still move them. */
 export function lockedReason(c, name) {
     const cur = currentPlace(c);
@@ -1239,6 +1249,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         return moved;
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
+    const active = names.filter(n => !(place.state.held?.[n] && isAway(c.docs.world, n)));
     let event = null, handoff = null, newRoom = null;
     const greet = []; // companions you came back to or walked away from: they may speak
     try {
@@ -1249,7 +1260,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             walked++;
             advance();
             // Anyone after the party keeps after them, a step for each of the player's.
-            const caught = moveHunters(place, floorId, names, 1, { skip: g => outByWorld(c, g) });
+            const caught = moveHunters(place, floorId, active, 1, { skip: g => outByWorld(c, g) });
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
@@ -1259,7 +1270,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             if (caught.length) { redraw(); event = hunterEvent(caught); break; }
             // Guards and residents who see the party: a trespasser stops the walk (the DM rules on it).
-            const watched = watchParty(c, cur, names);
+            const watched = watchParty(c, cur, active);
             if (watched.events.length) { event = watched.events.join(' '); break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}${newGuard.down ? `, ${DOWN_WORDS[newGuard.down]}` : ''}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
@@ -1393,7 +1404,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
 export function watchTurn(c = campaign()) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat) return '';
-    const { events } = watchParty(c, cur, partyOnMap(c));
+    const { events } = watchParty(c, cur, partyActive(c));
     if (events.length) savePlace(cur.key, c);
     return events.join(' ');
 }
@@ -1424,7 +1435,7 @@ export function huntersTurn(c = campaign()) {
     const { key, place } = cur;
     clearEngaged(place);
     const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
-    const caught = moveHunters(place, floorId, partyOnMap(c), 6, { skip: g => outByWorld(c, g) });
+    const caught = moveHunters(place, floorId, partyActive(c), 6, { skip: g => outByWorld(c, g) });
     look(c, key, place);
     savePlace(key, c);
     return caught.length ? hunterEvent(caught) : '';
@@ -1563,7 +1574,7 @@ export function syncContext(c) {
     const cur = currentPlace(c);
     if (!cur) return null;
     const { place } = cur;
-    const names = partyOnMap(c).filter(n => place.state.positions[n]);
+    const names = partyActive(c).filter(n => place.state.positions[n]);
     const lead = place.state.positions[names[0]];
     if (!lead) return null;
     const floorId = lead.floor;
