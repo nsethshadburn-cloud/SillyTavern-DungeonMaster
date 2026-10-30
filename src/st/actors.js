@@ -14,8 +14,7 @@ import { addNpcs, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
-import { roomBrief, currentPlace } from './atlas.js';
-import { personByName, isOut, EARSHOT } from '../core/explore.js';
+import { roomBrief, currentPlace, withinEarshot } from './atlas.js';
 import { ensureClock, hhmm, WEATHER_WORDS } from '../core/clock.js';
 
 const KEY_NOTE = 'DM_NOTE';
@@ -237,15 +236,7 @@ export async function markSceneStart(messageId = ST.chat.length - 1) {
  */
 export function npcsInReach(c = campaign()) {
     if (!c) return [];
-    const here = currentPlace(c);
-    const lead = here?.place.state.positions[c.meta.persona.name];
-    const inReach = name => {
-        const g = here && personByName(here.place, name);
-        if (!g || !lead) return true;
-        if (isOut(g) && g.down !== 'bound') return false;
-        return g.met === true && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
-    };
-    return (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && inReach(n.name));
+    return (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && withinEarshot(c, n.name));
 }
 
 export function speakerCandidates() {

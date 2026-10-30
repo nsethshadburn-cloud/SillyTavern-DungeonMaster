@@ -398,6 +398,8 @@ export function combatSummary(world, player = '') {
     else if (player) {
         const before = world.combat.order.slice(0, at).map(o => o.name), after = world.combat.order.slice(at + 1).map(o => o.name);
         lines.push(`Order around the player: ${before.length ? before.join(', ') : 'nobody'} act before ${player}; ${after.length ? after.join(', ') : 'nobody'} after. Act only for those whose turn it is, then stop at ${player}'s turn.`);
+        if (world.combat.phase === 'player') lines.push(`${player}'S TURN IS IN PROGRESS: resolve only what ${player} does; nobody else acts, moves or rolls until the code says the turn has ended.`);
+        else if (world.combat.phase === 'others') lines.push(`${player} has ended their turn: those after ${player} act, then the next round from the top down to ${player}, then stop.`);
     }
     const enemies = Object.entries(world.combat.enemies);
     if (enemies.length) {

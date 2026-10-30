@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent } from '../src/core/explore.js';
 import { noticeParty } from '../src/core/notice.js';
 import { setStanding, standingFor } from '../src/core/access.js';
-import { dialogueOf } from '../src/core/speech.js';
+import { dialogueOf, typingMs } from '../src/core/speech.js';
+import { combatSummary } from '../src/core/world.js';
 
 function tiny({ w = 9, h = 5, kind = 'prison', theme = 'dungeon', fog = true, rooms = {}, doors = {} } = {}) {
     const rows = [];
@@ -41,6 +42,30 @@ test('a guard who already saw the escaped prisoner acts when they walk right up 
     assert.match(near.events[0], /right beside Wren.*acts now/);
     assert.deepEqual(noticeParty(place, ['Amber'], { turn: 2 }).events, [], 'once a turn');
     assert.equal(noticeParty(place, ['Amber'], { turn: 3 }).events.length, 1, 'still there next turn: again');
+});
+
+test('a watcher the party cannot see (in the dark) rolls to notice a trespasser; one right beside them just sees them', () => {
+    const place = cellBlock();
+    const dark = noticeParty(place, ['Amber'], { turn: 1, canSee: () => false });
+    assert.equal(dark.events.length, 1);
+    assert.match(dark.events[0], /can't see him.*Roll whether he notices/);
+    assert.deepEqual(dark.seen, [], 'not a sighting until the dice say so');
+    assert.match(dark.events[0], /STOP there: the player decides/);
+    const near = cellBlock();
+    near.state.positions.Amber = { floor: 'F0', x: 3, y: 2 };
+    const r = noticeParty(near, ['Amber'], { turn: 1, canSee: () => false });
+    assert.doesNotMatch(r.events[0], /Roll whether he notices/, 'right beside him: no missing that');
+    assert.deepEqual(r.seen, [{ seer: 'Wren', seen: 'Amber' }]);
+});
+
+test('the COMBAT line says whose part of the round it is', () => {
+    const world = { combat: { round: 2, order: [{ name: 'Jailer', init: 15 }, { name: 'Amber', init: 12 }, { name: 'Judy Hopps', init: 9 }], enemies: {}, phase: 'player' } };
+    assert.match(combatSummary(world, 'Amber'), /AMBER'S TURN IS IN PROGRESS|Amber'S TURN IS IN PROGRESS/);
+    world.combat.phase = 'others';
+    assert.match(combatSummary(world, 'Amber'), /Amber has ended their turn: those after Amber act/);
+    delete world.combat.phase;
+    assert.doesNotMatch(combatSummary(world, 'Amber'), /TURN IS IN PROGRESS|ended their turn/);
+    assert.ok(typingMs(100) <= 2200, 'bubbles type at a quick pace');
 });
 
 test('no canned line from someone the party cannot see; the sighting is still recorded', () => {

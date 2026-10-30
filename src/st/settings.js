@@ -72,6 +72,7 @@ export const DEFAULTS = Object.freeze({
     mapFigures: true,           // animated pixel figures on the map (false = round portraits)
     mapAmbience: true,          // weather and ambient particles on the map (fire and spells always show)
     mapBubbles: true,           // speech bubbles over figures on the map when companions and NPCs speak
+    turnPrompts: true,          // in a fight: ask "done with your turn?" after your action, and whether you react before a hit lands
     figures: {},                // "p:<persona avatar>" / "c:<character avatar>" -> the look Claude described
 
     // Surprises Claude may add

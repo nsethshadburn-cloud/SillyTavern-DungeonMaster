@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -32,6 +32,7 @@ import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lo
 import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
+import { turnPromptsOn, askEndTurn, askReaction } from './prompts.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
 import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
@@ -371,7 +372,15 @@ async function turnBody(c, opts, status, signal) {
         lastDriftStageCalled: meta.lastDriftStageCalled,
     });
     if (opts.force) reasons = [...new Set([opts.force, ...reasons])];
-    if (placeEvent && !reasons.includes('explore')) reasons.push('explore');
+    if (placeEvent && !reasons.includes('explore') && opts.force !== 'reaction') reasons.push('explore');
+    // Turn prompts: the player's message in a fight is THEIR turn (the DM resolves only that); "end_turn" hands the round on.
+    if (c.docs.world.combat && turnPromptsOn()) {
+        const cb = c.docs.world.combat;
+        if (opts.force === 'end_turn') cb.phase = 'others';
+        else if (!opts.force && !autoRoll && !triage.ooc && cb.order?.some(o => o.name === meta.persona.name)) cb.phase = 'player';
+        if (cb.phase === 'player' && !opts.force) reasons = reasons.map(r => r === 'combat_round' ? 'player_turn' : r);
+        if (opts.force === 'end_turn' || opts.force === 'reaction') reasons = reasons.filter(r => r !== 'combat_round' && r !== 'combat_action');
+    }
     if (triage.task?.dm && !reasons.includes('companion_task')) reasons.push('companion_task');
     // The player went up to something to act on it: the DM says what happens.
     if (target && target.actor === meta.persona.name && !reasons.length && triage.category !== 'banter') reasons.push('explore');
@@ -416,6 +425,15 @@ async function turnBody(c, opts, status, signal) {
         // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
         const quiet = !triage.ooc && !triage.speakers?.length && (['action', 'risky_action', 'scene_move'].includes(triage.category) || (opts.force === 'explore' && !/first meeting/.test(opts.placeEvent || '')));
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
+        // Their action is resolved: done with the turn, or more to do (movement, a bonus action)?
+        const cb = c.docs.world.combat;
+        if (cb && turnPromptsOn() && cb.phase === 'player' && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0)) {
+            if (await askEndTurn(meta.persona.name)) {
+                cb.phase = 'others';
+                saveDoc('world');
+                setTimeout(() => runTurn({ force: 'end_turn' }), 50);
+            } else status.note('Your turn goes on: move or act, then end it');
+        }
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
         meta.stats.lastTurnUsd = turnUsd;
@@ -1251,7 +1269,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         mapChanged = true;
     }
     // Each DM combat turn is a new round (a roll's result finishes the round it was asked in).
-    if (world.combat && !t.start_combat && reasons.includes('combat_round') && !reasons.includes('roll_result')) {
+    const newRound = turnPromptsOn() ? reasons.includes('end_turn') : (reasons.includes('combat_round') && !reasons.includes('roll_result'));
+    if (world.combat && !t.start_combat && newRound) {
         world.combat.round = (world.combat.round || 1) + 1;
         const joined = joinLateFighters(c);
         if (joined.length) await postDiceCard(`⚔️ ${joined.join(' · ')}`, { combat: true });
@@ -1516,6 +1535,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
 
     // Companion/NPC/enemy rolls: code-rolled, shown openly WITH what happened.
     const outcomesBySpeaker = {};
+    const reactions = [];
     for (const r of t.npc_rolls) {
         if (signal.aborted) throw new Error('aborted');
         const result = roll(r.notation);
@@ -1534,6 +1554,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (dmg && judged.critical) {
                 const extra = roll(r.damage.replace(/[+-]\s*\d+\s*$/, ''));
                 if (extra) dmg = { ...dmg, total: dmg.total + extra.total, detail: `${dmg.detail} + crit ${extra.detail}` };
+            }
+            // The player's say before an enemy's hit lands: halve it (Uncanny Dodge and the like), or react another way (the DM rules; the damage waits).
+            if (dmg && turnPromptsOn() && nameKey(r.target) === nameKey(meta.persona.name) && !signal.aborted) {
+                const re = await askReaction({ who: r.who, what: r.what, total: result.total, dc: r.dc, damage: dmg.total, detail: dmg.detail });
+                if (re.kind === 'half') dmg = { ...dmg, total: Math.floor(dmg.total / 2), detail: `${dmg.detail}, halved by a reaction` };
+                else if (re.kind === 'other') {
+                    reactions.push(`REACTION: ${meta.persona.name} reacts to ${r.who}'s ${r.what || 'attack'} (${result.total}${r.dc !== null ? ` vs AC ${r.dc}` : ''}, ${dmg.total} damage NOT applied yet): "${re.text}". Rule on it now: if it works, apply what damage is left (or none) with state_changes hp; if it doesn't, apply the full ${dmg.total}. Then carry on from where the round stopped.`);
+                    damageText = ` · **${dmg.total}** damage waits: ${meta.persona.name} reacts`;
+                    dmg = null;
+                }
             }
             if (dmg) {
                 const line = changeHp(world, r.target, -dmg.total, [...meta.party.map(p => p.name), meta.persona.name], { critical: judged.critical });
@@ -1582,6 +1612,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'} (already told by the game master; react to it, don't describe it again): ${outcome}`;
         }
     }
+    if (reactions.length) setTimeout(() => runTurn({ force: 'reaction', placeEvent: reactions.join(' ') }), 50);
     if (t.npc_rolls.length) {
         saveDoc('rolls_log');
         saveDoc('world');
@@ -1625,10 +1656,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             status.note(`${speaker} isn't with you right now`);
             continue;
         }
-        // Someone on the map the party hasn't laid eyes on yet is a voice in the narration, not a speaker.
-        const unseen = hereNow && personByName(hereNow.place, speaker);
-        if (unseen && unseen.met !== true) {
-            status.note(`${unseen.name} is out of sight: no line until the party sees them`);
+        // Someone on the map the party hasn't seen, or too far to hear, is a voice in the narration at most, not a speaker.
+        if (!withinEarshot(c, speaker)) {
+            status.note(`${speaker} is out of sight or out of earshot: no line`);
             continue;
         }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';

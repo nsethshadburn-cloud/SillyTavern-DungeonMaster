@@ -146,6 +146,22 @@ export function partyActive(c = campaign()) {
     return partyOnMap(c).filter(n => !(place?.state.held?.[n] && isAway(c.docs.world, n)));
 }
 
+/**
+ * Can this person speak to the party right now? Not someone on the map at all (the DM introduced
+ * them in narration): yes. On the map: only once the party has seen them, on the player's floor,
+ * within earshot, and not out cold (tied up is fine). Lines and briefs for anyone else are dropped.
+ */
+export function withinEarshot(c, name) {
+    const cur = currentPlace(c);
+    const g = cur && personByName(cur.place, name);
+    if (!g) return true;
+    const lead = cur.place.state.positions[c.meta.persona.name];
+    if (!lead) return true;
+    if (g.met !== true || g.state === 'gone' || g.state === 'dead') return false;
+    if (isOut(g) && g.down !== 'bound') return false;
+    return g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
+}
+
 /** Why someone can't move themselves right now (tied up, caged, held...), or null. Others can still move them. */
 export function lockedReason(c, name) {
     const cur = currentPlace(c);

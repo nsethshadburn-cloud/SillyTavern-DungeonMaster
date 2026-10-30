@@ -29,7 +29,7 @@ export function dialogueOf(text, max = MAX_BUBBLE) {
 export function typingMs(chars, voiceSeconds = 0) {
     const n = Math.max(1, Number(chars) || 1);
     if (Number.isFinite(voiceSeconds) && voiceSeconds > 0.5) return Math.max(600, Math.min(voiceSeconds * 900, n * 120));
-    return Math.max(600, Math.min(n * 32, 9000));
+    return Math.max(500, Math.min(n * 22, 7000));
 }
 
 /** How long a bubble lingers after the character has finished talking, in ms. */

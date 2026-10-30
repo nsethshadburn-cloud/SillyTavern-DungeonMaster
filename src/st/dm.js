@@ -7,8 +7,8 @@ import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown, statsForName } from './sheets.js';
 import { dmType } from './messages.js';
 import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, PLACE_BRIEF_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
-import { placeSummary, placeView, cropText, personByName } from '../core/explore.js';
-import { atlas, currentPlace, partyOnMap, loadPlace } from './atlas.js';
+import { placeSummary, placeView, cropText } from '../core/explore.js';
+import { atlas, currentPlace, partyOnMap, loadPlace, withinEarshot } from './atlas.js';
 import { activeBoard } from './fire-turn.js';
 import { fireSummary } from '../core/fire.js';
 import { GRAND_KINDS } from '../core/layout.js';
@@ -127,6 +127,9 @@ const REASON_TEXT = {
     scene_move: 'The player wants to move the scene (travel, rest, leave, time skip). Compress the uneventful part unless they are in a real conversation, then land them at the next interesting moment or the destination, and describe where they arrive.',
     combat_action: 'Combat action. Resolve the player\'s action fairly (they may name a square to move to, like "d4"; update "positions").',
     combat_round: 'Combat is ongoing. You run this round: decide what each companion and enemy does, roll for them (npc_rolls), move them ("positions"), and narrate. Companions get only a "short" brief for a quick line.',
+    player_turn: 'It is the PLAYER\'s turn and they just acted. Resolve ONLY what the player did: their attack or action (ask for their roll with player_roll, narrate its result, move them with "positions" if they said where they go). Nobody else acts, moves or rolls: no npc_rolls, no "positions" for anyone else, no enemy reaction beyond a word. Stop after the result: the code then asks the player whether their turn is done (they may still move or act).',
+    end_turn: 'The player ENDS their turn. Now everyone AFTER the player in the initiative order acts (npc_rolls, "positions"), then the next round begins: everyone BEFORE the player acts in order, and you STOP at the player\'s turn. Never ask the player for a roll of something they did not do.',
+    reaction: 'The player REACTS to a hit before its damage lands (the REACTION line says what). Rule on the reaction, apply whatever damage is left with state_changes (hp), and carry on from where the round stopped.',
     event: 'The dice say a random event COULD happen now. Candidates are below. First decide if any event fits this exact moment and place. Set event.use to a candidate id, to "custom" (and describe yours in event.text) for a small event that fits better, or to "none" if nothing should happen right now.',
     deadlock: 'Deadlock: the player has refused or resisted what a character wants several times in a row. That character changes approach now (bargain, a firmer push, force it with a contested roll, call for help, or let it go and move on). Brief them with the NEW approach and update "objective"; never repeat the old demand.',
     stalled: 'The scene has stalled (filler replies or going in circles). Move it forward yourself: skip ahead, arrive somewhere, or let someone or something push in.',
@@ -248,8 +251,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
     const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);
-    // On a map, only people the party has seen can be given lines (an unseen one is a voice in the narration).
-    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location)).filter(n => { const g = here && personByName(here.place, n.name); return !g || g.met === true; }).map(n => n.name);
+    // On a map, only people the party has seen, on their floor and within earshot, can be given lines (an unseen or distant one is a voice in the narration, or nothing).
+    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location) && withinEarshot(c, n.name)).map(n => n.name);
     sections.push('', `Valid speakers for directions: party with the player ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
     if (awayList.length) sections.push(`Companions AWAY from the player (no briefs; they can't hear or speak until "party_back"): ${awayList.join('; ')}.`);
     sections.push('Reply with the JSON object only.');
