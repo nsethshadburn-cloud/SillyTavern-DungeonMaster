@@ -26,6 +26,18 @@ export async function askEndTurn(player) {
 }
 
 /**
+ * A guard has caught the player loose and told them to come along: go quietly (back to the cell now),
+ * or not (he comes after them and grabs).
+ * @returns {Promise<boolean>} true = go quietly
+ */
+export async function askGiveIn(guard, player) {
+    const r = await ST.callGenericPopup(
+        `<h3>${escape(guard)} has you, ${escape(player)}</h3><p>He orders you back to your cell. Go quietly, and he walks you there and locks the door. Refuse, and he comes after you: each time he reaches you he grabs, and you roll to slip free. Three slips and he draws his weapon.</p>`,
+        ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Go quietly', cancelButton: 'Not a chance' });
+    return r === ST.POPUP_RESULT.AFFIRMATIVE || r === true || r === 1;
+}
+
+/**
  * An enemy's attack has hit the player and the damage is known: do they react before it lands?
  * @param {{who: string, what: string, total: number, dc: number|null, damage: number, detail: string}} hit
  * @returns {Promise<{kind: 'take'} | {kind: 'half'} | {kind: 'other', text: string}>}

@@ -10,7 +10,7 @@ import { sayOnMap } from '../ui/bubbles.js';
 import { postNpc } from './messages.js';
 import { ST } from './st.js';
 import { look } from './atlas.js';
-import { floorById } from '../core/explore.js';
+import { floorById, personByName, setIntent } from '../core/explore.js';
 
 /** Did this person speak in the last few messages (a conversation is going on)? */
 function spokeLately(name, within = 8) {
@@ -45,6 +45,13 @@ export function watchParty(c, cur, names) {
         spokeLately,
     });
     for (const s of r.seen) noteSeen(w, s.seer, s.seen, true);
+    // A guard who has seen them loose comes after them: talk first, then grab (atlas.grabAttempts).
+    for (const s of r.seize) {
+        const g = personByName(place, s.guard);
+        if (!g || g.hostile === true || g.seize || g.fedUp) continue;
+        g.seize = { target: s.target, attempts: 0, asked: false, since: c.meta.turn };
+        setIntent(g, 'follow', s.target);
+    }
     for (const l of r.lines) {
         sayOnMap({ name: l.name, text: l.text, voiced: false });
         place.state.said = [...(place.state.said || []).slice(-5), { name: l.name, text: l.text, turn: c.meta.turn }];

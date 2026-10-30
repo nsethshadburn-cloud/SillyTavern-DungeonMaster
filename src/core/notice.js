@@ -38,11 +38,11 @@ const settled = (store, key, turn) => store?.[key] !== undefined && turn - store
  * @param {object} place
  * @param {string[]} names party members on the map (the player first)
  * @param {{turn: number, time?: string, canSee?: (g: object) => boolean, condsOf?: (name: string) => string[], hpOf?: (name: string) => ({hp: number, hp_max: number} | null), spokeLately?: (name: string) => boolean, rng?: () => number}} ctx
- * @returns {{events: string[], lines: {name: string, text: string}[], seen: {seer: string, seen: string}[]}}
+ * @returns {{events: string[], lines: {name: string, text: string}[], seen: {seer: string, seen: string}[], seize: {guard: string, target: string}[]}}
  *  events = what the DM must rule on; lines = canned lines to say; seen = sightings to record
  */
 export function noticeParty(place, names, ctx) {
-    const out = { events: [], lines: [], seen: [] };
+    const out = { events: [], lines: [], seen: [], seize: [] };
     const turn = Number(ctx?.turn) || 0;
     const condsOf = ctx?.condsOf ?? (() => []);
     const hpOf = ctx?.hpOf ?? (() => null);
@@ -96,6 +96,7 @@ export function noticeParty(place, names, ctx) {
                     if (dist(g, p) <= 1 && g.reported[`near:${n}`] !== turn) {
                         g.reported[`near:${n}`] = turn;
                         alert();
+                        if (lineRole(g) === 'guard') out.seize.push({ guard: g.name, target: n });
                         out.events.push(`${n} is right beside ${who}, who has already seen them ${t.why === 'escaped' ? 'out of their cell' : `where they are not allowed (${t.why})`}, and nothing has stopped them. He acts now (grabs them, blocks the way, raises the alarm, attacks), or you say why he doesn't.`);
                     }
                     continue;
@@ -106,7 +107,7 @@ export function noticeParty(place, names, ctx) {
                 const unseen = !hid && Boolean(ctx?.canSee) && !ctx.canSee(g) && dist(g, p) > 1;
                 const does = (lineRole(g) === 'guard' ? 'a guard: he challenges them, raises the alarm or moves to stop them' : 'not a guard: he may shout for help, run, or confront them') + '. Narrate what he does and STOP there: the player decides how to answer (talk, run, fight, give up). Never ask the player for a roll of something they have not tried';
                 out.events.push(`${who} can see ${n}${hid ? ` hiding ${hid.mode} the ${hid.what} (roll whether he notices: his Perception against their Stealth, with "spot")` : unseen ? ' (the party can\'t see him: he is in the dark or out of their sight. Roll whether he notices them at all: his Perception against their passive Stealth, with "spot". Don\'t narrate him seeing them before the roll)' : ''} in ${t.room}, where ${n} is not allowed (${t.why === 'escaped' ? 'an escaped prisoner, out of their cell' : t.why}). ${g.name} is ${does}; decide what he does, brief him if he speaks, and set his intent if he goes after them.`);
-                if (!hid && !unseen) { out.seen.push({ seer: g.name, seen: n }); alert(); }
+                if (!hid && !unseen) { out.seen.push({ seer: g.name, seen: n }); alert(); if (lineRole(g) === 'guard') out.seize.push({ guard: g.name, target: n }); }
                 continue;
             }
             if (hid) continue;

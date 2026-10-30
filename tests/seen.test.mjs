@@ -71,6 +71,22 @@ test('"!": a guard who has seen the escapee is marked alert; a fellow prisoner d
     assert.deepEqual(r.seen, [{ seer: 'Magnus', seen: 'Amber' }], 'she did see him');
 });
 
+test('a guard who sees the escapee is set on taking them in; a fellow prisoner is not', () => {
+    const place = cellBlock();
+    const r = noticeParty(place, ['Amber'], { turn: 1, canSee: () => true });
+    assert.deepEqual(r.seize, [{ guard: 'Wren', target: 'Amber' }]);
+    const near = cellBlock();
+    near.state.positions.Amber = { floor: 'F0', x: 3, y: 2 };
+    noticeParty(near, ['Amber'], { turn: 1, canSee: () => true });
+    const again = noticeParty(near, ['Amber'], { turn: 2, canSee: () => true });
+    assert.deepEqual(again.seize, [{ guard: 'Wren', target: 'Amber' }], 'walking right up to him: he grabs');
+    const dark = cellBlock();
+    assert.deepEqual(noticeParty(dark, ['Amber'], { turn: 1, canSee: () => false }).seize, [], 'not before the dice say he noticed');
+    const cells = cellBlock();
+    cells.guards = { Magnus: person('Magnus', 4, 2, { description: 'a prisoner', role: 'prisoner' }) };
+    assert.deepEqual(noticeParty(cells, ['Amber'], { turn: 1, canSee: () => true }).seize, []);
+});
+
 test('giving in is the player\'s own words, and refusals are not', () => {
     for (const t of ['*amber raises his hands* fine, take me back', 'ok ok, I\'ll go', '"Alright. Lead the way."', 'i surrender', 'no trouble, I\'ll walk']) assert.equal(givesIn(t), true, t);
     for (const t of ['', '*amber runs*', 'never! come and get me', 'I refuse', 'what do you want', 'fine, make me']) assert.equal(givesIn(t), false, t);

@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -32,7 +32,7 @@ import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lo
 import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
-import { turnPromptsOn, askEndTurn, askReaction } from './prompts.js';
+import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
 import { lineRole } from '../core/lines.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
@@ -328,7 +328,7 @@ async function turnBody(c, opts, status, signal) {
         const watched = watchTurn(c);
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
-        const hunt = huntersTurn(c, { still });
+        const hunt = await huntersTurn(c, { still });
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
         await playMoves(c);
     }
@@ -439,6 +439,14 @@ async function turnBody(c, opts, status, signal) {
                 saveDoc('world');
                 setTimeout(() => runTurn({ force: 'end_turn' }), 50);
             } else status.note('Your turn goes on: move or act, then end it');
+        }
+        // A guard has told the player to come along: go quietly, or not?
+        const asking = !signal.aborted && !c.docs.world.combat && !meta.pendingRoll ? seizerAsking(c) : null;
+        if (asking) {
+            const quiet = turnPromptsOn() ? await askGiveIn(asking.name, meta.persona.name) : false;
+            const went = await answerSeizer(c, asking, quiet);
+            if (went) setTimeout(() => runTurn({ force: 'explore', placeEvent: went }), 50);
+            else status.note(quiet ? `${asking.name} couldn't take you anywhere` : `${asking.name} comes after you`);
         }
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
@@ -554,7 +562,7 @@ async function movedTurn(c, status, signal) {
         if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'}${g.down ? `, ${g.down === 'bound' ? 'tied up' : g.down}` : ''})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
         const watched = watchTurn(c);
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
-        const hunt = huntersTurn(c);
+        const hunt = await huntersTurn(c);
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
         await playMoves(c);
     }
@@ -1011,8 +1019,13 @@ async function resolvePlayerRoll(c, parsed, status) {
         saveDoc('world');
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
-    // Caught in a trap: a save that works gets you loose.
+    // A grab: a miss means cuffs and the cell; a slip means the chase goes on (the third, a fight).
     let saveHurt = '';
+    if (pr.grab) {
+        const settled = await settleGrab(c, pr, judged.success === true);
+        if (settled) saveHurt += ` ${settled}`;
+    }
+    // Caught in a trap: a save that works gets you loose.
     if (pr.kind === 'save' && judged.success === true && freeFromTrap(c, meta.persona.name)) {
         await postNote(`🪤 ${meta.persona.name} gets loose!`);
         saveHurt += ` ${meta.persona.name} got loose from the trap.`;
@@ -1225,7 +1238,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (nameKey(g.name) !== nameKey(ename)) combat.aliases[ename] = g.name;
                 combat.positions[ename] = toCoord(g.x, g.y);
                 if (g.wasHostile === undefined) g.wasHostile = g.hostile === true;
-                g.hostile = true; g.state = 'alert'; delete g.down; delete g.fought;
+                g.hostile = true; g.state = 'alert'; delete g.down; delete g.fought; delete g.seize;
             }
             const foeKeys = new Set(Object.keys(combat.enemies || {}).map(nameKey));
             const standIns = new Set(Object.values(combat.aliases).map(nameKey));
@@ -1694,7 +1707,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
 
     // The player's roll request comes last so it's the final thing on screen.
-    if (t.player_roll) {
+    if (t.player_roll && meta.pendingRoll?.grab) status.note('A grab is being rolled: the DM\'s roll request waits');
+    else if (t.player_roll) {
         const pr = t.player_roll;
         if (pr.kind === 'damage') pr.die = 100;
         // "Roll damage" with nothing to roll: the dice come from the sheet (doubled after a natural 20).

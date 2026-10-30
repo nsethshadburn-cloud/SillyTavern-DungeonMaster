@@ -1161,8 +1161,8 @@ function hunterEvent(caught, place = currentPlace()?.place) {
     const keepers = [], killers = [];
     for (const h of caught) {
         const g = place && personByName(place, h.name);
-        // A guard who was no enemy before being set on the party wants them taken, not dead.
-        (g && g.wasHostile === false ? keepers : killers).push(h);
+        // A guard who was no enemy before being set on the party wants them taken, not dead (unless he's done grabbing).
+        (g && g.wasHostile === false && !g.fedUp ? keepers : killers).push(h);
     }
     const bits = [];
     if (keepers.length) bits.push(`${keepers.map(h => `${h.name} catches up with ${h.target} and moves to seize them`).join('; ')}. A guard wants them taken back alive, not dead: he grabs, threatens, orders them back. Rule on it now: if ${keepers.length === 1 ? keepers[0].target : 'they'} give in (in their own words), send "escort"; if they talk, run or resist, roll for it (his Athletics to grab against their Athletics or Acrobatics); start_combat only if they fight back or he is attacked.`);
@@ -1176,10 +1176,98 @@ function hunterEvent(caught, place = currentPlace()?.place) {
  * the place within earshot, only into a cell (or their own cell). The door is locked behind them and
  * they are a prisoner of that cell again. Returns a note for the status line ('' when nothing was done).
  */
+/** The cell a captured player is taken to: their own, the one the DM named, else the nearest cell on this floor. */
+function cellFor(c, place, player, want = '') {
+    const st = standingOf(place, player);
+    const home = st.home ? place.rooms[st.home] : null;
+    if (want) {
+        const w = String(want).trim();
+        const room = place.rooms[w] ?? Object.values(place.rooms).find(r => nameKey(r.name) === nameKey(w)) ?? Object.values(place.rooms).find(r => nameKey(r.name).includes(nameKey(w))) ?? null;
+        if (!room) return { error: `no room called ${w}` };
+        if (zoneOf(place, room) !== 'cell' && room.id !== home?.id) return { error: `${room.name} is not a cell` };
+        return { room };
+    }
+    if (home) return { room: home };
+    const lead = place.state.positions[player];
+    const cells = Object.values(place.rooms).filter(r => zoneOf(place, r) === 'cell' && (!lead || r.floor === lead.floor))
+        .sort((p, q) => !lead ? 0 : Math.hypot(p.rect.x - lead.x, p.rect.y - lead.y) - Math.hypot(q.rect.x - lead.x, q.rect.y - lead.y));
+    return cells.length ? { room: cells[0] } : { error: 'no cell to take them to' };
+}
+
+/**
+ * A guard takes the player to a cell: cuffs on (when grabbed), the walk, the door locked behind
+ * them, cuffs off, a prisoner of that cell again. Every guard after them stands down. Returns the
+ * text for the DM, or '' when it couldn't be done.
+ */
+export async function takeToCell(c, guard, room, { cuffs = false } = {}) {
+    const cur = currentPlace(c);
+    if (!cur || !guard || !room) return '';
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const w = c.docs.world;
+    const { refreshMap } = await import('../ui/map.js');
+    if (cuffs) {
+        w.party[player] ??= { hp: 10, hp_max: 10, conditions: [] };
+        (w.party[player].conditions ??= []);
+        if (!w.party[player].conditions.some(x => /cuff/i.test(x))) w.party[player].conditions.push('cuffed');
+        saveDoc('world');
+        refreshMap();
+        await sleep(900);
+    }
+    const others = new Set([
+        ...Object.entries(place.state.positions).filter(([n]) => n !== player).map(([, p]) => `${p.x},${p.y}`),
+        ...Object.values(place.guards).filter(g => g !== guard && g.state !== 'gone' && g.floor === room.floor).map(g => `${g.x},${g.y}`),
+    ]);
+    const at = openSquareNear(place, room.floor, room.rect.x + Math.floor(room.rect.w / 2), room.rect.y + Math.floor(room.rect.h / 2), others, 4);
+    if (!at) return '';
+    place.state.positions[player] = { floor: room.floor, x: at.x, y: at.y };
+    delete place.state.hidden?.[player];
+    delete place.state.pose?.[player];
+    // The guard stands at the door outside, or just beside them.
+    const cellDoors = Object.values(place.doors).filter(d => d.rooms?.includes(room.id) && d.floor === room.floor);
+    const door = cellDoors[0];
+    const outsideRoom = door?.rooms.find(r => r !== room.id);
+    const taken = new Set([...others, `${at.x},${at.y}`]);
+    const gSpot = door ? openSquareNear(place, room.floor, door.x, door.y, taken, 2) : openSquareNear(place, room.floor, at.x, at.y, taken, 2);
+    if (gSpot) Object.assign(guard, { floor: room.floor, x: gSpot.x, y: gSpot.y, room: roomAt(place, room.floor, gSpot.x, gSpot.y)?.id ?? outsideRoom ?? guard.room });
+    for (const d of cellDoors) setDoorState(place, d, 'locked');
+    // He has them: no longer after anyone, not an enemy; and whoever else was after them stands down.
+    for (const g of Object.values(place.guards)) {
+        if (g.seize?.target === player) delete g.seize;
+        if (g.intent === 'follow' && nameKey(g.target || '') === nameKey(player)) { delete g.intent; delete g.target; delete g.goal; }
+    }
+    if (guard.wasHostile === false) guard.hostile = false;
+    delete guard.wasHostile; delete guard.intent; delete guard.target; delete guard.engaged; delete guard.goal; delete guard.alertAt; delete guard.seize;
+    guard.state = 'alert';
+    setStanding(place, player, standingFor('prisoner', { home: room.id }));
+    place.state.visited ??= [];
+    if (!place.state.visited.includes(room.id)) place.state.visited.push(room.id);
+    if (c.meta.pendingRoll?.grab) { c.meta.pendingRoll = null; saveMeta(); }
+    look(c, key, place);
+    savePlace(key, c);
+    refreshMap();
+    if (cuffs) {
+        await sleep(600);
+        w.party[player].conditions = w.party[player].conditions.filter(x => !/cuff/i.test(x));
+        saveDoc('world');
+        refreshMap();
+    }
+    const line = cuffs
+        ? `${guard.name} cuffs ${player}, walks ${player} to ${room.name} and locks the door; the cuffs come off through the bars.`
+        : `${guard.name} walks ${player} to ${room.name} and locks the door.`;
+    await postDiceCard(`🔒 ${line}`, { state: true });
+    return `${line} The code did all of it: narrate it in a few lines, then stop; it's done.`;
+}
+
+/**
+ * The player gives in and a guard walks them back to their cell (or into one): the DM's "escort".
+ * Cautious on purpose: only the player, only when their own latest words give in, only a guard of
+ * the place within earshot, only into a cell (or their own cell). Returns a note for the status line.
+ */
 export async function escortToCell(c, escort, playerText) {
     const cur = currentPlace(c);
     if (!cur || !escort) return '';
-    const { key, place } = cur;
+    const { place } = cur;
     const player = c.meta.persona.name;
     const whoName = String(escort.who || player);
     if (nameKey(whoName) !== nameKey(player) && !matchName(whoName, [player])) return `escort ignored: only the player can be walked to a cell (${whoName})`;
@@ -1193,47 +1281,110 @@ export async function escortToCell(c, escort, playerText) {
     if (guard && !(near(guard) && staff(guard))) return `escort ignored: ${guard.name} is not a guard of this place within reach`;
     if (!guard) guard = Object.values(place.guards).filter(g => near(g) && staff(g) && lineRole(g) === 'guard').sort((a, b) => Math.max(Math.abs(a.x - lead.x), Math.abs(a.y - lead.y)) - Math.max(Math.abs(b.x - lead.x), Math.abs(b.y - lead.y)))[0] ?? null;
     if (!guard) return 'escort ignored: no guard within reach to do it';
-    const st = standingOf(place, player);
-    const home = st.home ? place.rooms[st.home] : null;
-    let room = null;
-    if (escort.to) {
-        const want = String(escort.to).trim();
-        room = place.rooms[want] ?? Object.values(place.rooms).find(r => nameKey(r.name) === nameKey(want)) ?? Object.values(place.rooms).find(r => nameKey(r.name).includes(nameKey(want))) ?? null;
-        if (!room) return `escort ignored: no room called ${want}`;
-        if (zoneOf(place, room) !== 'cell' && room.id !== home?.id) return `escort ignored: ${room.name} is not a cell`;
-    } else room = home;
-    if (!room) return 'escort ignored: no cell to take them to (name one in "to")';
-    const others = new Set([
-        ...Object.entries(place.state.positions).filter(([n]) => n !== player).map(([, p]) => `${p.x},${p.y}`),
-        ...Object.values(place.guards).filter(g => g !== guard && g.state !== 'gone' && g.floor === room.floor).map(g => `${g.x},${g.y}`),
-    ]);
-    const at = openSquareNear(place, room.floor, room.rect.x + Math.floor(room.rect.w / 2), room.rect.y + Math.floor(room.rect.h / 2), others, 4);
-    if (!at) return `escort ignored: no room to stand in ${room.name}`;
-    place.state.positions[player] = { floor: room.floor, x: at.x, y: at.y };
-    delete place.state.hidden?.[player];
-    delete place.state.pose?.[player];
-    // The guard stands at the door outside, or just beside them.
-    const cellDoors = Object.values(place.doors).filter(d => d.rooms?.includes(room.id) && d.floor === room.floor);
-    const door = cellDoors[0];
-    const outsideRoom = door?.rooms.find(r => r !== room.id);
-    const gSpot = door
-        ? (openSquareNear(place, room.floor, door.x, door.y, new Set([...others, `${at.x},${at.y}`]), 2) ?? null)
-        : openSquareNear(place, room.floor, at.x, at.y, new Set([...others, `${at.x},${at.y}`]), 2);
-    if (gSpot) Object.assign(guard, { floor: room.floor, x: gSpot.x, y: gSpot.y, room: roomAt(place, room.floor, gSpot.x, gSpot.y)?.id ?? outsideRoom ?? guard.room });
-    for (const d of cellDoors) setDoorState(place, d, 'locked');
-    if (guard.wasHostile === false) guard.hostile = false;
-    delete guard.wasHostile; delete guard.intent; delete guard.target; delete guard.engaged; delete guard.goal;
-    guard.state = 'alert';
-    delete guard.alertAt;
-    setStanding(place, player, standingFor('prisoner', { home: room.id }));
-    place.state.visited ??= [];
-    if (!place.state.visited.includes(room.id)) place.state.visited.push(room.id);
-    look(c, key, place);
+    const { room, error } = cellFor(c, place, player, escort.to);
+    if (!room) return `escort ignored: ${error} (name one in "to")`;
+    const done = await takeToCell(c, guard, room, { cuffs: false });
+    return done ? `${guard.name} walked ${player} to ${room.name}` : `escort ignored: no room to stand in ${room.name}`;
+}
+
+/** The guard who has just spoken to the player and hasn't yet been answered: go quietly, or not? */
+export function seizerAsking(c) {
+    const cur = currentPlace(c);
+    if (!cur) return null;
+    const { place } = cur;
+    const lead = place.state.positions[c.meta.persona.name];
+    if (!lead) return null;
+    return Object.values(place.guards).find(g => g.seize && !g.seize.asked && g.seize.target === c.meta.persona.name && !isOut(g) && g.state !== 'gone' && g.floor === lead.floor
+        && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT) ?? null;
+}
+
+/** The player answered the guard: quietly (taken to their cell now) or not (the chase is on). Returns the DM's text when taken. */
+export async function answerSeizer(c, guard, quiet) {
+    const cur = currentPlace(c);
+    if (!cur || !guard?.seize) return '';
+    guard.seize.asked = true;
+    if (!quiet) {
+        guard.seize.refused = true;
+        savePlace(cur.key, c);
+        return '';
+    }
+    const { room } = cellFor(c, cur.place, c.meta.persona.name);
+    if (!room) { savePlace(cur.key, c); return ''; }
+    const done = await takeToCell(c, guard, room, { cuffs: false });
+    return done ? `${c.meta.persona.name} went quietly. ${done}` : '';
+}
+
+/** How many misses before a guard stops grabbing and draws his weapon. */
+export const GRAB_TRIES = 3;
+
+/**
+ * A guard set on the player reaches them: he grabs. The code rolls his Athletics; the player is
+ * asked to roll Acrobatics against it (the result is settled in the orchestrator's roll resolution:
+ * a miss means cuffs and the cell, a slip means the chase goes on, the third slip means a fight).
+ * Returns the text for the DM ('' when nobody grabbed).
+ */
+export async function grabAttempts(c) {
+    const cur = currentPlace(c);
+    if (!cur || c.docs.world.combat || c.meta.pendingRoll) return '';
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const lead = place.state.positions[player];
+    if (!lead) return '';
+    const g = Object.values(place.guards).find(x => x.seize?.asked && x.seize.target === player && x.intent === 'follow' && !isOut(x) && x.state !== 'gone'
+        && x.floor === lead.floor && Math.max(Math.abs(x.x - lead.x), Math.abs(x.y - lead.y)) <= 1 && x.seize.lastGrabTurn !== c.meta.turn);
+    if (!g) return '';
+    g.seize.attempts += 1;
+    g.seize.lastGrabTurn = c.meta.turn;
+    const theirs = roll('1d20+3');
+    const pr = { kind: 'check', skill: 'Acrobatics', ability: 'DEX', die: 20, dc: theirs.total, advantage: 'none', reason: `${g.name} lunges and grabs at you (Athletics ${theirs.total}). Slip free!`, damage: '', half: false, bonus: null, spot: null, grab: { guard: g.name, attempt: g.seize.attempts } };
+    c.meta.pendingRoll = pr;
+    const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
+    await postDiceCard(`🎲 **${g.name}** lunges and grabs at **${player}**: Athletics d20 ${theirs.detail} = **${theirs.total}**.\n**${player}**, roll a **d20** for **Acrobatics (DEX)** to slip free and type the number you rolled${auto}.`, { request: pr });
+    pr.chatIndex = ST.chat.length;
+    saveMeta();
     savePlace(key, c);
     const { refreshMap } = await import('../ui/map.js');
     refreshMap();
-    await postDiceCard(`🔒 ${guard.name} walks ${player} to ${room.name} and locks the door.`, { state: true });
-    return `${guard.name} walked ${player} to ${room.name}`;
+    return `${g.name} lunges at ${player} and grabs (grab ${g.seize.attempts} of ${GRAB_TRIES}; the player is rolling to slip free: don't resolve it, narrate the lunge in a line and stop).`;
+}
+
+/**
+ * The player's Acrobatics against a grab came in. A miss: cuffs, the walk to the cell, the door
+ * locked (the code does it). A slip: the chase goes on; the third slip and the guard draws his
+ * weapon (the code tells the DM to start the fight). Returns the text for the DM.
+ */
+export async function settleGrab(c, pr, success) {
+    const cur = currentPlace(c);
+    if (!cur || !pr?.grab) return '';
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const g = personByName(place, pr.grab.guard);
+    if (!g) return '';
+    if (!success) {
+        const { room } = cellFor(c, place, player);
+        if (room) {
+            const done = await takeToCell(c, g, room, { cuffs: true });
+            if (done) return `${g.name} got hold of ${player}. ${done}`;
+        }
+        // Nowhere to take them: held where they stand, and the DM takes it from there.
+        const w = c.docs.world;
+        w.party[player] ??= { hp: 10, hp_max: 10, conditions: [] };
+        (w.party[player].conditions ??= []).push('grappled (held by ' + g.name + ')');
+        saveDoc('world');
+        delete g.seize; delete g.intent; delete g.target;
+        savePlace(key, c);
+        return `${g.name} got hold of ${player} and holds them (condition "grappled"); there is no cell here to take them to: you decide what he does with them.`;
+    }
+    const tries = g.seize?.attempts ?? pr.grab.attempt;
+    if (tries >= GRAB_TRIES) {
+        delete g.seize;
+        g.fedUp = true;
+        setIntent(g, 'attack', player);
+        savePlace(key, c);
+        return `${player} slipped free of ${g.name} a third time. He is done grabbing: he draws his weapon. Send start_combat now with ${g.name} in it and ask for initiative.`;
+    }
+    savePlace(key, c);
+    return `${player} slipped free of ${g.name}'s grab (${tries} of ${GRAB_TRIES}); he keeps after them. Narrate it in a line and stop: the chase goes on by the code.`;
 }
 
 /** Squares a companion steers around: traps they know about, and fire. */
@@ -1363,6 +1514,8 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             if (caught.length) { redraw(); event = hunterEvent(caught); break; }
+            // A guard after the player has reached them: he grabs (the dice card asks the player to slip free).
+            if (await grabAttempts(c)) { redraw(); break; }
             // Guards and residents who see the party: a trespasser stops the walk (the DM rules on it).
             const watched = watchParty(c, cur, quarry);
             if (watched.events.length) { event = watched.events.join(' '); break; }
@@ -1566,7 +1719,7 @@ export async function playMoves(c = campaign()) {
  * movement), followers keep up, the frightened get away. Returns what the DM should hear (someone
  * reached the party), or ''.
  */
-export function huntersTurn(c = campaign(), { still = [] } = {}) {
+export async function huntersTurn(c = campaign(), { still = [] } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || !Object.values(cur.place.guards).some(g => g.intent)) return '';
     const { key, place } = cur;
@@ -1576,7 +1729,8 @@ export function huntersTurn(c = campaign(), { still = [] } = {}) {
     const caught = moveHunters(place, floorId, partyActive(c), 6, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
     look(c, key, place);
     savePlace(key, c);
-    return caught.length ? hunterEvent(caught) : '';
+    const grabbed = await grabAttempts(c);
+    return [caught.length ? hunterEvent(caught) : '', grabbed].filter(Boolean).join(' ');
 }
 
 /** Which thing someone means by their words, among what they can see on their floor (see core/targets.js). */
