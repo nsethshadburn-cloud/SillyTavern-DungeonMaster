@@ -15,6 +15,7 @@ import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '..
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
 import { roomBrief, currentPlace, withinEarshot } from './atlas.js';
+import { notAPerson } from '../core/explore.js';
 import { ensureClock, hhmm, WEATHER_WORDS } from '../core/clock.js';
 
 const KEY_NOTE = 'DM_NOTE';
@@ -265,6 +266,8 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
     const npcMatch = matchName(speaker, (c.docs.npcs || []).map(n => n.name));
     let npc = exactNpc ?? (c.docs.npcs || []).find(n => n.name === npcMatch);
     if (!npc) {
+        // A thing (a trap, a chest) can't speak, whatever the DM called it.
+        if (notAPerson(currentPlace(c)?.place ?? null, speaker)) { console.warn('[Dungeon Master] not a person, no line:', speaker); return null; }
         // The DM briefed someone it never registered: add them so they keep a voice and a memory.
         [npc] = addNpcs(c.docs.npcs, [{ name: speaker, description: '', gender: 'any', attitude: 'neutral' }], c.docs.world.location);
         npc.voice = pickNpcVoice(npc, c.docs.npcs);

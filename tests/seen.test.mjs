@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent } from '../src/core/explore.js';
+import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent, looksLikeThing, notAPerson } from '../src/core/explore.js';
 import { noticeParty } from '../src/core/notice.js';
 import { setStanding, standingFor, givesIn } from '../src/core/access.js';
 import { dialogueOf, typingMs } from '../src/core/speech.js';
@@ -85,6 +85,19 @@ test('a guard who sees the escapee is set on taking them in; a fellow prisoner i
     const cells = cellBlock();
     cells.guards = { Magnus: person('Magnus', 4, 2, { description: 'a prisoner', role: 'prisoner' }) };
     assert.deepEqual(noticeParty(cells, ['Amber'], { turn: 1, canSee: () => true }).seize, []);
+});
+
+test('a trap is never a person: by its words, or by being on the map', () => {
+    for (const n of ['Covered Pit', 'spike pit', 'Pressure plate (darts)', 'alarm glyph', 'Glyph of Warding (fire)', 'loose ceiling stones', 'tripwire']) assert.ok(looksLikeThing(n), n);
+    for (const n of ['Bram Hask', 'Jailer 3', 'Pit Fiend Guard', 'Old Martha']) assert.ok(!looksLikeThing(n), n);
+    const place = cellBlock();
+    place.traps = { T1: { id: 'T1', kind: 'swinging log', room: 'H', floor: 'F0', x: 2, y: 3, state: 'hidden' } };
+    place.items = { I1: { id: 'I1', name: 'rusty ledger', room: 'H', floor: 'F0' } };
+    assert.ok(notAPerson(place, 'Swinging Log'), 'the trap on this map, whatever its words');
+    assert.ok(notAPerson(place, 'the swinging log'));
+    assert.ok(notAPerson(place, 'Rusty Ledger'));
+    assert.ok(!notAPerson(place, 'Wren'));
+    assert.ok(!notAPerson(null, 'Wren'));
 });
 
 test('giving in is the player\'s own words, and refusals are not', () => {

@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.40.3 (a trap is not a person)
+- A sprung trap got a character card: the DM named the trap ("Covered Pit") as a speaker / new NPC and the code registered it. `looksLikeThing` now knows trap words; `notAPerson(place, name)` also matches the traps, items and props on the current map. New NPCs that aren't people are dropped (status note), a brief to one is skipped, and `makeSpeak` never auto-registers one.
+
 ### v0.40.2 (a choice on the map is never "busy")
 - The busy guard sat in front of the "pick one on the map" prompt (`chooseOnMap` runs inside the turn, so `running` is true): taps were refused and the choice buttons greyed out. A pending choice now takes the tap first, and `dm-map-choosing` hides the busy banner and re-enables the buttons.
 

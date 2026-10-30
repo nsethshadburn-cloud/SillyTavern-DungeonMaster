@@ -888,13 +888,32 @@ const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p
 /** Creature words that win over a thing word ("guard dog", "rat in a barrel"). */
 const BEING_WORDS = /\b(man|woman|men|women|boy|girl|child|guard|guards|soldier|knight|captain|warden|jailer|butler|maid|servant|cook|priest|monk|nun|thief|bandit|cultist|merchant|keeper|lord|lady|king|queen|prince|princess|old|young|dog|hound|wolf|rat|rats|cat|bear|spider|snake|bat|bats|goblin|orc|troll|ogre|skeleton|zombie|ghoul|ghost|wraith|vampire|demon|devil|dragon|beast|creature|monster|golem|elemental|slime|ooze|horse|crow|raven|boar|guardian|sentry|watchman|prisoner|stranger|figure|master|mistress|sergeant|brother|sister|father|mother|smith|innkeeper|owner|hunter|farmer|apprentice|scholar|wizard|witch|mage|sorcerer|cleric|paladin|ranger|rogue|bard|druid|healer|doctor|nurse|steward|chamberlain|noble|baron|duke|count|countess|page|squire|executioner|torturer|inquisitor|assassin|spy|mercenary|pirate|sailor|baby|twin|handler|turnkey|gaoler|dwarf|elf|halfling|gnome|human|hag|imp|kobold|gnoll|minotaur|harpy|wyvern|basilisk|mimic|specter|spectre|lich|mummy|banshee|shade|mastiff|stray|mutt|puppy|kitten|owl|hawk|eagle|toad|frog|crocodile|shark)\b/i;
 
-/** Does a name look like an object (a tin of lamp oil, a ledger) rather than a person or creature? */
+/** Trap words: a "covered pit", a "pressure plate (darts)", an "alarm glyph" is a trap, never someone. */
+const TRAP_WORDS = /\b(trap|traps|pit|plate|dart|darts|needle|glyph|sigil|rune|runes|ward|warding|snare|net|tripwire|wire|blade|blades|spike|spikes|stones|boulder|gas|alarm|pendulum|portcullis|trapdoor|mechanism)\b/i;
+
+/** Does a name look like an object (a tin of lamp oil, a ledger, a spike pit) rather than a person or creature? */
 export function looksLikeThing(name) {
     const s = String(name || '').trim();
     if (!s) return true;
     if (BEING_WORDS.test(s)) return false;
     // A name with a thing word in it and no creature word: an object (a proper name like "Graves" has neither).
-    return THING_WORDS.test(s);
+    return THING_WORDS.test(s) || TRAP_WORDS.test(s);
+}
+
+/**
+ * Not someone: a thing by its words, or the name of a trap, a piece of furniture or an item on this
+ * map (the DM read "spike pit" off the map and briefed it as if it could talk).
+ */
+export function notAPerson(place, name) {
+    if (looksLikeThing(name)) return true;
+    if (!place) return false;
+    const key = nameKey(name);
+    if (!key) return true;
+    const same = s => { const k = nameKey(s); return Boolean(k) && (k === key || key.includes(k) || k.includes(key)); };
+    if (Object.values(place.traps || {}).some(t => same(t.kind) || same(t.id))) return true;
+    if (Object.values(place.items || {}).some(i => same(i.name))) return true;
+    for (const f of place.floors || []) for (const p of f.map?.props || []) if ((p.label && same(p.label)) || (p.type && same(PROPS[p.type]?.name || p.type))) return true;
+    return false;
 }
 
 const PERSON_SYNONYMS = { watchman: 'guard', sentry: 'guard', turnkey: 'guard', jailer: 'guard', gaoler: 'guard', warder: 'guard', soldier: 'guard', constable: 'guard', hound: 'dog', mastiff: 'dog', mutt: 'dog', cur: 'dog' };

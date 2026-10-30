@@ -15,7 +15,7 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
-import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
+import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
 import { seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
@@ -1141,7 +1141,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
 
     // New NPCs (with voices).
     if (t.new_npcs.length) {
-        const added = addNpcs(c.docs.npcs, t.new_npcs, t.scene?.location || world.location);
+        const herePlace = currentPlace(c)?.place ?? null;
+        const things = t.new_npcs.filter(n => notAPerson(herePlace, n?.name));
+        if (things.length) status.note(`Not people, not added: ${things.map(n => n.name).join(', ')}`);
+        const added = addNpcs(c.docs.npcs, t.new_npcs.filter(n => !things.includes(n)), t.scene?.location || world.location);
         for (const npc of added) {
             npc.voice = pickNpcVoice(npc, c.docs.npcs);
         }
@@ -1688,6 +1691,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     for (const d of t.directions) {
         if (signal.aborted) throw new Error('aborted');
         const speaker = d.speaker;
+        // A trap, a chest or a ledger can't be briefed to speak, whatever the DM called it.
+        if (notAPerson(hereNow?.place ?? null, speaker) && !c.meta.party.some(p => p.name === speaker)) { status.note(`${speaker} is a thing, not someone: no line`); continue; }
         const deadNpc = (c.docs.npcs || []).find(n => n.dead && nameKey(n.name) === nameKey(speaker));
         if (deadNpc) {
             status.note(`${deadNpc.name} is dead`);
