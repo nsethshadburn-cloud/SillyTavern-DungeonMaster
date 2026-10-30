@@ -4,7 +4,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent, looksLikeThing, notAPerson, searchRadius } from '../src/core/explore.js';
+import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent, looksLikeThing, notAPerson, searchRadius, killPerson, clearBodies, addTrap, NEWCOMER_MAX } from '../src/core/explore.js';
+import { parseMapSync } from '../src/core/mapsync.js';
+import { tidyBookkeeping } from '../src/core/bookkeeper.js';
 import { noticeParty, noticeReach, readsAsRunning } from '../src/core/notice.js';
 import { setStanding, standingFor, givesIn } from '../src/core/access.js';
 import { dialogueOf, typingMs } from '../src/core/speech.js';
@@ -69,6 +71,47 @@ test('"!": a guard who has seen the escapee is marked alert; a fellow prisoner d
     assert.deepEqual(r.events, [], 'no alarm from a fellow prisoner');
     assert.equal(cells.guards.Magnus.alertAt, undefined);
     assert.deepEqual(r.seen, [{ seer: 'Magnus', seen: 'Amber' }], 'she did see him');
+});
+
+test('a party member is never one of the place\'s people, and the dead never come back', () => {
+    const place = cellBlock();
+    place.state.party = ['Amber', 'Judy Hopps'];
+    assert.equal(placePerson(place, 'Judy', { floor: 'F0', x: 1, y: 3 }), null, '"Judy" is Judy Hopps');
+    assert.equal(placePerson(place, 'Amber', { floor: 'F0', x: 1, y: 3 }), null);
+    assert.ok(placePerson(place, 'Bram Hask', { floor: 'F0', x: 1, y: 3 }), 'someone else is fine');
+    const ops = parseMapSync('{"changes":[{"op":"spawn","name":"Judy","what":"a caged rabbit","near":"Amber"}]}', { party: ['Amber', 'Judy Hopps'], people: [], things: [], doors: [], rooms: [] }, { story: 'Judy, a caged rabbit, is here' });
+    assert.deepEqual(ops, [], 'the sync never spawns a party namesake');
+    killPerson(place, 'Wren', 3, 1000);
+    assert.equal(place.guards.Wren.state, 'dead');
+    assert.deepEqual(clearBodies(place, { now: 1000 + 9999 }), []);
+    assert.deepEqual(clearBodies(place, { now: 1000 + 10000 }), ['Wren']);
+    assert.equal(place.guards.Wren.state, 'gone');
+    assert.equal(placePerson(place, 'Wren', { floor: 'F0', x: 2, y: 3 }), null, 'gone for good');
+    assert.equal(placePerson(place, 'wren', { floor: 'F0', x: 2, y: 3 }), null);
+});
+
+test('the bookkeeper keeps to the party and to plain states: no unconscious, caged or dead from a turn of phrase', () => {
+    const changes = { conditions_add: { Amber: ['poisoned', 'unconscious'], 'Turnkey 2': ['unconscious'], 'Judy Hopps': ['grappled'] }, conditions_remove: { 'Judy Hopps': ['caged'], Amber: ['prone'] }, items_add: { Amber: ['rope'] }, items_remove: {} };
+    const t = tidyBookkeeping(changes, { party: ['Amber', 'Judy Hopps'] });
+    assert.deepEqual(t, { conditions_add: { Amber: ['poisoned'], 'Judy Hopps': ['grappled'] }, conditions_remove: { Amber: ['prone'] }, items_add: { Amber: ['rope'] } });
+    assert.equal(tidyBookkeeping({ conditions_add: { 'Turnkey 2': ['unconscious'] }, conditions_remove: {}, items_add: {}, items_remove: {} }, { party: ['Amber'] }), null);
+});
+
+test('a built place takes only a few newcomers', () => {
+    const place = cellBlock();
+    place.state.built = true; place.state.newcomers = 0;
+    let added = 0;
+    for (let i = 0; i < NEWCOMER_MAX + 3; i++) if (placePerson(place, `Guard ${i + 10}`, { floor: 'F0', x: 1 + (i % 4), y: 3 })) added++;
+    assert.equal(added, NEWCOMER_MAX);
+    assert.ok(placePerson(place, 'The Warden', { floor: 'F0', x: 1, y: 4 }, { info: { force: true } }), 'the story can still force one in');
+});
+
+test('a trap the DM places is nudged away from a door', () => {
+    const place = cellBlock();
+    place.doors = { D1: { id: 'D1', floor: 'F0', x: 5, y: 2, state: 'closed', kind: 'door', rooms: ['H', 'C4'] } };
+    const t = addTrap(place, 'F0', 4, 2, { kind: 'tripwire', dc: 12 });
+    assert.ok(t, 'placed');
+    assert.ok(Math.max(Math.abs(t.x - 5), Math.abs(t.y - 2)) > 1, `not beside the door (${t.x},${t.y})`);
 });
 
 test('a watcher pays attention over a range rolled each look: no x-ray down the corridor', () => {

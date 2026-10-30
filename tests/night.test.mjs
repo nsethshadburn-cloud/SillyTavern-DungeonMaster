@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { litMask, computeVisible, findPath, tickGuards, moveHunters, applyPlaceChanges, clearBodies, dangerSquares, isOut, hasKeys, roomAt, placeView } from '../src/core/explore.js';
+import { litMask, computeVisible, findPath, tickGuards, moveHunters, applyPlaceChanges, clearBodies, dangerSquares, isOut, hasKeys, roomAt, placeView, placePerson } from '../src/core/explore.js';
 import { noticeParty, outBy } from '../src/core/notice.js';
 import { cannedLine } from '../src/core/lines.js';
 import { setStanding, standingFor } from '../src/core/access.js';
@@ -124,14 +124,15 @@ test('a body stays while the party can see it, or while nobody is left to clear 
     place.state.positions = { Amber: { floor: 'F0', x: 3, y: 2 } };
     const map = place.floors[0].map;
     const sight = () => ({ floorId: 'F0', visible: computeVisible(place, 'F0', [place.state.positions.Amber]) });
-    assert.equal(clearBodies(place, 10, 3, sight()), 0, 'in sight: stays');
+    assert.deepEqual(clearBodies(place, { now: (place.guards.Dead.diedAt ?? 0) + 5000 }), [], 'a moment later: still there');
     assert.equal(place.guards.Dead.state, 'dead');
     place.state.positions.Amber = { floor: 'F0', x: 28, y: 2 };
     assert.equal(computeVisible(place, 'F0', [place.state.positions.Amber])[2 * map.w + 1], 0, 'now out of sight');
-    assert.equal(clearBodies(place, 20, 3, sight()), 0, 'nobody left to clear it: stays');
+    assert.deepEqual(clearBodies(place, { now: (place.guards.Dead.diedAt ?? 0) + 9000 }), [], 'not yet');
     place.guards.Other = person('Other', 20, 2, { role: 'guard' });
-    assert.equal(clearBodies(place, 12, 3, sight()), 0, 'seen at turn 10: not yet');
-    assert.equal(clearBodies(place, 13, 3, sight()), 1, 'out of sight three turns, someone to do it: cleared');
+    assert.deepEqual(clearBodies(place, { now: (place.guards.Dead.diedAt ?? 0) + 10000 }), ['Dead'], 'ten seconds on: gone');
+    assert.ok(place.state.fallen.includes('dead'), 'and never back under that name');
+    assert.equal(placePerson(place, 'Dead', { floor: 'F0', x: 1, y: 1 }), null, 'no respawn');
     assert.equal(place.guards.Dead.state, 'gone');
 });
 

@@ -94,7 +94,7 @@ export function parseMapSync(text, known, { story = '' } = {}) {
         let ch = null;
         if (op === 'spawn') {
             const name = String(raw.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-            if (!name || party.some(p => nameKey(p) === nameKey(name)) || looksLikeThing(name)) continue;
+            if (!name || matchName(name, party) || looksLikeThing(name)) continue;
             const what = String(raw.what ?? '').trim();
             if (!inStory(name, what)) continue;
             const already = people.find(p => nameKey(p) === nameKey(name)) ?? sameAs(name, what);

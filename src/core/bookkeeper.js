@@ -66,6 +66,31 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
  *   names = whose conditions may change (the party and the people here); itemNames = who carries tracked
  *   items (the party); itemsOf = what someone carries (their own and the shared pack)
  */
+/** States the bookkeeper may never set or clear: the dice, the DM's own fields and the map own these. */
+const NOT_THE_BOOKKEEPERS = /unconscious|incapacitated|out cold|senseless|dead|dying|asleep|sleeping|caged|uncaged|cuffed|shackled|chained|locked|free|freed|conscious|awake|alive/i;
+
+/**
+ * Fence the bookkeeper's changes: conditions only on the party (never the place's people), never
+ * a state that the dice, the DM or the map decide (unconscious, dead, asleep, caged, cuffed...).
+ * Items stay as they are. Returns the trimmed changes, or null when nothing is left.
+ */
+export function tidyBookkeeping(changes, { party = [] } = {}) {
+    if (!changes) return null;
+    const keep = new Set(party.map(nameKey));
+    const out = { ...changes };
+    for (const key of ['conditions_add', 'conditions_remove']) {
+        const next = {};
+        for (const [who, list] of Object.entries(changes[key] || {})) {
+            if (!keep.has(nameKey(who))) continue;
+            const ok = (Array.isArray(list) ? list : [list]).filter(x => x && !NOT_THE_BOOKKEEPERS.test(String(x)));
+            if (ok.length) next[who] = ok;
+        }
+        if (Object.keys(next).length) out[key] = next; else delete out[key];
+    }
+    for (const key of ['items_add', 'items_remove']) if (out[key] && !Object.keys(out[key]).length) delete out[key];
+    return Object.keys(out).length ? out : null;
+}
+
 export function parseBookkeeping(text, { names, itemNames = names, conditionsOf, itemsOf, allItems, story = '' }) {
     const data = extractJson(text);
     if (!data || typeof data !== 'object') return null;

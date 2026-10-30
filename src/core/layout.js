@@ -870,22 +870,21 @@ function tryBuild(plan, seed, shrink) {
     // Traps go where someone would set one: just inside a doorway, or right in front of what's worth
     // guarding (a chest, an altar, a throne); in a hallway, partway along it. Now and then anywhere.
     const trapped = new Set();
+    // Never right in front of a door (any door on the floor, from any side): a trap you can't step around
+    // on the way in is a cheap shot. Traps go in the middle of a room or in front of what they guard.
+    const nearDoor = (floorId, x, y) => Object.values(place.doors).some(d => d.floor === floorId && Math.max(Math.abs(d.x - x), Math.abs(d.y - y)) <= 1);
     const okTrap = (rm, x, y) => x >= rm.rect.x && y >= rm.rect.y && x < rm.rect.x + rm.rect.w && y < rm.rect.y + rm.rect.h
-        && chars[rm.floor][y]?.[x] === '.' && !blockedAt(rm.floor, x, y) && !trapped.has(`${rm.floor}:${x},${y}`);
+        && chars[rm.floor][y]?.[x] === '.' && !blockedAt(rm.floor, x, y) && !trapped.has(`${rm.floor}:${x},${y}`) && !nearDoor(rm.floor, x, y);
     const trapTile = (roomId, kind) => {
         const rm = place.rooms[roomId];
         const k = String(kind || '').toLowerCase();
-        const doorways = shuffle(r, Object.values(place.doors).filter(d => d.floor === rm.floor && d.rooms.includes(roomId) && (!d.exit || /door|entr|threshold/.test(k))))
-            .flatMap(d => DIRS.map(([dx, dy]) => [d.x + dx, d.y + dy])).filter(([x, y]) => okTrap(rm, x, y));
         const guarded = shuffle(r, floorMap(rm.floor).props.filter(p => TRAP_GUARDS.has(p.type) && p.x >= rm.rect.x && p.y >= rm.rect.y && p.x < rm.rect.x + rm.rect.w && p.y < rm.rect.y + rm.rect.h))
             .flatMap(p => [[p.x, p.y - 1], [p.x, p.y + (p.h || 1)], [p.x - 1, p.y], [p.x + (p.w || 1), p.y]]).filter(([x, y]) => okTrap(rm, x, y));
-        const along = rm.type === 'hallway' ? roomTiles(rm.rect).filter(([x, y]) => okTrap(rm, x, y)).sort(([ax, ay], [bx, by]) => Math.hypot(ax - rm.rect.x - rm.rect.w / 2, ay - rm.rect.y - rm.rect.h / 2) - Math.hypot(bx - rm.rect.x - rm.rect.w / 2, by - rm.rect.y - rm.rect.h / 2)) : [];
-        const anywhere = () => { const t = freeTile(roomId, true); return t && okTrap(rm, t[0], t[1]) ? [t] : []; };
-        const order = /door|threshold|entr|portal|gate|arch|tripwire/.test(k) ? [doorways, along, guarded]
-            : /chest|lock|needle|lid|coffin|sarcoph|altar|treasure|vault|idol|statue|throne|lever|glyph|rune/.test(k) ? [guarded, doorways, along]
-                : (() => { const roll = r(); return roll < 0.45 ? [doorways, along, guarded] : roll < 0.85 ? [guarded, doorways, along] : [anywhere(), doorways, guarded]; })();
+        // The middle of the room, nearest the centre first (a corridor: the middle of its length).
+        const middle = roomTiles(rm.rect).filter(([x, y]) => okTrap(rm, x, y)).sort(([ax, ay], [bx, by]) => Math.hypot(ax - rm.rect.x - (rm.rect.w - 1) / 2, ay - rm.rect.y - (rm.rect.h - 1) / 2) - Math.hypot(bx - rm.rect.x - (rm.rect.w - 1) / 2, by - rm.rect.y - (rm.rect.h - 1) / 2));
+        const order = /chest|lock|needle|lid|coffin|sarcoph|altar|treasure|vault|idol|statue|throne|lever|glyph|rune/.test(k) || r() < 0.6 ? [guarded, middle] : [middle, guarded];
         for (const list of order) if (list.length) return list[0];
-        return anywhere()[0] ?? null;
+        return null;
     };
     let trapN = 0, itemN = 0;
     for (const room of plan.rooms) {

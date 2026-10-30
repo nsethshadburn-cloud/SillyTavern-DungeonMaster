@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -29,7 +29,7 @@ import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } 
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
-import { bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
+import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
@@ -384,6 +384,8 @@ async function turnBody(c, opts, status, signal) {
     });
     if (opts.force) reasons = [...new Set([opts.force, ...reasons])];
     if (placeEvent && !reasons.includes('explore') && opts.force !== 'reaction') reasons.push('explore');
+    // Calm turns after a fight or a capture: no random event, no pressure push; the player breathes.
+    if (Number.isFinite(pacing.calmUntil) && meta.turn < pacing.calmUntil) reasons = reasons.filter(r => r !== 'event' && r !== 'drift' && r !== 'stalled');
     // Turn prompts: the player's message in a fight is THEIR turn (the DM resolves only that); "end_turn" hands the round on.
     if (c.docs.world.combat && turnPromptsOn()) {
         const cb = c.docs.world.combat;
@@ -578,7 +580,9 @@ async function movedTurn(c, status, signal) {
     else pacing.localTurnsSinceDM++;
     const b = budget();
     const due = dmReasons({ pacing, triage: {}, eventDue: false, checkinEvery: Number(settings().checkinEvery) || 5, budgetBlocked: b.level === 'blocked', budgetTight: b.level === 'tight', lastDriftStageCalled: meta.lastDriftStageCalled }).filter(r => r === 'checkin');
-    const reasons = [...(placeEvent ? ['explore'] : []), ...due];
+    // Roaming is quiet: the world's own pushes (events, pressure, check-ins) wait for the player's next
+    // message. Only something that happened on the map calls the DM here.
+    const reasons = placeEvent ? ['explore'] : [];
     if (!reasons.length || b.level === 'blocked' || signal.aborted) return;
     const here = currentPlace(c);
     const lead = here?.place.state.positions[meta.persona.name];
@@ -715,11 +719,12 @@ async function bookkeep(c, fromIndex) {
         allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
     });
     if (!changes) return;
-    // Someone still on their feet in the fight isn't knocked out by a turn of phrase: the dice decide that.
-    for (const [n, list] of Object.entries(changes.conditions_add || {})) {
-        const e = w.combat?.enemies?.[n];
-        if (e && e.hp > 0) changes.conditions_add[n] = list.filter(x => !/unconscious|incapacitated|out cold|dead|dying|senseless/i.test(x));
-    }
+    // The bookkeeper keeps to the party and to states the narration can plainly show (poisoned, prone,
+    // grappled...): never unconscious, dead, asleep, caged or cuffed, which the dice, the DM and the map own.
+    const tidy = tidyBookkeeping(changes, { party: [c.meta.persona.name, ...c.meta.party.map(p => p.name)] });
+    if (!tidy) return;
+    Object.keys(changes).forEach(k => delete changes[k]);
+    Object.assign(changes, tidy);
     const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name), { turn: c.meta.turn });
     if (!log.length) return;
     saveDoc('world');
@@ -982,6 +987,21 @@ async function localReplies(c, triage, playerText, status, signal) {
     }
 }
 
+/** Ask the player for a roll: the card, and from here on their dice are read automatically. */
+async function postRollRequest(c, pr) {
+    const meta = c.meta;
+    meta.pendingRoll = pr;
+    const adv = pr.advantage && pr.advantage !== 'none' ? ` (with **${pr.advantage}**: roll two d20, keep the ${pr.advantage === 'advantage' ? 'higher' : 'lower'})` : '';
+    const what = pr.kind === 'damage'
+        ? `roll damage **${pr.damage || 'for your hit'}** and type the total`
+        : `roll a **d${pr.die || 20}** for **${pr.skill}${pr.ability ? ` (${pr.ability})` : ''}**${adv} and type the number you rolled`;
+    const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
+    await postDiceCard(`🎲 **${meta.persona.name}**, ${what}${auto}.${pr.reason ? `\n*${pr.reason}*` : ''}`, { request: pr });
+    // Dice rolled from here on are read automatically (dicewatch.js).
+    pr.chatIndex = ST.chat.length;
+    saveMeta();
+}
+
 async function resolvePlayerRoll(c, parsed, status) {
     const meta = c.meta;
     const pr = meta.pendingRoll;
@@ -1033,6 +1053,14 @@ async function resolvePlayerRoll(c, parsed, status) {
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
     // A grab: a miss means cuffs and the cell; a slip means the chase goes on (the third, a fight).
     let saveHurt = '';
+    // A hit: the damage roll is asked for right away (the DM used to forget).
+    if (pr.kind === 'attack' && judged.success === true) {
+        const dice = judged.critical ? (attackDamage(statsForName(meta.persona.name, meta), `${pr.reason || ''} ${pr.skill || ''}`, { critical: true }) || pr.damage) : pr.damage;
+        if (dice) {
+            await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: dice, half: false, bonus: null, spot: null });
+            saveHurt += ` The code has already asked ${meta.persona.name} to roll damage (${dice}): don't ask again; narrate the hit and wait for the total.`;
+        }
+    }
     if (pr.grab) {
         const settled = await settleGrab(c, pr, judged.success === true);
         if (settled) saveHurt += ` ${settled}`;
@@ -1126,6 +1154,27 @@ function outcomeText(r, judged) {
  * A fight the DM didn't start: someone rolled an attack. The enemies are whoever attacks the party
  * and whoever the party attacks, with their stats from the NPC list when the DM gave them.
  */
+/**
+ * Anyone in the fight at 0 HP is dead: killed on the map (a body for a moment, then gone for good),
+ * dead in the roster, and the body clear is scheduled. The DM narrates a death, never a knockout.
+ */
+function fallenInFight(c) {
+    const world = c.docs.world;
+    if (!world.combat) return;
+    const here = currentPlace(c);
+    let any = false;
+    for (const [name, e] of Object.entries(world.combat.enemies || {})) {
+        if (!(e.hp <= 0) || e.dead) continue;
+        e.dead = true;
+        any = true;
+        const pname = world.combat.aliases?.[name] ?? name;
+        if (here) killPerson(here.place, pname, c.meta.turn);
+        const npc = (c.docs.npcs || []).find(x => nameKey(x.name) === nameKey(pname) || nameKey(x.name) === nameKey(name));
+        if (npc) npc.dead = true;
+    }
+    if (any) { if (here) savePlace(here.key, c); saveDoc('npcs'); scheduleBodyClear(c); }
+}
+
 export function combatFromAttacks(c, t) {
     const partyNames = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
     const inParty = n => Boolean(matchName(String(n || ''), partyNames));
@@ -1213,6 +1262,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
 
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
+    fallenInFight(c);
     syncDownFromConditions(c);
     let initiativeCard = '';
     let mapChanged = false;
@@ -1223,6 +1273,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             t.start_combat = auto;
             status.note(`Fight started (an attack was rolled)${auto.enemies.length ? `: ${auto.enemies.map(e => e.name).join(', ')}` : ''}`);
         }
+    }
+    if (t.start_combat && !world.combat) {
+        // Striking someone helpless (asleep, out cold, tied up) is not a fight: no initiative, the blow just lands.
+        const hereNow0 = currentPlace(c);
+        const named = (t.start_combat.enemies || []).map(e => e.name);
+        const helpless = n => { const g = hereNow0 && personByName(hereNow0.place, n); return g ? (g.state === 'dead' || g.state === 'gone' || Boolean(g.down)) : false; };
+        if (named.length && named.every(helpless)) { status.note(`No fight: ${named.join(', ')} ${named.length > 1 ? 'are' : 'is'} helpless (resolve the blow, no initiative)`); t.start_combat = null; }
     }
     if (t.start_combat && !world.combat) {
         // Only companions with the player are in it: not one caged elsewhere, away, or out of reach.
@@ -1306,8 +1363,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         } else {
             world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
         }
-        // Downed enemies stay where they fell (a body on the board) for the whole fight.
-        for (const e of Object.values(world.combat.enemies || {})) if (e.hp <= 0) e.downRound ??= world.combat.round || 1;
+        fallenInFight(c);
         if (rejected.length) console.warn('[Dungeon Master] Ignored invalid map moves:', rejected);
         mapChanged = true;
     }
@@ -1369,10 +1425,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
                 const g = personByName(here.place, pname);
                 if (e.hp <= 0) {
-                    // Dead only when the DM says so; otherwise down and out (knocked out, bleeding) where they fell.
-                    const dead = deadNames.has(nameKey(name)) || deadNames.has(nameKey(pname)) || (e.conditions || []).some(x => /\b(dead|slain|killed)\b/i.test(x));
-                    if (dead) killPerson(here.place, pname, meta.turn);
-                    else if (g) { g.down = 'unconscious'; g.state = 'alert'; delete g.intent; delete g.target; }
+                    // 0 HP is death: the body lies a moment, then it's gone, and they never return.
+                    killPerson(here.place, pname, meta.turn);
+                    const npc = (c.docs.npcs || []).find(x => nameKey(x.name) === nameKey(pname) || nameKey(x.name) === nameKey(name));
+                    if (npc) npc.dead = true;
+                    scheduleBodyClear(c);
                     continue;
                 }
                 // Alive at the end: someone who wasn't an enemy before the fight (a guard who yielded) isn't one now,
@@ -1402,6 +1459,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             refreshMap();
         }
         status.note('Combat over');
+        // After a fight the story breathes: a few turns with no new people, no alarms, no next guard.
+        meta.pacing.calmUntil = (meta.turn || 0) + 3;
     }
     // Scene maps outside combat (a dungeon room where exact squares matter).
     if (t.scene_map === 'close' && world.sceneMap) {
@@ -1668,6 +1727,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'} (already told by the game master; react to it, don't describe it again): ${outcome}`;
         }
     }
+    fallenInFight(c);
     if (reactions.length) setTimeout(() => runTurn({ force: 'reaction', placeEvent: reactions.join(' ') }), 50);
     if (t.npc_rolls.length) {
         saveDoc('rolls_log');
@@ -1744,15 +1804,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (pr.damage) status.note(`Damage dice from the sheet: ${pr.damage}`);
         }
         if (pr.kind === 'initiative') pr.dc = null;
-        meta.pendingRoll = pr;
-        const adv = pr.advantage && pr.advantage !== 'none' ? ` (with **${pr.advantage}**: roll two d20, keep the ${pr.advantage === 'advantage' ? 'higher' : 'lower'})` : '';
-        const what = pr.kind === 'damage'
-            ? `roll damage **${pr.damage || 'for your hit'}** and type the total`
-            : `roll a **d${pr.die || 20}** for **${pr.skill}${pr.ability ? ` (${pr.ability})` : ''}**${adv} and type the number you rolled`;
-        const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
-        await postDiceCard(`🎲 **${meta.persona.name}**, ${what}${auto}.${pr.reason ? `\n*${pr.reason}*` : ''}`, { request: pr });
-        // Dice rolled from here on are read automatically (dicewatch.js).
-        pr.chatIndex = ST.chat.length;
+        await postRollRequest(c, pr);
     }
     saveMeta();
     // A new map: asks first for big ones, plays the building animation, then opens it.

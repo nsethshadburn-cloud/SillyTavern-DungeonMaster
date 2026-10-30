@@ -13,6 +13,8 @@ import { look } from './atlas.js';
 import { queueTalk } from './talk.js';
 import { settings } from './settings.js';
 import { floorById, personByName, setIntent } from '../core/explore.js';
+import { lineRole } from '../core/lines.js';
+import { matchName } from '../core/text.js';
 
 /** Did this person speak in the last few messages (a conversation is going on)? */
 function spokeLately(name, within = 8) {
@@ -57,7 +59,9 @@ export function watchParty(c, cur, names) {
     for (const l of r.lines) {
         // Now and then the line comes from the local model instead of the canned pool (one a turn, short).
         const g = personByName(place, l.name);
-        if (g && settings().guardsTalk !== false && Math.random() < 0.6) {
+        const partyNames = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+        // Guards, keepers and locals get a model line; a fellow prisoner stays canned; never a party namesake.
+        if (g && settings().guardsTalk !== false && lineRole(g) !== 'prisoner' && !matchName(l.name, partyNames) && Math.random() < 0.6) {
             const who = l.prisoner ? `${l.to}, a prisoner in their own cell` : `${l.to}, who is allowed to be there`;
             queueTalk({
                 name: l.name,

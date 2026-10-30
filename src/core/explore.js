@@ -403,7 +403,22 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
  * A new trap on a square: in place.traps (so stepping on it sets it off and a search can find it)
  * with its prop on the map. Hidden ones aren't drawn until found or sprung.
  */
-export function addTrap(place, floorId, x, y, { kind = '', dc = 13, save = '', effect = '', hidden = false } = {}) {
+export function addTrap(place, floorId, x, y, { kind = '', dc = 13, save = '', effect = '', hidden = false, keep = false } = {}) {
+    // Never right in front of a door: a trap goes in the middle of a room or by what it guards
+    // (keep = an old picture made real where it already was).
+    const byDoor = (px, py) => Object.values(place.doors || {}).some(d => d.floor === floorId && Math.max(Math.abs(d.x - px), Math.abs(d.y - py)) <= 1);
+    const trapped = (px, py) => Object.values(place.traps || {}).some(t => t.floor === floorId && t.x === px && t.y === py);
+    if (!keep && (byDoor(x, y) || trapped(x, y))) {
+        let best = null;
+        for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (!walkable(place, floorId, nx, ny) || byDoor(nx, ny) || trapped(nx, ny) || stairsAt(place, floorId, nx, ny)) continue;
+            const d = Math.max(Math.abs(dx), Math.abs(dy));
+            if (!best || d < best.d) best = { x: nx, y: ny, d };
+        }
+        if (!best) return null;
+        x = best.x; y = best.y;
+    }
     let n = Object.keys(place.traps).length + 1;
     while (place.traps[`T${n}`]) n++;
     const id = `T${n}`;
@@ -431,7 +446,7 @@ export function adoptTrapProps(place) {
         for (const p of [...(f.map.props || [])]) {
             if (p.type !== 'trap' || (p.trap && place.traps[p.trap])) continue;
             f.map.props = f.map.props.filter(q => q !== p);
-            addTrap(place, f.id, p.x, p.y, { kind: p.label || 'trap', hidden: false });
+            addTrap(place, f.id, p.x, p.y, { kind: p.label || 'trap', hidden: false, keep: true });
             n++;
         }
     }
@@ -961,8 +976,22 @@ export function personByName(place, name) {
 export function placePerson(place, name, where, { floor = place.state?.floor, info = {}, taken = null, arrive = false } = {}) {
     const clean = String(name || '').trim().slice(0, 60);
     if (!clean) return null;
+    // The dead can't be moved about, and the fallen (gone for good) never come back.
+    const was = personByName(place, clean);
+    if (was && (was.state === 'dead' || (was.state === 'gone' && isFallen(place, clean)))) return null;
     // Only people and creatures stand on the map: an item named here ("Tin of lamp oil") is not someone.
     if (!personByName(place, clean) && looksLikeThing(clean)) return null;
+    // The dead don't come back under that name; a party member is never one of the place's people
+    // ("Judy" is Judy Hopps); and a built place takes only so many newcomers (the story escalates
+    // some other way than a guard at every door).
+    if (!personByName(place, clean)) {
+        if (isFallen(place, clean)) return null;
+        if (matchName(clean, place.state?.party || [])) return null;
+        if (place.state?.built && !info.force) {
+            if ((place.state.newcomers ?? 0) >= NEWCOMER_MAX) return null;
+            place.state.newcomers = (place.state.newcomers ?? 0) + 1;
+        }
+    }
     // Squares other people already stand on (party and the place's people), unless told otherwise.
     const busy = f => taken ?? new Set([...Object.entries(place.state?.positions || {}).map(([, p]) => p), ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && nameKey(g.name) !== nameKey(clean))].filter(p => p && p.floor === f).map(p => `${p.x},${p.y}`));
     let spot = null, floorId = floor ?? place.floors[0].id;
@@ -1326,12 +1355,22 @@ export function peopleMentioned(place, floorId, text) {
 }
 
 /** Someone died on the map: their body stays where they fell for a few turns. */
-export function killPerson(place, name, turn) {
+export function killPerson(place, name, turn, now = Date.now()) {
     const g = personByName(place, name);
     if (!g || g.state === 'gone') return null;
-    Object.assign(g, { state: 'dead', deadTurn: turn });
-    delete g.intent; delete g.target; delete g.engaged; delete g.down; delete g.through; delete g.goal; delete g.fought; delete g.wasHostile;
+    if (g.state === 'dead') return g;
+    Object.assign(g, { state: 'dead', deadTurn: turn, diedAt: now });
+    delete g.intent; delete g.target; delete g.engaged; delete g.down; delete g.through; delete g.goal; delete g.fought; delete g.wasHostile; delete g.seize; delete g.alertAt;
     return g;
+}
+
+/** How long a body lies where it fell before it is gone, in ms. */
+export const BODY_MS = 10000;
+
+/** The fallen of this place: whoever died here never comes back, under that name. */
+export function isFallen(place, name) {
+    const k = nameKey(name);
+    return Boolean(k) && (place.state?.fallen || []).includes(k);
 }
 
 /**
@@ -1340,18 +1379,22 @@ export function killPerson(place, name, turn) {
  * party stands over stays; so does the last man of an empty dungeon.
  * sight = {floorId, visible}: what the party sees right now. Returns how many went.
  */
-export function clearBodies(place, turn, turns = 3, sight = null) {
-    let n = 0;
-    const map = sight ? floorById(place, sight.floorId).map : null;
+export function clearBodies(place, { now = Date.now(), ms = BODY_MS } = {}) {
+    const gone = [];
+    place.state.fallen ??= [];
     for (const g of Object.values(place.guards || {})) {
         if (g.state !== 'dead') continue;
-        if (sight && g.floor === sight.floorId && sight.visible[g.y * map.w + g.x]) { g.seenTurn = turn; continue; }
-        const since = g.seenTurn ?? g.deadTurn ?? turn;
-        const someone = Object.values(place.guards).some(o => o !== g && !isOut(o) && o.hostile !== true && o.floor === g.floor);
-        if (turn - since >= turns && someone) { g.state = 'gone'; n++; }
+        if (now - (g.diedAt ?? 0) < ms) continue;
+        g.state = 'gone';
+        const k = nameKey(g.name);
+        if (k && !place.state.fallen.includes(k)) place.state.fallen.push(k);
+        gone.push(g.name);
     }
-    return n;
+    return gone;
 }
+
+/** How many new people a place takes after it was built (the DM's reinforcements, the story's arrivals). */
+export const NEWCOMER_MAX = 4;
 
 /** A new turn: hunters who struck may strike again (if their quarry is still in reach after it). */
 export function clearEngaged(place) {
@@ -1473,7 +1516,11 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const taken = Object.values(place.items).filter(i => i.state === 'taken' || i.found).map(i => `${i.id} ${i.name} ${i.state === 'taken' ? 'taken' : 'found'}`);
     if (taken.length) lines.push(`Items: ${taken.join(', ')}.`);
     const bodies = Object.values(place.guards).filter(g => g.state === 'dead').map(g => `${g.name} at ${coord(g.x, g.y)}`);
-    if (bodies.length) lines.push(`Bodies on the floor (dead; cleared away after a few turns): ${bodies.join('; ')}.`);
+    if (bodies.length) lines.push(`Bodies on the floor (dead: the body is gone in a moment, and they never return): ${bodies.join('; ')}.`);
+    const fallen = st.fallen?.length ?? 0;
+    const alive = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').length;
+    const slots = Math.max(0, NEWCOMER_MAX - (st.newcomers ?? 0));
+    lines.push(`People of this place: ${alive} on their feet, ${fallen + bodies.length} dead and gone for good. Newcomers this place can still take: ${slots}${slots ? '' : ' (none: no more guards or arrivals here; escalate through the story instead: the alarm, time running out, locked gates, what waits outside)'}.`);
     // How far each one is from the party and what the party could possibly sense of them, so nobody
     // hears footsteps or smells lamp oil from across the map.
     const viewers = partyNames.filter(n => !st.held?.[n]).map(n => st.positions[n]).filter(p => p && p.floor === floor.id);

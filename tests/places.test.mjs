@@ -547,10 +547,10 @@ test('traps the DM sets go off: add_traps, add_props type "trap", and old trap p
     assert.equal(t.room, 'A');
     assert.match(stepOn(place, 'Amber', 'G', at.x, at.y, { player: true }), /pressure plate \(darts\)/);
     // add_props with type "trap": also real.
-    const at2 = { x: A.x, y: A.y };
-    applyPlaceChanges(place, { add_props: [{ type: 'trap', at: toCoord(at2.x, at2.y), label: 'bear trap' }] });
-    assert.ok(Object.values(place.traps).some(x => x.x === at2.x && x.y === at2.y && x.kind === 'bear trap'));
-    assert.equal(map.props.filter(p => p.type === 'trap' && p.x === at2.x && p.y === at2.y).length, 1, 'one picture, linked');
+    applyPlaceChanges(place, { add_props: [{ type: 'trap', at: toCoord(A.x, A.y), label: 'bear trap' }] });
+    const bear = Object.values(place.traps).find(x => x.kind === 'bear trap');
+    assert.ok(bear, 'a real trap (nudged away from any door)');
+    assert.equal(map.props.filter(p => p.type === 'trap' && p.x === bear.x && p.y === bear.y).length, 1, 'one picture, linked');
     // A trap picture with nothing behind it (an older turn): made real on load.
     map.props.push({ x: A.x + 1, y: A.y, type: 'trap', label: 'spikes' });
     assert.equal(adoptTrapProps(place), 1);
@@ -579,9 +579,9 @@ test('companions follow on their own way, around traps they know about, over the
     assert.equal(followSteps(place, 'G', p, lead).length, 0, 'already close: stays put');
     // A trap in the doorway they know about: it's the only way, so they cross it.
     const door = Object.values(place.traps).length;
-    const log = applyPlaceChanges(place, { add_traps: [{ at: toCoord(4, 13), kind: 'tripwire', hidden: true }] });
-    const trap = Object.values(place.traps)[door];
-    assert.ok(trap, String(log));
+    // Set straight into the doorway (the builder never puts one there now; an old campaign might still have one).
+    const trap = { id: `T${door + 1}`, room: null, floor: 'G', x: 4, y: 13, kind: 'tripwire', dc: 13, save: '', effect: '', state: 'hidden', knownBy: [] };
+    place.traps[trap.id] = trap;
     trap.state = 'found';
     assert.equal(knowsTrap(trap, 'Judy Hopps'), false, 'found by the player: Judy doesn\'t know yet');
     assert.deepEqual(trapsKnownTo(place, 'G', 'Judy Hopps'), []);

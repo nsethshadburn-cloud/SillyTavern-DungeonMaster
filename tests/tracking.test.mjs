@@ -135,11 +135,10 @@ test('bodies: the dead stay where they fell; cleared only out of sight, three tu
     assert.deepEqual(moveHunters(place, 'F0', ['Amber'], 3), []);
     assert.equal(visibleGuards(place, 'F0', new Uint8Array(200).fill(1)).length, 0, 'a body never "comes into view" as a guard');
     assert.match(placeView(place, ['Amber']), /Bodies on the floor.*Bandit/);
-    assert.equal(clearBodies(place, 12), 0);
-    assert.equal(clearBodies(place, 13), 0, 'nobody of the place is left to clear it: it stays');
+    assert.deepEqual(clearBodies(place, { now: Date.now() + 1000 }), [], 'a moment: still there');
     placePerson(place, 'Turnkey', { floor: 'F0', x: 8, y: 8 }, { info: { hostile: false } });
     place.guards.Turnkey.role = 'guard';
-    assert.equal(clearBodies(place, 13), 1, 'someone to do it, and out of sight: cleared');
+    assert.equal(clearBodies(place, { now: Date.now() + 11000 }).length, 1, 'ten seconds on: gone for good');
     assert.equal(g.state, 'gone');
 });
 
@@ -174,7 +173,7 @@ test('initiative first: until the player rolls, nobody acts; then the order arou
     assert.match(combatSummary(w, 'Amber'), /Dog act before Amber; Judy Hopps after/);
 });
 
-test('traps go where someone would set them: by doorways and in front of what is worth guarding', () => {
+test('traps go in the middle of rooms or in front of what is worth guarding, never at a door', () => {
     let placed = 0, sensible = 0;
     for (let seed = 1; seed <= 12; seed++) {
         const place = generatePlace({ ...MANOR_PLAN, rooms: MANOR_PLAN.rooms.map(r => ({ ...r, traps: [{ kind: 'pressure plate (darts)', dc: 13 }, { kind: 'needle in the lock', dc: 12 }] })) }, seed);
@@ -185,12 +184,15 @@ test('traps go where someone would set them: by doorways and in front of what is
             const nearDoor = Object.values(place.doors).some(d => d.floor === t.floor && Math.abs(d.x - t.x) + Math.abs(d.y - t.y) === 1);
             const nearThing = map.props.some(p => p.type !== 'trap' && t.x >= p.x - 1 && t.x <= p.x + (p.w || 1) && t.y >= p.y - 1 && t.y <= p.y + (p.h || 1) && ['chest', 'coffin', 'altar', 'throne', 'cabinet', 'desk', 'statue', 'weaponrack', 'armor', 'dresser', 'wardrobe', 'cage', 'lever', 'slab', 'iron_maiden'].includes(p.type));
             const room = place.rooms[t.room];
-            if (nearDoor || nearThing || room?.type === 'hallway') sensible++;
+            assert.ok(!nearDoor, `never right at a door (${t.id} on seed ${seed})`);
+            const cx = room.rect.x + (room.rect.w - 1) / 2, cy = room.rect.y + (room.rect.h - 1) / 2;
+            const middling = Math.abs(t.x - cx) <= Math.max(1.5, room.rect.w / 3) && Math.abs(t.y - cy) <= Math.max(1.5, room.rect.h / 3);
+            if (nearThing || middling) sensible++;
         }
     }
     assert.ok(placed > 20, `traps were placed (${placed})`);
     console.log(`traps placed sensibly: ${sensible}/${placed}`);
-    assert.ok(sensible / placed >= 0.75, `most traps sit by a door or a guarded thing (${sensible}/${placed})`);
+    assert.ok(sensible / placed >= 0.75, `most traps sit mid-room or by a guarded thing (${sensible}/${placed})`);
 });
 
 test('the DM knows how far people are and what the party can sense; a guard who missed you doesn\'t come for you', async () => {

@@ -255,6 +255,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     const present = (c.docs.npcs || []).filter(n => isHere(n, w.location) && withinEarshot(c, n.name)).map(n => n.name);
     sections.push('', `Valid speakers for directions: party with the player ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
     if (awayList.length) sections.push(`Companions AWAY from the player (no briefs; they can't hear or speak until "party_back"): ${awayList.join('; ')}.`);
+    if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) sections.push(`CALM (${c.meta.pacing.calmUntil - c.meta.turn} more turn(s)): the story breathes after what just happened. No new people, no alarm, no attack, no one arriving (the code drops them anyway). Let the player search, talk, plan; answer what they do and stop.`);
     sections.push('Reply with the JSON object only.');
     return { layers: [plotLayer, notesLayer], user: sections.join('\n') };
 }

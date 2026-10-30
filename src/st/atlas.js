@@ -18,7 +18,7 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
+import { BODY_MS, OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
 import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
@@ -793,7 +793,36 @@ export async function approach(name, redraw = () => { }) {
 // ---------- entering and leaving ----------
 
 /** Put the party somewhere in a place (its start, or a given square), refresh fog, update the scene card. */
+/** Whoever died here is gone after a moment; the figure leaves the map and the fight's board. */
+export async function clearFallen(c = campaign()) {
+    const cur = currentPlace(c);
+    if (!cur) return [];
+    const { key, place } = cur;
+    const gone = clearBodies(place);
+    if (!gone.length) return [];
+    const w = c.docs.world;
+    if (w.combat?.positions) {
+        for (const n of gone) {
+            delete w.combat.positions[n];
+            for (const [alias, real] of Object.entries(w.combat.aliases || {})) if (real === n) delete w.combat.positions[alias];
+        }
+        saveDoc('world');
+    }
+    savePlace(key, c);
+    const { refreshMap } = await import('../ui/map.js');
+    refreshMap();
+    return gone;
+}
+
+let bodyTimer = null;
+/** A body lies where it fell for a moment, then it's gone (and that name never returns). */
+export function scheduleBodyClear(c = campaign()) {
+    if (bodyTimer) clearTimeout(bodyTimer);
+    bodyTimer = setTimeout(() => { bodyTimer = null; clearFallen(c).catch(error => console.warn('[Dungeon Master] could not clear a body', error)); }, BODY_MS + 50);
+}
+
 export async function enterPlace(key, { at = null, quiet = false } = {}) {
+    { const c0 = campaign(); const p0 = c0 && atlas(c0)?.places?.[key]; if (p0?.state) p0.state.party = [c0.meta.persona.name, ...c0.meta.party.map(p => p.name)]; }
     const c = campaign();
     const place = await loadPlace(key, c);
     if (!place) throw new Error(`No stored map for ${key}.`);
@@ -942,10 +971,20 @@ export function syncSky(c = campaign(), cur = currentPlace(c)) {
     place.state.night = night;
     place.state.late = late;
     const upLate = NIGHTLIFE.test(`${place.kind || ''} ${place.hostKind || ''} ${place.name || ''}`);
+    // The night watch: late at night only a skeleton watch is up (one guard a floor, at least one of
+    // them); the rest sleep where they live. A guard is not a wall at every door at three in the morning.
+    const awakeGuards = Object.values(place.guards).filter(g => g.role === 'guard' && g.hostile !== true && g.state !== 'dead' && g.state !== 'gone' && !g.down);
+    const watch = new Set();
+    if (late) {
+        const byFloor = {};
+        for (const g of awakeGuards) (byFloor[g.floor] ??= []).push(g);
+        for (const list of Object.values(byFloor)) watch.add(list[Math.floor(Math.random() * list.length)].name);
+    }
     for (const g of Object.values(place.guards)) {
         if (g.state === 'dead' || g.state === 'gone' || g.hostile === true) continue;
         const resident = g.role && g.role !== 'guard';
-        if (late && resident && !upLate && !g.down) { g.down = 'asleep'; g.sleeper = true; toBed(place, g); }
+        const offDuty = g.role === 'guard' && !watch.has(g.name) && !g.seize && !g.intent;
+        if (late && (resident || offDuty) && !upLate && !g.down) { g.down = 'asleep'; g.sleeper = true; toBed(place, g); }
         else if (!late && g.sleeper) { delete g.down; delete g.sleeper; }
         if (g.role === 'guard') {
             if (night && !g.lantern) { g.lantern = true; g.nightLantern = true; }
@@ -1069,6 +1108,15 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         // A wild place (a jungle, a forest, a swamp, a camp) is land: clearings joined by trails, not rooms.
         const wild = !town && !placePlan.building && WILD_KINDS.test(`${placePlan.kind} ${placePlan.name}`.toLowerCase());
         const place = town ? generateTown(normalizeTownPlan(raw), seed) : wild ? generateWilds(placePlan, seed) : generatePlace(placePlan, seed);
+        if (place) {
+            // Nobody of the place may be named like a party member: "Judy" in a cage IS Judy Hopps, whom
+            // the code puts where the setup keeps her (placeHeld). From now on the place takes only a few newcomers.
+            place.state.party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+            for (const g of Object.values(place.guards)) if (matchName(g.name, place.state.party)) delete place.guards[g.name];
+            place.state.built = true;
+            place.state.newcomers = 0;
+            place.state.fallen = [];
+        }
         anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
         const key = placeKey(place.name || req.name);
@@ -1179,7 +1227,7 @@ let walking = false;
 
 /** Squares walked since the last turn; enough walking is a turn of its own. */
 let walked = 0;
-const MOVE_TURN_SQUARES = 12;
+const MOVE_TURN_SQUARES = 20;
 export function resetWalked() { walked = 0; }
 
 /** What a hunter reaching someone tells the DM. */
@@ -1282,6 +1330,8 @@ export async function takeToCell(c, guard, room, { cuffs = false } = {}) {
         ? `${guard.name} cuffs ${player}, walks ${player} to ${room.name} and locks the door; the cuffs come off through the bars.`
         : `${guard.name} walks ${player} to ${room.name} and locks the door.`;
     await postDiceCard(`🔒 ${line}`, { state: true });
+    // After a capture the story breathes: no new people, no alarms, for a few turns.
+    c.meta.pacing.calmUntil = (c.meta.turn || 0) + 3;
     return `${line} The code did all of it: narrate it in a few lines, then stop; it's done.`;
 }
 
@@ -1701,7 +1751,7 @@ export function tickPlace(c = campaign(), { still = [] } = {}) {
     const stillSet = new Set(still);
     tickGuards(place, Math.random, 0.75, PATROL_STEPS, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
     const vis = look(c, key, place);
-    clearBodies(place, c.meta.turn, 3, { floorId, visible: vis });
+    clearBodies(place);
     const now = visibleGuards(place, floorId, vis);
     savePlace(key, c);
     return now.filter(g => !before.has(g.name) && g.hostile !== false);
@@ -1813,6 +1863,8 @@ export async function applyMapSync(c, ops) {
     const { refreshMap } = await import('../ui/map.js');
     for (const ch of ops) {
         if (ch.op === 'spawn') {
+            // The story breathes after a fight or a capture: nobody new turns up for a few turns.
+            if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) continue;
             const at = where(ch.near) ?? (lead ? { floor: floorId, x: lead.x, y: lead.y } : null);
             const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile }, arrive: !ch.near });
             if (!g) continue;
