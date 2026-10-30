@@ -1249,7 +1249,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         return moved;
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
-    const active = names.filter(n => !(place.state.held?.[n] && isAway(c.docs.world, n)));
+    const quarry = names.filter(n => !(place.state.held?.[n] && isAway(c.docs.world, n)));
     let event = null, handoff = null, newRoom = null;
     const greet = []; // companions you came back to or walked away from: they may speak
     try {
@@ -1260,7 +1260,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             walked++;
             advance();
             // Anyone after the party keeps after them, a step for each of the player's.
-            const caught = moveHunters(place, floorId, active, 1, { skip: g => outByWorld(c, g) });
+            const caught = moveHunters(place, floorId, quarry, 1, { skip: g => outByWorld(c, g) });
             const vis = look(c, key, place);
             redraw();
             await sleep(95);
@@ -1270,7 +1270,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             if (sprung || trapped.length) { event = [sprung, ...trapped].filter(Boolean).join(' '); break; }
             if (caught.length) { redraw(); event = hunterEvent(caught); break; }
             // Guards and residents who see the party: a trespasser stops the walk (the DM rules on it).
-            const watched = watchParty(c, cur, active);
+            const watched = watchParty(c, cur, quarry);
             if (watched.events.length) { event = watched.events.join(' '); break; }
             const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
             if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}${newGuard.down ? `, ${DOWN_WORDS[newGuard.down]}` : ''}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
