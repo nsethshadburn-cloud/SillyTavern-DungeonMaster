@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent, looksLikeThing, notAPerson } from '../src/core/explore.js';
+import { tickGuards, moveHunters, peopleMentioned, clearTrails, placePerson, setIntent, looksLikeThing, notAPerson, searchRadius } from '../src/core/explore.js';
 import { noticeParty } from '../src/core/notice.js';
 import { setStanding, standingFor, givesIn } from '../src/core/access.js';
 import { dialogueOf, typingMs } from '../src/core/speech.js';
@@ -85,6 +85,16 @@ test('a guard who sees the escapee is set on taking them in; a fellow prisoner i
     const cells = cellBlock();
     cells.guards = { Magnus: person('Magnus', 4, 2, { description: 'a prisoner', role: 'prisoner' }) };
     assert.deepEqual(noticeParty(cells, ['Amber'], { turn: 1, canSee: () => true }).seize, []);
+});
+
+test('a search for traps reaches further the better the roll: nothing on a miss, 6 squares at a bare pass, 14 at most', () => {
+    assert.equal(searchRadius(11, 12), 0);
+    assert.equal(searchRadius(12, 12), 6);
+    assert.equal(searchRadius(14, 12), 10);
+    assert.equal(searchRadius(25, 12), 14);
+    assert.equal(searchRadius(15, null), 12, 'no DC from the DM: 12');
+    assert.equal(searchRadius(15, undefined), 12);
+    assert.equal(searchRadius(NaN, 12), 0);
 });
 
 test('a trap is never a person: by its words, or by being on the map', () => {

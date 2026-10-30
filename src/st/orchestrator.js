@@ -765,7 +765,7 @@ export async function companionCuriosity(c, roomId) {
         await postDiceCard(`🎲 **${name}** · Investigation (looking at the ${went} on their own): d20 (${die?.natural ?? '?'}) ${formatModifier(mod)} = **${total}**`);
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: name, what: 'Investigation (on their own)', kind: 'check', natural: die?.natural ?? null, mod, total, dc: null, success: null });
         saveDoc('rolls_log');
-        const search = searchForTraps(c, name, total);
+        const search = searchForTraps(c, name, total, { dc: 12 });
         // Something hidden in this room turns up for a good look.
         const items = total >= 12 ? Object.values(place.items).filter(i => i.room === roomId && i.state !== 'taken' && !i.found) : [];
         for (const i of items) i.found = true;
@@ -1042,9 +1042,9 @@ async function resolvePlayerRoll(c, parsed, status) {
             saveHurt = ` The code already applied ${hurt.total} damage${hurt.half ? ' (half, for the success)' : ''}: ${line || 'done'}. Don't apply it again.`;
         }
     }
-    const search = pr.kind !== 'damage' && /perception|investigation|search/i.test(`${pr.skill} ${pr.reason || ''}`) ? searchForTraps(c, meta.persona.name, total) : null;
-    if (search?.found.length) { await postNote(`⚠️ Searching ${search.room}, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
-    const searchText = search ? ` Searching ${search.room} with that roll, the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
+    const search = pr.kind !== 'damage' && /perception|investigation|search/i.test(`${pr.skill} ${pr.reason || ''}`) ? searchForTraps(c, meta.persona.name, total, { dc: pr.dc }) : null;
+    if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
+    const searchText = search ? ` Searching with that roll (${search.radius ? `${search.radius} squares around them` : 'a failed roll: nothing'}), the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
     if (pr.kind === 'damage') return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
     return searchText + saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
 }
@@ -1647,8 +1647,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
         if (/perception|investigation|search/i.test(r.what || '')) {
             const searcher = matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]);
-            const search = searcher ? searchForTraps(c, searcher, result.total) : null;
-            if (search?.found.length) { await postNote(`⚠️ ${searcher} spots: ${search.found.join(', ')}.`); refreshMap(); }
+            const search = searcher ? searchForTraps(c, searcher, result.total, { dc: r.dc }) : null;
+            if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${searcher} spots: ${search.found.join(', ')}.`); refreshMap(); }
         }
         const outcome = judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {

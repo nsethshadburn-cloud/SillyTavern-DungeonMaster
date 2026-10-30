@@ -879,6 +879,7 @@ function thingAt(b, sq) {
     const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
     if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
     const prop = propAt(b.map, sq.x, sq.y);
+    if (prop?.type === 'trap' && !prop.hidden && prop.trap && b.place.traps?.[prop.trap]) { const t = b.place.traps[prop.trap]; return { kind: 'trap', prop, trap: t, name: `${t.kind} (${t.state})`, spot: { x: prop.x, y: prop.y } }; }
     if (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type] && !SEATS[prop.type])) return null;
     return { kind: 'prop', prop, name: prop.label || PROPS[prop.type]?.name || prop.type, spot: { x: prop.x, y: prop.y, w: prop.w, h: prop.h } };
 }
@@ -899,6 +900,23 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
             ['Pick the lock', 'fa-unlock', async () => { await pickLock(thing.door.id, redraw); done(); }],
         ];
         showMenu(ev, thing.name, info ? `${info.words}${info.key ? '; you have the key' : ''}` : '', actions);
+        return;
+    }
+    if (thing.kind === 'trap') {
+        const t = thing.trap;
+        const pit = /pit|hole|trapdoor|chasm|shaft/i.test(t.kind);
+        actions = t.state !== 'found' ? []
+            : pit ? [['Disarm or cover it', 'fa-screwdriver-wrench', () => { setMapAction(`${player} tries to make the ${t.kind} (${t.id} at ${where}) safe to cross. Ask for the roll that fits (Thieves' tools, Athletics for a plank); on a success set place_changes.traps {"${t.id}": "disarmed"}.`); sendAsPlayer(`*${player} tries to make the ${t.kind} safe to cross.*`); done(); }]]
+                : [
+                    ['Trip it from a safe distance', 'fa-hand-point-up', async () => {
+                        const { tripTrap } = await import('../st/atlas.js');
+                        const text = await tripTrap(c, t.id);
+                        done();
+                        if (text) { const { runTurn } = await import('../st/orchestrator.js'); runTurn({ force: 'explore', placeEvent: text }); }
+                    }],
+                    ['Disarm it', 'fa-screwdriver-wrench', () => { setMapAction(`${player} tries to disarm the ${t.kind} (${t.id} at ${where}). Ask for a Thieves' tools or Dexterity (Sleight of Hand) roll; on a success set place_changes.traps {"${t.id}": "disarmed"}; on a bad failure it may spring on them.`); sendAsPlayer(`*${player} tries to disarm the ${t.kind}.*`); done(); }],
+                ];
+        showMenu(ev, thing.name, t.state === 'found' ? `DC ${t.dc}${t.effect ? ` · ${t.effect}` : ''}` : t.state === 'sprung' ? 'sprung and spent: safe to cross' : t.state === 'disarmed' ? 'disarmed: safe to cross' : '', actions);
         return;
     }
     if (thing.kind === 'window') {

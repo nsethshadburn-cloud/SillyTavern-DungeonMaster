@@ -304,7 +304,7 @@ export function findPath(place, floorId, from, to, { knownOnly = true, blocked =
 const DOORWAY = new Set(['+', '/', 'D', 'J', 'j']);
 
 /** An open pit (or hole) stays dangerous after it's sprung; darts and the like are spent. */
-const OPEN_TRAP = /pit|hole|trapdoor|chasm|shaft/i;
+export const OPEN_TRAP = /pit|hole|trapdoor|chasm|shaft/i;
 
 /**
  * Does `name` know about this trap? They found it, saw it go off, were told about it, or it was
@@ -887,6 +887,16 @@ export function findRoom(place, ref) {
 const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p => p.name), ...Object.keys(PROPS)].flatMap(n => String(n).toLowerCase().split(/[^a-z]+/)).filter(w => w.length > 2 && !['the', 'and', 'wall', 'known', 'great', 'old', 'fallen'].includes(w))), 'tin', 'oil', 'lamp', 'lantern', 'key', 'keys', 'bottle', 'flask', 'vial', 'potion', 'scroll', 'book', 'books', 'coin', 'coins', 'gold', 'sword', 'dagger', 'bow', 'arrow', 'arrows', 'shield', 'bag', 'pouch', 'box', 'ring', 'amulet', 'necklace', 'letter', 'note', 'notes', 'map', 'rope', 'torch', 'candle', 'bread', 'food', 'meat', 'cheese', 'apple', 'wine', 'ale', 'water', 'gem', 'gems', 'jewel', 'jewels', 'ledger', 'journal', 'diary', 'lockpick', 'lockpicks', 'tools', 'kit', 'cloak', 'boots', 'gloves', 'hat', 'coat', 'armor', 'armour', 'helmet', 'blanket', 'pillow', 'plate', 'cup', 'mug', 'bucket', 'shovel', 'pick', 'hammer', 'nails', 'chain', 'chains', 'lock', 'door', 'window', 'floor', 'stairs', 'wall', 'item', 'items', 'thing', 'things', 'supplies', 'rations', 'tinderbox', 'matches', 'crowbar', 'mirror'].join('|')})\\b`, 'i');
 /** Creature words that win over a thing word ("guard dog", "rat in a barrel"). */
 const BEING_WORDS = /\b(man|woman|men|women|boy|girl|child|guard|guards|soldier|knight|captain|warden|jailer|butler|maid|servant|cook|priest|monk|nun|thief|bandit|cultist|merchant|keeper|lord|lady|king|queen|prince|princess|old|young|dog|hound|wolf|rat|rats|cat|bear|spider|snake|bat|bats|goblin|orc|troll|ogre|skeleton|zombie|ghoul|ghost|wraith|vampire|demon|devil|dragon|beast|creature|monster|golem|elemental|slime|ooze|horse|crow|raven|boar|guardian|sentry|watchman|prisoner|stranger|figure|master|mistress|sergeant|brother|sister|father|mother|smith|innkeeper|owner|hunter|farmer|apprentice|scholar|wizard|witch|mage|sorcerer|cleric|paladin|ranger|rogue|bard|druid|healer|doctor|nurse|steward|chamberlain|noble|baron|duke|count|countess|page|squire|executioner|torturer|inquisitor|assassin|spy|mercenary|pirate|sailor|baby|twin|handler|turnkey|gaoler|dwarf|elf|halfling|gnome|human|hag|imp|kobold|gnoll|minotaur|harpy|wyvern|basilisk|mimic|specter|spectre|lich|mummy|banshee|shade|mastiff|stray|mutt|puppy|kitten|owl|hawk|eagle|toad|frog|crocodile|shark)\b/i;
+
+/**
+ * How far a search for traps reaches, in squares around the searcher: nothing on a failed roll,
+ * 6 squares at a bare success, 2 more for every point over the DC, 14 at most.
+ */
+export function searchRadius(total, dc = 12) {
+    const want = dc !== null && dc !== undefined && dc !== '' && Number.isFinite(Number(dc)) ? Number(dc) : 12;
+    if (!Number.isFinite(Number(total)) || Number(total) < want) return 0;
+    return Math.min(14, 6 + 2 * (Number(total) - want));
+}
 
 /** Trap words: a "covered pit", a "pressure plate (darts)", an "alarm glyph" is a trap, never someone. */
 const TRAP_WORDS = /\b(trap|traps|pit|plate|dart|darts|needle|glyph|sigil|rune|runes|ward|warding|snare|net|tripwire|wire|blade|blades|spike|spikes|stones|boulder|gas|alarm|pendulum|portcullis|trapdoor|mechanism)\b/i;

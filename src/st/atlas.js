@@ -18,7 +18,7 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { clearTrails, peopleMentioned, EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
+import { OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
 import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
@@ -376,14 +376,17 @@ export async function companionGoTo(c, name, targetId, { hide = false, pose = ''
  * Someone searched the room they're in (a Perception or Investigation roll of `total`): every
  * hidden trap in that room with a DC at or under the roll shows up on the map. Returns what was found.
  */
-export function searchForTraps(c, name, total) {
+export function searchForTraps(c, name, total, { dc = null } = {}) {
     const cur = currentPlace(c);
     const pos = cur && whereIs(cur.place, name);
     if (!pos || !Number.isFinite(total)) return null;
     const { key, place } = cur;
     const rm = roomAt(place, pos.floor, pos.x, pos.y);
-    const near = t => (rm ? t.room === rm.id : Math.max(Math.abs(t.x - pos.x), Math.abs(t.y - pos.y)) <= 3);
-    const inRoom = Object.values(place.traps).filter(t => t.floor === pos.floor && near(t));
+    // A radius around the searcher that grows with how well the roll went (nothing on a failure),
+    // over squares they have seen (their own room counts): not by room, not through walls into the unknown.
+    const radius = searchRadius(total, dc ?? 12);
+    const near = t => Math.max(Math.abs(t.x - pos.x), Math.abs(t.y - pos.y)) <= radius && (t.room === rm?.id || isExplored(place, t.floor, t.x, t.y));
+    const inRoom = radius ? Object.values(place.traps).filter(t => t.floor === pos.floor && near(t)) : [];
     const found = inRoom.filter(t => t.state === 'hidden' && total >= t.dc);
     learnTraps(found, name);
     for (const t of found) {
@@ -392,7 +395,30 @@ export function searchForTraps(c, name, total) {
         if (prop) prop.hidden = false;
     }
     if (found.length) { floorById(place, pos.floor).map.version = (floorById(place, pos.floor).map.version || 0) + 1; savePlace(key, c); }
-    return { room: rm?.name ?? 'the passage', found: found.map(t => `${t.kind} (${t.id})`), missed: inRoom.filter(t => t.state === 'hidden').length };
+    return { room: rm?.name ?? 'the passage', radius, found: found.map(t => `${t.kind} (${t.id})`), missed: inRoom.filter(t => t.state === 'hidden').length };
+}
+
+/**
+ * The player sets off a trap they have found, on purpose and from a safe distance (a thrown stone,
+ * a pole): it springs, it's spent, and anyone can walk over it. A pit can't be "spent": it stays a hole.
+ * Returns the text for the DM, or '' when there was nothing to trip.
+ */
+export async function tripTrap(c, trapId) {
+    const cur = currentPlace(c);
+    if (!cur) return '';
+    const { key, place } = cur;
+    const t = place.traps[trapId];
+    if (!t || t.state !== 'found') return '';
+    if (OPEN_TRAP.test(t.kind)) return '';
+    const player = c.meta.persona.name;
+    t.state = 'sprung';
+    const floor = floorById(place, t.floor);
+    floor.map.version = (floor.map.version || 0) + 1;
+    savePlace(key, c);
+    const { refreshMap } = await import('../ui/map.js');
+    refreshMap();
+    await postNote(`🪤 ${player} sets off the ${t.kind} (${t.id}) from a safe distance. It's spent: anyone can walk over it now.`);
+    return `${player} set off the ${t.kind} (${t.id}) on purpose from a safe distance: it sprang harmlessly and is spent (the map shows it; anyone can walk over it). Narrate it in a line${/alarm|bell|gong|chime/i.test(t.kind) ? '; it was an alarm: whoever is in earshot heard it' : ''}.`;
 }
 
 /** How someone is hidden right now ({prop, mode: 'in'|'under'|'behind', at}), or null. */
