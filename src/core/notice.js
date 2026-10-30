@@ -37,7 +37,7 @@ const settled = (store, key, turn) => store?.[key] !== undefined && turn - store
 /**
  * @param {object} place
  * @param {string[]} names party members on the map (the player first)
- * @param {{turn: number, time?: string, condsOf?: (name: string) => string[], hpOf?: (name: string) => ({hp: number, hp_max: number} | null), spokeLately?: (name: string) => boolean, rng?: () => number}} ctx
+ * @param {{turn: number, time?: string, canSee?: (g: object) => boolean, condsOf?: (name: string) => string[], hpOf?: (name: string) => ({hp: number, hp_max: number} | null), spokeLately?: (name: string) => boolean, rng?: () => number}} ctx
  * @returns {{events: string[], lines: {name: string, text: string}[], seen: {seer: string, seen: string}[]}}
  *  events = what the DM must rule on; lines = canned lines to say; seen = sightings to record
  */
@@ -86,7 +86,15 @@ export function noticeParty(place, names, ctx) {
             }
             const hid = hiddenNow(place, n);
             if (t) {
-                if (settled(g.reported, n, turn)) continue;
+                if (settled(g.reported, n, turn)) {
+                    // Already reported, and now they walk right up to him (or run circles around him)
+                    // and nothing has stopped them: that's not a sighting, it's a confrontation.
+                    if (dist(g, p) <= 1 && g.reported[`near:${n}`] !== turn) {
+                        g.reported[`near:${n}`] = turn;
+                        out.events.push(`${n} is right beside ${who}, who has already seen them ${t.why === 'escaped' ? 'out of their cell' : `where they are not allowed (${t.why})`}, and nothing has stopped them. He acts now (grabs them, blocks the way, raises the alarm, attacks), or you say why he doesn't.`);
+                    }
+                    continue;
+                }
                 g.reported[n] = turn;
                 const does = lineRole(g) === 'guard' ? 'a guard: he challenges them, raises the alarm or moves to stop them' : 'not a guard: he may shout for help, run, or confront them';
                 out.events.push(`${who} can see ${n}${hid ? ` hiding ${hid.mode} the ${hid.what} (roll whether he notices: his Perception against their Stealth, with "spot")` : ''} in ${t.room}, where ${n} is not allowed (${t.why === 'escaped' ? 'an escaped prisoner, out of their cell' : t.why}). ${g.name} is ${does}; decide what he does, brief him if he speaks, and set his intent if he goes after them.`);
@@ -100,6 +108,8 @@ export function noticeParty(place, names, ctx) {
             g.spotted[n] = { room: roomId, turn };
             out.seen.push({ seer: g.name, seen: n });
             if (down === 'asleep' || poseNow(place, n)?.pose === 'sleep' || spokeLately(g.name)) continue;
+            // A word from someone the party can't see is a voice out of nowhere: the DM narrates those.
+            if (ctx?.canSee && !ctx.canSee(g)) continue;
             const st = standingOf(place, n);
             const prisoner = st.label === 'prisoner' && Boolean(room) && (st.home === room.id || st.rooms.includes(room.id));
             const hurt = Boolean(hp && hp.hp_max && hp.hp / hp.hp_max < 0.5);

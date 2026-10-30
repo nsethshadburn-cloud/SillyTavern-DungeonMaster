@@ -18,7 +18,7 @@ import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCo
 import { applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -314,13 +314,16 @@ async function turnBody(c, opts, status, signal) {
         if (burned) placeEvent = [placeEvent, burned].filter(Boolean).join(' ');
     }
     if (!opts.force && !autoRoll && !pacing.inCombat) {
-        const spotted = tickPlace(c);
+        // Whoever the player is dealing with ("I attack the jailer", "Wren, wait") holds still until the DM has ruled.
+        const still = mentionedPeople(c, playerText);
+        const spotted = tickPlace(c, { still });
         if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'}${g.down ? `, ${g.down === 'bound' ? 'tied up' : g.down}` : ''})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
         const watched = watchTurn(c);
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
-        const hunt = huntersTurn(c);
+        const hunt = huntersTurn(c, { still });
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
+        await playMoves(c);
     }
 
     // A companion was told to do something: they walk there now, in the background, while the DM
@@ -529,6 +532,7 @@ async function movedTurn(c, status, signal) {
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         const hunt = huntersTurn(c);
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
+        await playMoves(c);
     }
     refreshMap();
     if (Number.isFinite(pacing.worldClock)) pacing.worldClock -= 1;
@@ -1331,15 +1335,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (sameRoom) {
             world.sceneMap.positions = finalPositions;
             refreshMap();
-        } else if (!world.sceneMap) {
-            closeMap();
+        } else {
+            // Inside a place the map stays up (the place's own map); only with nothing left to show does it go.
+            refreshMap();
         }
         status.note('Combat over');
     }
     // Scene maps outside combat (a dungeon room where exact squares matter).
     if (t.scene_map === 'close' && world.sceneMap) {
         world.sceneMap = null;
-        if (!world.combat) closeMap();
+        refreshMap();
     } else if (t.scene_map && typeof t.scene_map === 'object') {
         world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap(t.scene_map), positions: {} };
         mapChanged = true;
@@ -1604,6 +1609,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const spot = openSquareNear(hereNow.place, g.floor, g.goal.x, g.goal.y, new Set(Object.values(hereNow.place.state.positions).filter(p => p.floor === g.floor).map(p => `${p.x},${p.y}`)));
             if (spot) Object.assign(g, spot, { room: roomAt(hereNow.place, g.floor, spot.x, spot.y)?.id ?? g.room });
             delete g.goal; delete g.intent;
+            g.met = true;
         }
     }
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
@@ -1617,6 +1623,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
         if (isAway(world, speaker)) {
             status.note(`${speaker} isn't with you right now`);
+            continue;
+        }
+        // Someone on the map the party hasn't laid eyes on yet is a voice in the narration, not a speaker.
+        const unseen = hereNow && personByName(hereNow.place, speaker);
+        if (unseen && unseen.met !== true) {
+            status.note(`${unseen.name} is out of sight: no line until the party sees them`);
             continue;
         }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';

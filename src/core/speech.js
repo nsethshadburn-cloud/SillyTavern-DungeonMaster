@@ -9,8 +9,16 @@ const MAX_BUBBLE = 260;
  * text without *actions* and markup stands in. '' when there is nothing to say.
  */
 export function dialogueOf(text, max = MAX_BUBBLE) {
-    const t = String(text ?? '').replace(/<[^>]+>/g, ' ');
-    const quotes = [...t.matchAll(/"([^"]{2,})"|“([^”]{2,})”/g)].map(m => (m[1] ?? m[2]).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    // Models mix “curly” and "straight" quotes in one reply; pairing them by kind would put the
+    // *action* between two lines inside the bubble. One kind of quote, paired in order.
+    const t = String(text ?? '').replace(/<[^>]+>/g, ' ').replace(/[“”„‟«»]/g, '"');
+    const parts = t.split('"');
+    const quotes = [];
+    for (let i = 1; i < parts.length; i += 2) {
+        // An odd quote at the end is a line the model forgot to close: still spoken.
+        const q = parts[i].replace(/\*[^*]*\*/g, ' ').replace(/\s+/g, ' ').trim();
+        if (q.length >= 2) quotes.push(q);
+    }
     let out = quotes.join(' ');
     if (!out) out = t.replace(/\*[^*]*\*/g, ' ').replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
     if (out.length > max) out = `${out.slice(0, max - 1).replace(/\s+\S*$/, '')}…`;

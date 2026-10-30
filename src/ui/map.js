@@ -791,7 +791,6 @@ function addToMessage() {
     ta.focus();
     selection = { move: '', target: '' };
     renderMap();
-    if (window.matchMedia('(max-width: 700px)').matches) panel.classList.add('dm-map-min');
 }
 
 // ---------- the tap menu for someone on the map ----------
@@ -809,7 +808,6 @@ function sendAsPlayer(text, { send = true } = {}) {
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     if (send && !typed) document.getElementById('send_but')?.click();
     else ta.focus();
-    if (window.matchMedia('(max-width: 700px)').matches) panel.classList.add('dm-map-min');
 }
 
 /** Tapping someone: who they are, their health, and what they're doing. No actions. */

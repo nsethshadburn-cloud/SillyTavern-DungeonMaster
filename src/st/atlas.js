@@ -18,7 +18,7 @@ import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
-import { EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
+import { clearTrails, peopleMentioned, EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
 import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
@@ -822,6 +822,8 @@ export function look(c, key, place) {
     const viewers = names.map(n => place.state.positions[n]).filter(p => p && p.floor === floorId);
     const vis = computeVisible(place, floorId, viewers);
     reveal(place, floorId, vis);
+    // Anyone in sight has been met: from now on they can be given lines (an unseen voice is the DM's).
+    for (const g of visibleGuards(place, floorId, vis)) g.met = true;
     return vis;
 }
 
@@ -1263,7 +1265,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const caught = moveHunters(place, floorId, quarry, 1, { skip: g => outByWorld(c, g) });
             const vis = look(c, key, place);
             redraw();
-            await sleep(95);
+            await sleep(125);
             // A trap here. Hidden ones stay hidden until someone searches the room (a Perception or
             // Investigation roll) or steps on one: then it springs.
             const sprung = stepOn(place, names[0], floorId, x, y, { player: true });
@@ -1286,7 +1288,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         for (let i = 0; i < 40 && !event && advance(); i++) {
             look(c, key, place);
             redraw();
-            await sleep(95);
+            await sleep(125);
         }
         if (!event && trapped.length) event = trapped.join(' ');
         // Rooms entered on the way; a companion who stayed behind rejoins when you reach them.
@@ -1410,13 +1412,15 @@ export function watchTurn(c = campaign()) {
 }
 
 /** Patrols move on each player turn. Returns guards that just came into view. */
-export function tickPlace(c = campaign()) {
+export function tickPlace(c = campaign(), { still = [] } = {}) {
     const cur = currentPlace(c);
     if (!cur || !Object.keys(cur.place.guards).length) return [];
     const { key, place } = cur;
     const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
     const before = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
-    tickGuards(place, Math.random, 0.5, PATROL_STEPS, { skip: g => outByWorld(c, g) });
+    clearTrails(place);
+    const stillSet = new Set(still);
+    tickGuards(place, Math.random, 0.75, PATROL_STEPS, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
     const vis = look(c, key, place);
     clearBodies(place, c.meta.turn, 3, { floorId, visible: vis });
     const now = visibleGuards(place, floorId, vis);
@@ -1424,18 +1428,60 @@ export function tickPlace(c = campaign()) {
     return now.filter(g => !before.has(g.name) && g.hostile !== false);
 }
 
+/** The people on the player's floor their message is about: they hold still until the DM has ruled. */
+export function mentionedPeople(c, text) {
+    const cur = currentPlace(c);
+    if (!cur || !text) return [];
+    const floorId = cur.place.state.positions[c.meta.persona.name]?.floor ?? cur.place.state.floor;
+    return peopleMentioned(cur.place, floorId, text);
+}
+
+/**
+ * Play out the moves the tick just made (patrols, hunters) one person after another, a square at a
+ * time, instead of the whole map jumping at once. The moves are already made: this only shows them.
+ * People out of the player's sight the whole way are skipped (nothing to see).
+ */
+export async function playMoves(c = campaign()) {
+    const cur = currentPlace(c);
+    if (!cur) return;
+    const { key, place } = cur;
+    const { refreshMap } = await import('../ui/map.js');
+    const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
+    const map = floorById(place, floorId).map;
+    const vis = look(c, key, place);
+    const movers = Object.values(place.guards).filter(g => Array.isArray(g.trail) && g.trail.length > 1 && g.floor === floorId && g.state !== 'gone' && g.trail.some(([x, y]) => vis[y * map.w + x]));
+    const total = movers.reduce((n, g) => n + g.trail.length, 0);
+    const pace = total > 24 ? 70 : 140;
+    for (const g of movers) {
+        const end = { x: g.x, y: g.y };
+        try {
+            for (const [x, y] of g.trail) {
+                if (campaign() !== c) return;
+                g.x = x; g.y = y;
+                refreshMap();
+                await sleep(pace);
+            }
+        } finally {
+            Object.assign(g, end);
+        }
+    }
+    for (const g of Object.values(place.guards)) delete g.trail;
+    refreshMap();
+}
+
 /**
  * A turn passes for the people with somewhere to be: hunters close in (up to 6 squares, a turn of
  * movement), followers keep up, the frightened get away. Returns what the DM should hear (someone
  * reached the party), or ''.
  */
-export function huntersTurn(c = campaign()) {
+export function huntersTurn(c = campaign(), { still = [] } = {}) {
     const cur = currentPlace(c);
     if (!cur || c.docs.world.combat || !Object.values(cur.place.guards).some(g => g.intent)) return '';
     const { key, place } = cur;
     clearEngaged(place);
     const floorId = place.state.positions[c.meta.persona.name]?.floor ?? place.state.floor;
-    const caught = moveHunters(place, floorId, partyActive(c), 6, { skip: g => outByWorld(c, g) });
+    const stillSet = new Set(still);
+    const caught = moveHunters(place, floorId, partyActive(c), 6, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
     look(c, key, place);
     savePlace(key, c);
     return caught.length ? hunterEvent(caught) : '';

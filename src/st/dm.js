@@ -7,7 +7,7 @@ import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown, statsForName } from './sheets.js';
 import { dmType } from './messages.js';
 import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, PLACE_BRIEF_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
-import { placeSummary, placeView, cropText } from '../core/explore.js';
+import { placeSummary, placeView, cropText, personByName } from '../core/explore.js';
 import { atlas, currentPlace, partyOnMap, loadPlace } from './atlas.js';
 import { activeBoard } from './fire-turn.js';
 import { fireSummary } from '../core/fire.js';
@@ -248,7 +248,8 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
     const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);
-    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location)).map(n => n.name);
+    // On a map, only people the party has seen can be given lines (an unseen one is a voice in the narration).
+    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location)).filter(n => { const g = here && personByName(here.place, n.name); return !g || g.met === true; }).map(n => n.name);
     sections.push('', `Valid speakers for directions: party with the player ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
     if (awayList.length) sections.push(`Companions AWAY from the player (no briefs; they can't hear or speak until "party_back"): ${awayList.join('; ')}.`);
     sections.push('Reply with the JSON object only.');

@@ -225,6 +225,7 @@ test('noticing: the sleeping see nothing, a Stealth roll holds until you bump in
     r = noticeParty(jail, ['Amber'], ctx({ turn: 1 }));
     assert.equal(r.events.length, 1);
     assert.match(r.events[0], /escaped prisoner/);
+    jail.state.positions.Amber = { floor: 'F0', x: 7, y: 2 }; // still in his sight, not right beside him
     r = noticeParty(jail, ['Amber'], ctx({ turn: 3 }));
     assert.equal(r.events.length, 0, 'reported already');
     jail.guards.Wren.intent = 'follow';

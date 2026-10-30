@@ -9,6 +9,8 @@ import { noteSeen, conditionsOf, isNight } from '../core/world.js';
 import { sayOnMap } from '../ui/bubbles.js';
 import { postNpc } from './messages.js';
 import { ST } from './st.js';
+import { look } from './atlas.js';
+import { floorById } from '../core/explore.js';
 
 /** Did this person speak in the last few messages (a conversation is going on)? */
 function spokeLately(name, within = 8) {
@@ -32,8 +34,11 @@ export function watchParty(c, cur, names) {
     if (!cur) return { events: [], lines: [] };
     const { place } = cur;
     const w = c.docs.world;
+    const vis = look(c, cur.key, place);
+    const canSee = g => { const map = floorById(place, g.floor).map; return Boolean(vis[g.y * map.w + g.x]); };
     const r = noticeParty(place, names, {
         turn: c.meta.turn,
+        canSee,
         time: isNight(w.time) ? 'night' : 'day',
         condsOf: n => conditionsOf(w, n),
         hpOf: n => w.party?.[n] ?? null,

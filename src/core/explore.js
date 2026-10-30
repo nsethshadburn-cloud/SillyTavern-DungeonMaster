@@ -1017,7 +1017,7 @@ export function adoptStrays(place, partyNames) {
 }
 
 /** Squares a guard walks in one turn on patrol (slow: a round, not a sprint). */
-export const PATROL_STEPS = 2;
+export const PATROL_STEPS = 3;
 
 /** Out of it: dead, gone, asleep, knocked out or tied up (notices nothing, goes nowhere). */
 export function isOut(g) {
@@ -1098,6 +1098,7 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
     const moved = [];
     for (const g of Object.values(place.guards)) {
         if (isOut(g) || skip?.(g) || (g.intent && g.intent !== 'wander')) continue;
+        const from = { x: g.x, y: g.y };
         const busy = new Set([
             ...Object.values(place.state?.positions || {}).filter(p => p && p.floor === g.floor).map(p => `${p.x},${p.y}`),
             ...Object.values(place.guards).filter(o => o !== g && o.state !== 'gone' && o.floor === g.floor).map(o => `${o.x},${o.y}`),
@@ -1110,7 +1111,7 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
                 const next = wanderNextDoor(place, g, r);
                 if (next) { const at = freeInRoom(place, next, r); g.walk = { step: g.step ?? 0, x: at.x, y: at.y, back: true }; }
             }
-            if (!g.walk) { if (r() < (resident ? 0.35 : 0.6) && paceStep(place, g, r, busy)) moved.push({ name: g.name, room: g.room }); continue; }
+            if (!g.walk) { if (r() < (resident ? 0.35 : 0.6) && paceStep(place, g, r, busy)) { g.trail = [[from.x, from.y], [g.x, g.y]]; moved.push({ name: g.name, room: g.room }); } continue; }
         }
         if (!g.walk) {
             if (r() > chance) continue;
@@ -1127,11 +1128,14 @@ export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_
             if (g.walk.stuck >= 3) delete g.walk;
             continue;
         }
+        const trail = [];
         for (const [x, y] of path.slice(0, steps)) {
             passDoor(place, g, x, y);
             Object.assign(g, { x, y });
             closeBehind(place, g, busy);
+            trail.push([x, y]);
         }
+        if (trail.length) g.trail = [[from.x, from.y], ...trail];
         g.room = roomAt(place, g.floor, g.x, g.y)?.id ?? g.room;
         if (g.x === g.walk.x && g.y === g.walk.y) {
             if (!g.walk.back) { g.step = g.walk.step; g.room = g.patrol[g.step]; }
@@ -1220,11 +1224,15 @@ export function moveHunters(place, floorId, partyNames, steps = 1, { skip = null
     const dist = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     for (const g of Object.values(place.guards)) {
         if (isOut(g) || skip?.(g) || g.floor !== floorId) continue;
+        const from = { x: g.x, y: g.y };
+        const trail = [];
+        const step = (x, y) => { Object.assign(g, { x, y }); trail.push([x, y]); };
         // On their way in to where they were meant to be (they came in through a door out of sight).
         if (g.intent === 'goto' && g.goal) {
             const taken = busy(g.name);
             const path = findPath(place, floorId, g, g.goal, { knownOnly: false, blocked: taken, keys: hasKeys(g), isGoal: (x, y) => Math.max(Math.abs(x - g.goal.x), Math.abs(y - g.goal.y)) <= 1 });
-            for (const [x, y] of (path || []).slice(0, steps)) { passDoor(place, g, x, y); Object.assign(g, { x, y }); closeBehind(place, g, taken); }
+            for (const [x, y] of (path || []).slice(0, steps)) { passDoor(place, g, x, y); step(x, y); closeBehind(place, g, taken); }
+            if (trail.length) g.trail = [[from.x, from.y], ...trail];
             if (!path || Math.max(Math.abs(g.x - g.goal.x), Math.abs(g.y - g.goal.y)) <= 1) { delete g.goal; delete g.intent; }
             g.room = roomAt(place, floorId, g.x, g.y)?.id ?? g.room;
             continue;
@@ -1248,22 +1256,44 @@ export function moveHunters(place, floorId, partyNames, steps = 1, { skip = null
                     if (away(nx, ny) > away(g.x, g.y) && (!best || away(nx, ny) > away(best.x, best.y))) best = { x: nx, y: ny };
                 }
                 if (!best) break;
-                Object.assign(g, best);
+                step(best.x, best.y);
             }
         } else {
             const path = followSteps(place, floorId, g, q, { taken: busy(g.name), steps, keys: hasKeys(g) });
             for (const [x, y] of path) {
                 passDoor(place, g, x, y);
-                Object.assign(g, { x, y });
+                step(x, y);
             }
             if (g.intent === 'attack' && dist(g, q) <= 1 && !g.engaged) {
                 g.engaged = true;
                 struck.push({ name: g.name, target: quarry });
             }
         }
+        if (trail.length) g.trail = [[from.x, from.y], ...trail];
         g.room = roomAt(place, floorId, g.x, g.y)?.id ?? g.room;
     }
     return struck;
+}
+
+/** Forget the squares people stepped last tick (before a new tick records this one's). */
+export function clearTrails(place) {
+    for (const g of Object.values(place.guards || {})) delete g.trail;
+}
+
+const LITTLE_WORDS = new Set(['the', 'a', 'an', 'of', 'and', 'with', 'from', 'one', 'two', 'old', 'big', 'small', 'large', 'young', 'man', 'woman', 'who', 'that']);
+
+/**
+ * The people on this floor the player's message is about, by name ("Jailer 3", "Wren") or by what
+ * they are ("the jailer", "that turnkey"). They hold still this turn: when the player swings at
+ * someone or speaks to them, that person doesn't stroll off on patrol before the DM has ruled.
+ */
+export function peopleMentioned(place, floorId, text) {
+    const said = new Set((nameKey(text).match(/[a-z]{3,}/g) ?? []).map(w => w.replace(/s$/, '')).filter(w => !LITTLE_WORDS.has(w)));
+    if (!said.size) return [];
+    const words = s => (nameKey(s).match(/[a-z]{3,}/g) ?? []).map(w => w.replace(/s$/, '')).filter(w => !LITTLE_WORDS.has(w));
+    return Object.values(place.guards || {})
+        .filter(g => g.state !== 'gone' && g.floor === floorId && [...words(g.name), ...words(g.description || '').slice(-2)].some(w => said.has(w)))
+        .map(g => g.name);
 }
 
 /** Someone died on the map: their body stays where they fell for a few turns. */

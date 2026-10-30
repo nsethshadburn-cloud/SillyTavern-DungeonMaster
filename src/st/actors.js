@@ -243,7 +243,7 @@ export function npcsInReach(c = campaign()) {
         const g = here && personByName(here.place, name);
         if (!g || !lead) return true;
         if (isOut(g) && g.down !== 'bound') return false;
-        return g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
+        return g.met === true && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
     };
     return (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && inReach(n.name));
 }
