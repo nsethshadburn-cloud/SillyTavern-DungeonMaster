@@ -108,6 +108,13 @@ test('movement in a fight is counted over the whole round, doubled by a Dash, re
     assert.deepEqual(moveBudget({ combat: null }, 'Amber', 6), { max: 6, used: 0, left: 6, dashing: false }, 'no fight: no limit kept');
 });
 
+test('a move that is not walking (Misty Step, a shove) is a DM field the code accepts', async () => {
+    const { normalizeDmTurn } = await import('../src/core/protocol.js');
+    const t = normalizeDmTurn({ narration: 'x', free_move: ['Amber'], positions: { Amber: 'k9' } });
+    assert.deepEqual(t.free_move, ['Amber']);
+    assert.deepEqual(normalizeDmTurn({ narration: 'x' }).free_move, []);
+});
+
 test('the COMBAT line says whose part of the round it is', () => {
     const world = { combat: { round: 2, order: [{ name: 'Jailer', init: 15 }, { name: 'Amber', init: 12 }, { name: 'Judy Hopps', init: 9 }], enemies: {}, phase: 'player' } };
     assert.match(combatSummary(world, 'Amber'), /AMBER'S TURN IS IN PROGRESS|Amber'S TURN IS IN PROGRESS/);

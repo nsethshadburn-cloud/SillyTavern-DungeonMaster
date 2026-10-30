@@ -7,6 +7,6 @@
     "css": "style.css",
     "generate_interceptor": "dungeonMasterInterceptor",
     "author": "nsethshadburn-cloud",
-    "version": "0.40.0-beta",
+    "version": "0.40.1-beta",
     "homePage": "https://github.com/nsethshadburn-cloud/SillyTavern-DungeonMaster"
 }

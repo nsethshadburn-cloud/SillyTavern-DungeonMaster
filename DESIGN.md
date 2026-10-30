@@ -327,6 +327,7 @@ Each phase ends with something you can actually test in SillyTavern.
 ### v0.40 (a fight keeps count: whose turn, squares moved)
 - `world.combat` carries `speed` (squares per fighter, set at start_combat), `moved` (squares used this round) and `dash` (who dashed, which round). `moveBudget/spendMove/markDash/newRound` in core/world.js. The DM's positions for the party are clamped to what's LEFT this round (not a fresh speed per message, which let the player's "Not yet" turn move 14 squares) and the cost is spent; the round resets `moved`. The COMBAT line tells the DM used/allowed per fighter.
 - The map's reach (lit squares) and the tap check use what's left; the actions text says squares left or "no movement left (say you Dash)".
+- `free_move` (DM field, v0.40.1): names whose move this turn isn't walking (Misty Step, Dimension Door, shoved, thrown, carried, dragged): the clamp is skipped and nothing is spent; they land where "positions" says.
 - A turn strip under the map's header in a fight: round, YOUR TURN (green, pulsing) or "The DM runs X, Y" / "The DM is resolving your action" / "Roll your initiative first", Move used/allowed and feet left, and the initiative order as chips (you in yellow when it's your turn, foes red, friends green). `setMapBusy` refreshes it.
 
 ### v0.39 (the chase is the code's)

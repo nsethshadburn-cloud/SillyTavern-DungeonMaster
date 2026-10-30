@@ -1135,7 +1135,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const world = c.docs.world;
     // Maps off: anything about maps in the DM's answer is ignored (the story stays in the chat).
     if (!mapsOn()) {
-        Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {}, escort: null });
+        Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {}, escort: null, dashing: [], free_move: [] });
         if (t.start_combat) t.start_combat.map = null;
     }
 
@@ -1273,6 +1273,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         for (const name of friends) {
             const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
             if (!from || !to || t.start_combat) continue;
+            // Not walking (a teleport, a shove, carried): wherever they land, no movement spent.
+            if (t.free_move.some(n => nameKey(n) === nameKey(name))) { status.note(`${name} moves without walking (free move)`); continue; }
             const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== name && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
             if (t.dashing.some(n => nameKey(n) === nameKey(name))) markDash(world, name);
             const budget = moveBudget(world, name, speedSquares(statsForName(name, meta)));

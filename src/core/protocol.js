@@ -90,7 +90,7 @@ export const DM_RULES = `You are the Dungeon Master of a long-running tabletop r
   Build rooms that are fun to look at and to fight in: walls that enclose the space with doors where exits are; a floor that changes in patches (planks by the bar, flagstones near the hearth, a puddle, rubble where the ceiling fell); 4-10 props that tell the room's story (bones beside the cage, a knocked-over table, a cold campfire); at least one light source in dark places (torch, brazier, campfire, candles; lava glows); cover and chokepoints that make tactics matter; one standout feature (an altar, a chasm with a bridge, a flooded corner). Never a bare empty box.
   Example: {"theme": "crypt", "width": 10, "height": 7, "rows": ["##########", "#..^...<.#", "#.T....T.#", "+........#", "#.T..o.T.#", "#....~~..#", "####/#####"], "props": [{"at": "e4", "type": "altar"}, {"at": "b6", "type": "brazier"}, {"at": "i6", "type": "brazier"}, {"at": "c2", "type": "coffin"}, {"at": "h2", "type": "bones"}, {"at": "f3", "type": "skull"}]}
 - Scene maps outside combat: send "scene_map" ({"title": "Flooded crypt", "theme", "width", "height", "rows", "props"}) only where exact, tile-by-tile positions matter: a dungeon room, a trapped corridor, sneaking through a guarded area, a puzzle room. Be conservative: never for towns, roads, wilderness travel or social scenes. Send "scene_map": "close" when the party leaves that space. Use "positions" on it like in combat. If a fight starts in a mapped room, you may leave out start_combat.map and the room becomes the battle map.
-- Movement is limited by speed: the code stops each party member after their speed in squares each round (from their sheet; 30 ft = 6 squares; rubble and shallow water cost double; walls in the way count), so plan moves that fit. List anyone who takes the Dash action this round in "dashing" (they get double).
+- Movement is limited by speed: the code stops each party member after their speed in squares each round (from their sheet; 30 ft = 6 squares; rubble and shallow water cost double; walls in the way count), so plan moves that fit. List anyone who takes the Dash action this round in "dashing" (they get double). A move that isn't walking is not limited and costs no movement: a teleport (Misty Step, Dimension Door), being shoved, thrown, pulled, carried or dragged. List those names in "free_move" that turn and put them where they land with "positions".
 - Give everyone a starting square in "positions" ({"Judy Hopps": "c2", "Bandit 1": "f7"}). Each combat round, return "positions" for anyone who moved. One square = 5 feet; typical movement is 6 squares. Use "gone" for anyone who leaves or dies.
 - The player's own moves are THEIR choice (e.g. "move to d4"). Put them exactly where they asked when it's possible. When they say it in words instead ("I step back into my cell", "I duck behind the crate"), put them there yourself with "positions": the nearest open square of that room or thing within their movement (the map lists the rooms and things with their squares). Don't ask which square they meant and don't leave them where the map had them. If their square and their action don't fit together (a sword swing from 4 squares away), don't silently relocate them: either move them only as far as their movement allows toward the target and say so plainly in "ooc", or ask them in "ooc" which they meant.
 
@@ -170,6 +170,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
   "start_combat": {"enemies": [{"name": "Bandit 1", "ac": 12, "hp": 11, "dex": 1, "damage": "1d6+2 (their usual attack)", "sprite": "the figure that fits this enemy"}], "map": {"theme": "cave", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "d5", "type": "campfire"}]}},
   "positions": {"Name": "d4"},
   "dashing": ["names who take the Dash action this combat round"],
+  "free_move": ["names whose move this turn isn't walking: a teleport (Misty Step), shoved, thrown, carried; not limited by speed, costs no movement"],
   "scene_map": {"title": "short name", "theme": "crypt", "width": 10, "height": 8, "rows": ["top row", "...", "bottom row"], "props": [{"at": "e4", "type": "altar"}]},
   "npcs_dead": ["names of NPCs who died this turn"],
   "end_combat": false,
@@ -204,7 +205,7 @@ Reply with ONE JSON object and nothing else. Omit keys you don't need. Schema:
 const MAP_ONLY = [
     /^- Maps: a grid/, /^  (Terrain|Themes|Props|Build rooms|Example)[ :]/, /^- Map figures/, /^- Scene maps outside combat/, /^- Movement is limited by speed/,
     /^- Give everyone a starting square/, /^- The player's own moves are THEIR choice/,
-    /^  "(positions|scene_map|build_place|enter_place|leave_place|place_changes|map_effects|dashing)":/,
+    /^  "(positions|scene_map|build_place|enter_place|leave_place|place_changes|map_effects|dashing|free_move)":/,
 ];
 
 /**
@@ -337,6 +338,7 @@ export function normalizeDmTurn(raw) {
         event: normalizeEventChoice(d.event),
         positions: normalizePositions(d.positions),
         dashing: arr(d.dashing).map(String).filter(Boolean).slice(0, 8),
+        free_move: arr(d.free_move).map(String).filter(Boolean).slice(0, 8),
         scene_map: d.scene_map === 'close' ? 'close' : (d.scene_map && typeof d.scene_map === 'object' && Array.isArray(d.scene_map.rows) ? { title: str(d.scene_map.title), theme: str(d.scene_map.theme), width: Number(d.scene_map.width) || 0, height: Number(d.scene_map.height) || 0, rows: d.scene_map.rows.map(String), props: d.scene_map.props } : null),
         npcs_dead: arr(d.npcs_dead).map(String).filter(Boolean),
         standing_direction: str(d.standing_direction),
