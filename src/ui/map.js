@@ -304,13 +304,15 @@ function renderMap(center = false) {
     anchorAboveForm();
     panel.innerHTML = `
 <div class="dm-map-head">
-  <b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>${clockChip(c)}${b.trespass ? `<span class="dm-map-trespass" title="${escapeHtml(`You're not allowed in ${b.trespass.room}: ${b.trespass.why === 'escaped' ? 'you are an escaped prisoner' : b.trespass.why}. Anyone who belongs here will object.`)}">⚠ ${b.trespass.why === 'escaped' ? 'ESCAPED' : 'TRESPASSING'}</span>` : ''}
+  <div class="dm-map-title"><b>${escapeHtml(b.title)}</b><span class="dm-muted">${escapeHtml(b.sub || '')}</span>${clockChip(c)}${b.trespass ? `<span class="dm-map-trespass" title="${escapeHtml(`You're not allowed in ${b.trespass.room}: ${b.trespass.why === 'escaped' ? 'you are an escaped prisoner' : b.trespass.why}. Anyone who belongs here will object.`)}">⚠ ${b.trespass.why === 'escaped' ? 'ESCAPED' : 'TRESPASSING'}</span>` : ''}</div>
+  <div class="dm-map-tools">
   ${floors.length > 1 ? `<select class="dm-map-floor text_pole" title="Look at another floor you've explored">${floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === b.floor.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>` : ''}
   ${map.w > 16 || map.h > 16 ? '<span class="dm-map-btn fa-solid fa-magnifying-glass-minus" data-act="out" title="Zoom out"></span><span class="dm-map-btn fa-solid fa-magnifying-glass-plus" data-act="in" title="Zoom in"></span>' : ''}
   <span class="dm-map-btn fa-solid fa-cloud-rain ${settings().mapAmbience === false ? 'dm-map-off' : ''}" data-act="ambience" title="Weather and ambient particles: on/off (fire and spells always show)"></span>
   <span class="dm-map-btn fa-solid fa-location-crosshairs ${follow ? 'dm-hidden' : ''}" data-act="center" title="Follow ${escapeHtml(c.meta.persona.name)} again"></span>
   <span class="dm-map-btn fa-solid fa-window-minimize" data-act="min" title="Minimize"></span>
   <span class="dm-map-btn fa-solid fa-xmark" data-act="close" title="Close (reopen from the wand menu)"></span>
+  </div>
 </div>
 ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
 <div class="dm-map-body">

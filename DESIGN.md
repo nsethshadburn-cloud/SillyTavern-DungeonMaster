@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.41.1 (the map header on a phone)
+- With a floor picker (a place with several floors) the header row overflowed on a phone and pushed the minimize and close buttons off screen. The header is now a title part (name, room, clock, badge: shrinks first) and a tools part (floor picker, buttons: never shrinks); on a phone they stack, tools right-aligned on their own line, the floor picker on the left of it.
+
 ### v0.41 (trap searches by radius; tripping a found trap)
 - A found trap is a thing on the map (`thingAt` kind `trap`): *Trip it from a safe distance* (`atlas.tripTrap`: state `sprung`, spent, a 🪤 note and a DM line, alarms noted as heard), *Disarm it* (a map action for the DM to call the roll). Pits (`OPEN_TRAP`) can't be spent: *Disarm or cover it* goes to the DM instead.
 - `searchForTraps(c, name, total, { dc })`: hidden traps within `searchRadius(total, dc)` squares of the searcher (0 on a failed roll, 6 at a bare pass, +2 per point over the DC, 14 at most), on their floor, over squares they have seen (their own room counts), each only if the roll beats the trap's own DC. The DM's DC is used when it set one (12 otherwise; a companion's own look uses 12). The note and the DM's text say the radius; the protocol tells the DM to set a DC and what the code does with it.
