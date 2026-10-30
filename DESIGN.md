@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.40.4 (any successful roll frees a trapped player)
+- Only a successful *save* released someone caught in a trap; the DM often asks for a DEX check or Acrobatics instead, and a success left the player pinned on the map while the narration said they were out. A successful save or check (player or NPC) now frees them, and the sprung-trap text tells the DM so, and never to narrate them free without a roll or `place_changes.free`.
+
 ### v0.40.3 (a trap is not a person)
 - A sprung trap got a character card: the DM named the trap ("Covered Pit") as a speaker / new NPC and the code registered it. `looksLikeThing` now knows trap words; `notAPerson(place, name)` also matches the traps, items and props on the current map. New NPCs that aren't people are dropped (status note), a brief to one is skipped, and `makeSpeak` never auto-registers one.
 

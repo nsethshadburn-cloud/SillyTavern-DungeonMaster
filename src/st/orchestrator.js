@@ -1025,8 +1025,8 @@ async function resolvePlayerRoll(c, parsed, status) {
         const settled = await settleGrab(c, pr, judged.success === true);
         if (settled) saveHurt += ` ${settled}`;
     }
-    // Caught in a trap: a save that works gets you loose.
-    if (pr.kind === 'save' && judged.success === true && freeFromTrap(c, meta.persona.name)) {
+    // Caught in a trap: a save or a check that works gets you loose (whichever the DM asked for).
+    if ((pr.kind === 'save' || pr.kind === 'check') && judged.success === true && freeFromTrap(c, meta.persona.name)) {
         await postNote(`🪤 ${meta.persona.name} gets loose!`);
         saveHurt += ` ${meta.persona.name} got loose from the trap.`;
         refreshMap();
@@ -1635,8 +1635,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 playAnim(r.who, 'hurt');
             }
         }
-        // Caught in a trap: a save that works gets them loose.
-        const caughtWho = r.kind === 'save' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
+        // Caught in a trap: a save or a check that works gets them loose.
+        const caughtWho = r.kind === 'save' || r.kind === 'check' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
         if (caughtWho && judged.success === true && trappedIn(c, caughtWho) && freeFromTrap(c, caughtWho)) damageText += ' · gets loose!';
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
         const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';

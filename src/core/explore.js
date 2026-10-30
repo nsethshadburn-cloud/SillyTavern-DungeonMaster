@@ -387,7 +387,7 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
     const room = place.rooms[trap.room]?.name ?? 'a passage';
     const dc = `DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}.`;
     const dmg = `kind "save"${trap.save ? ` (${trap.save})` : ''}, dc ${trap.dc}, with the trap's damage dice in "damage" (and "half": true if a success still takes half) so the code applies it`;
-    const roll = (player ? `Ask for the save (player_roll, ${dmg})` : `Roll ${name}'s save (npc_rolls, ${dmg})`) + `. ${name} is CAUGHT in it (the map shows it and they can't move): a successful save frees them by itself; on a failure you decide what happens next and set place_changes.free ["${name}"] when they get loose`;
+    const roll = (player ? `Ask for the save (player_roll, ${dmg})` : `Roll ${name}'s save (npc_rolls, ${dmg})`) + `. ${name} is CAUGHT in it (the map shows it and they can't move): a successful save or check (whichever you ask for) frees them by itself; on a failure you decide what happens next and set place_changes.free ["${name}"] when they get loose. Never narrate them free without one or the other`;
     if (trap.state === 'hidden') {
         trap.state = 'sprung';
         const map = floorById(place, floorId).map;
