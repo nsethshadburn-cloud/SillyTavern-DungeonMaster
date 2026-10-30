@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.43.1 (the move bar on a phone)
+- In a fight on a phone the action bar ("Add to message", "Clear") sat below the board inside a body that couldn't be scrolled by touch (SillyTavern's phone styles set `touch-action: none` on `<body>`), so the player couldn't move. The body now allows touch scrolling (`touch-action: pan-y`), is a flex column, and on a phone the action bar comes first and sticks to the top (the busy note above it), the board is capped at 46dvh, and the hover line is hidden on touch.
+
 ### v0.43 (deaths are final; the story breathes; no second Judy; quiet roaming; traps mid-room)
 - 0 HP is death. `fallenInFight` (after state changes, after npc rolls, with positions, and at end_combat): every combat enemy at 0 HP is `killPerson`ed on the map (`diedAt`), `npc.dead`, and `scheduleBodyClear` runs `clearFallen` after `BODY_MS` (10 s): `clearBodies(place, { now })` turns the body to `gone`, records the name in `place.state.fallen`, drops it from the fight's board. `placePerson` refuses fallen names (`isFallen`): no respawn, ever. The protocol says so (narrate a death, never "out cold" at 0 HP; a knockout only for a deliberate non-lethal takedown with HP left).
 - No second Judy: `place.state.party` (set at build and on entering) and `placePerson` refuses anyone named like a party member (`matchName`); the builder's people are purged of namesakes; `parseMapSync` spawn uses `matchName` against the party. Guard talk never queues a prisoner or a party namesake.

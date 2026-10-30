@@ -144,7 +144,9 @@
 .dm-map-btn { cursor: pointer; opacity: 0.7; padding: 4px 6px; }
 .dm-map-btn:hover { opacity: 1; }
 .dm-map-btn.dm-map-off { opacity: 0.3; }
-.dm-map-body { overflow: auto; padding: 8px 10px 10px; }
+/* The body scrolls by touch too (SillyTavern's phone styles put touch-action: none on <body>), and it
+   is a column so the phone can put the action bar first. */
+.dm-map-body { overflow: auto; padding: 8px 10px 10px; display: flex; flex-direction: column; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 /* The fight's turn strip: round, whose turn, the player's movement left, the initiative order. */
 .dm-map-turn { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 5px 10px; font-size: 0.82em; border-bottom: 1px solid var(--SmartThemeBorderColor); background: rgba(0, 0, 0, 0.18); }
 .dm-turn-round { font-weight: 700; }
@@ -249,6 +251,12 @@
     .dm-map-head .dm-muted { display: none; }
     .dm-map-head .dm-map-btn { padding: 7px 8px; font-size: 1.1em; }
     .dm-map-head .dm-map-floor { max-width: 110px; margin-right: auto; }
+    /* Phone: the action bar (your move, Add to message, Clear) sits ABOVE the board, always in reach;
+       the board is shorter so the bar and the top of the map share the screen; no hover line on touch. */
+    .dm-map-actions { order: -1; margin: 0 0 6px; position: sticky; top: 0; z-index: 3; padding: 4px 6px; border-radius: 8px; background: var(--SmartThemeBlurTintColor); }
+    .dm-map-busy-note { order: -2; }
+    .dm-map-view { max-height: 46dvh; }
+    .dm-map-hover { display: none; }
 }
 
 /* ---------- Template editors ---------- */
@@ -279,7 +287,7 @@
 
 /* Maps of whole places: a wider panel, a scrollable view, zoom and a floor picker. */
 .dm-map.dm-map-wide { width: min(920px, calc(100vw - 24px)); }
-.dm-map-view { overflow: auto; max-height: min(64dvh, 760px); border-radius: 8px; overscroll-behavior: contain; }
+.dm-map-view { overflow: auto; max-height: min(64dvh, 760px); border-radius: 8px; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; flex: 0 0 auto; }
 .dm-map-canvas.dm-map-canvas-free { max-width: none; height: auto; }
 .dm-map-floor { width: auto; max-width: 160px; margin: 0; padding: 2px 6px; font-size: 0.85em; }
 
