@@ -19,7 +19,7 @@ test('typing keeps pace with the voice, or reads at a steady pace without one', 
     assert.equal(typingMs(100, 10), 9000, '10 s of voice: the words land a little before it ends');
     assert.equal(typingMs(10, 10), 1200, 'few words, long audio: they still appear within a second or so');
     assert.equal(typingMs(50), 1100, 'no voice: about 22 ms a character');
-    assert.equal(typingMs(1000), 9000, 'never longer than 9 s');
+    assert.equal(typingMs(1000), 7000, 'never longer than 7 s');
     assert.equal(LINGER_MS, 5000);
 });
 
