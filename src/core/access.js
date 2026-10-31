@@ -16,7 +16,7 @@ export const PRIVATE_KINDS = /mansion|manor|estate|chateau|villa|house|home|cott
 /** Places where the law is force: prisoners belong in cells, everyone else is staff. */
 export const LOCKUP_KINDS = /prison|jail|gaol|stockade|lockup|penitentiary|brig\b|detention|holding|barracks|garrison|outpost|watch ?house|guard ?house|guard ?post|town ?watch/i;
 /** Nobody's land: dungeons, caves, ruins, the wilds. No such thing as trespassing. */
-export const WILD_KINDS = /dungeon|ruin|lair|labyrinth|maze|warren|den\b|hideout|crypt|tomb|catacomb|mausoleum|barrow|ossuary|necropolis|cave|cavern|grotto|mine|tunnel|sewer|forest|jungle|swamp|camp|wild|oasis|river|road|wilds/i;
+export const WILD_KINDS = /dungeon|ruin|lair|labyrinth|maze|warren|den\b|hideout|crypt|tomb|catacomb|mausoleum|barrow|ossuary|necropolis|cave|cavern|grotto|mine|tunnel|sewer|forest|jungle|swamp|camp|wild|oasis|river|road|wilds|downs|\bhills?\b|moor|heath|plains?|meadow|grassland|prairie|steppe|\bfields?\b|pasture|countryside|wilderness|valley|canyon|beach|coast|\blake\b|shore|mountain|\bridge\b|glade|clearing|grove|woods|woodland|standing stones|trail|gully|ravine/i;
 
 const PUBLIC_TYPES = new Set(['tavern', 'shop', 'foyer', 'chapel', 'dining_room', 'parlor', 'courtyard', 'graveyard', 'library', 'gallery', 'ballroom', 'music_room', 'throne_room', 'smithy', 'workshop', 'stable', 'conservatory', 'trophy_room']);
 const STAFF_TYPES = new Set(['kitchen', 'pantry', 'storage', 'cellar', 'wine_cellar', 'office', 'servants_quarters', 'vault', 'armory', 'guard_room', 'attic', 'laboratory', 'kennel', 'torture_chamber', 'hallway', 'crypt']);
@@ -95,7 +95,8 @@ export function inferStanding(place, { start = '', why = '', objective = '', sta
     const cls = placeClass(place);
     const text = `${start} ${why} ${objective}`.toLowerCase();
     if (cls === 'wild') return standingFor('free');
-    if (cls === 'lockup' && /\b(cell|locked|prisoner|captive|cage|caged|chained|jailed|arrested|condemned|held)\b/.test(text)) return standingFor('prisoner', { home: startRoom });
+    // Locked up anywhere (a cell, a cage, an oubliette, a pen): a prisoner of that room, in a jail or a castle or a camp alike.
+    if (/\b(cell|locked (?:in|up|away)|prisoner|captive|cage|caged|chained|jailed|arrested|condemned|held captive|oubliette|dungeon cell|in chains|a pen)\b/.test(text)) return standingFor('prisoner', { home: startRoom });
     if (/\b(sneak|break in|breaking in|infiltrat|rob|heist|steal|stealing|intrud|climb in|creep|burgl|slip in|unseen|unnoticed|escape)\b/.test(text)) return standingFor('intruder');
     if (/\b(live|lives|living|own|owner|home|resident|staff|work here|works here|employed)\b/.test(text)) return standingFor('resident');
     if (cls === 'public') return standingFor('guest');

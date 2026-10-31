@@ -865,6 +865,21 @@ function tryBuild(plan, seed, shrink) {
         const res = new Set([...reserved].filter(k => k.startsWith(`${pr.floor}:`)).map(k => k.slice(pr.floor.length + 1)));
         furnish(r, room, pr.rect, { chars: chars[pr.floor], props: map.props, blocked, reserved: res }, plan.theme, plan.condition);
     }
+    // Water in a room named for it (an underground lake, a flooded cellar, a pool): shallows, deep in
+    // the middle of a lake; a dry ring round the walls keeps every door reachable.
+    for (const room of plan.rooms) {
+        if (!/\b(lake|pool|pond|river|stream|flooded|sump|cistern|drowned|waterlogged|underwater)\b/i.test(`${room.name} ${room.hint || ''}`)) continue;
+        const pr = place.rooms[room.id];
+        if (!pr || pr.rect.w < 4 || pr.rect.h < 4) continue;
+        const cf = chars[pr.floor], fm = floorMap(pr.floor);
+        const solidAt = (x, y) => fm.props.some(p => PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
+        const lake = /\b(lake|pond|drowned|flooded|underwater)\b/i.test(room.name);
+        for (let x = pr.rect.x + 1; x < pr.rect.x + pr.rect.w - 1; x++) for (let y = pr.rect.y + 1; y < pr.rect.y + pr.rect.h - 1; y++) {
+            if (cf[y][x] !== '.' || solidAt(x, y)) continue;
+            const deep = lake && x > pr.rect.x + 1 && x < pr.rect.x + pr.rect.w - 2 && y > pr.rect.y + 1 && y < pr.rect.y + pr.rect.h - 2;
+            cf[y][x] = deep ? 'w' : '~';
+        }
+    }
     // Traps, items, keys, guards.
     const blockedAt = (floor, x, y) => floorMap(floor).props.some(p => PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
     const freeTile = (roomId, avoidEdge = false) => {
@@ -1489,6 +1504,21 @@ export function generateTown(planIn, seed = 1) {
         for (let i = 0; i < 5; i++) if (get(gx + i * 2, gy + 1) === '.') map.props.push({ x: gx + i * 2, y: gy + 1, type: 'tombstone' });
         map.props.push({ x: gx - 1, y: gy + 2, type: 'fence', w: 10 });
     }
+    // A lake along the bottom of the town (a jetty out into it), or a river across it with the road's bridge.
+    if (feats.has('lake')) {
+        const x0 = Math.floor(W * 0.2), x1 = Math.floor(W * 0.85);
+        for (let x = x0; x <= x1; x++) { const depth = 2 + Math.round(Math.sin((x - x0) / (x1 - x0) * Math.PI) * 1.2); for (let y = 0; y < depth; y++) if (get(x, y) === '.') set(x, y, y < depth - 1 ? 'w' : '~'); }
+        const jx = Math.floor((x0 + x1) / 2);
+        for (let y = 0; y < 3; y++) if ('w~'.includes(get(jx, y))) set(jx, y, 'b');
+        if (get(jx + 1, 2) === '.') map.props.push({ x: jx + 1, y: 2, type: 'barrel' });
+        if (get(jx - 1, 2) === '.') map.props.push({ x: jx - 1, y: 2, type: 'crate' });
+        for (let x = x0 - 1; x <= x1 + 1; x++) if (get(x, 3) === '.' && r() < 0.3) map.props.push({ x, y: 3, type: 'reeds' });
+    } else if (feats.has('river')) {
+        for (let x = 0; x < W; x++) for (let y = 0; y < 3; y++) if (get(x, y) === '.') set(x, y, y === 1 ? 'w' : '~');
+        const bx = cross ? crossX : Math.floor(W / 2);
+        for (let y = 0; y < 3; y++) set(bx, y, 'b');
+        if (cross) for (let y = 0; y < 3; y++) set(bx + 1, y, 'b');
+    }
     for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
         if (get(x, y) !== '.') continue;
         const edge = Math.min(y, H - 1 - y);
@@ -1970,7 +2000,7 @@ function addWater(c, W, H, r, kind, at = null) {
  * trees, palms by water in a jungle or desert, and undergrowth (ferns, tall grass, bushes, flowers,
  * mushrooms, logs, rocks), reeds on the banks and lily pads on still water. keep(x, y) = leave clear.
  */
-function growWilds(map, c, W, H, r, theme, keep, density = 1) {
+function growWilds(map, c, W, H, r, theme, keep, density = 1, { open = false, dry = false } = {}) {
     const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
     const taken = new Set((map.props || []).flatMap(p => { const out = []; for (let i = 0; i < (p.w || 1); i++) for (let j = 0; j < (p.h || 1); j++) out.push(K(p.x + i, p.y + j)); return out; }));
     const put = (x, y, type, extra = {}) => { const w = extra.w || 1, h = extra.h || 1; for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) if (taken.has(K(x + i, y + j)) || get(x + i, y + j) !== '.' || keep(x + i, y + j)) return false; map.props.push({ x, y, type, ...extra }); for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) taken.add(K(x + i, y + j)); return true; };
@@ -1980,7 +2010,7 @@ function growWilds(map, c, W, H, r, theme, keep, density = 1) {
     const hue = { jungle: [105, 135], forest: [88, 125], swamp: [70, 95], snow: [130, 150], desert: [80, 100] }[theme];
     // Great trees first (they need room), in the thick of the woods.
     for (let x = 1; x < W - 2; x++) for (let y = 1; y < H - 2; y++) {
-        if (n(x, y) > 0.15 && r() < (theme === 'jungle' ? 0.05 : theme === 'forest' ? 0.03 : 0.012) * density) put(x, y, 'bigtree', { w: 2, h: 2, hue: Math.round(hue[0] + r() * (hue[1] - hue[0])), ...(theme === 'jungle' && r() < 0.3 ? { blossom: pickR(r, ['#ff5d8f', '#ffb347', '#f5f05a']) } : {}) });
+        if (n(x, y) > 0.15 && r() < (theme === 'jungle' ? 0.05 : theme === 'forest' ? 0.03 : 0.012) * density * (open ? 0.4 : 1)) put(x, y, 'bigtree', { w: 2, h: 2, hue: Math.round(hue[0] + r() * (hue[1] - hue[0])), ...(theme === 'jungle' && r() < 0.3 ? { blossom: pickR(r, ['#ff5d8f', '#ffb347', '#f5f05a']) } : {}) });
     }
     for (let x = 0; x < W; x++) for (let y = 0; y < H; y++) {
         if (get(x, y) === '~' && !keep(x, y) && r() < 0.12 && (theme === 'jungle' || theme === 'swamp' || theme === 'forest')) { map.props.push({ x, y, type: 'lilypad' }); continue; }
@@ -1990,6 +2020,8 @@ function growWilds(map, c, W, H, r, theme, keep, density = 1) {
         if (wet && r() < 0.4) { put(x, y, (theme === 'jungle' || theme === 'desert') && r() < 0.35 ? 'palm' : 'reeds'); continue; }
         if (r() < thick) { c[y][x] = 'T'; continue; }
         const under = r();
+        // Open country: grass, the odd bush and rock, flowers in a meadow, no ferns or mushrooms.
+        if (open) { if (under < 0.1) put(x, y, 'tallgrass'); else if (under < 0.13) put(x, y, 'bush'); else if (under < (dry ? 0.19 : 0.15)) put(x, y, 'boulder'); else if (!dry && under < 0.165) put(x, y, 'flowers'); else if (dry && under < 0.2) put(x, y, 'log'); continue; }
         if (theme === 'jungle') { if (under < 0.22) put(x, y, 'fern'); else if (under < 0.32) put(x, y, 'tallgrass'); else if (under < 0.36) put(x, y, 'palm'); else if (under < 0.4) put(x, y, 'bush'); else if (under < 0.42) put(x, y, 'flowers'); }
         else if (theme === 'forest') { if (under < 0.08) put(x, y, 'fern'); else if (under < 0.16) put(x, y, 'tallgrass'); else if (under < 0.2) put(x, y, 'bush'); else if (under < 0.22) put(x, y, 'mushroom'); else if (under < 0.24) put(x, y, 'log'); else if (under < 0.26) put(x, y, 'boulder'); else if (under < 0.29) put(x, y, 'flowers'); }
         else if (theme === 'swamp') { if (under < 0.15) put(x, y, 'reeds'); else if (under < 0.22) put(x, y, 'tallgrass'); else if (under < 0.26) put(x, y, 'mushroom'); else if (under < 0.29) put(x, y, 'log'); }
@@ -2019,11 +2051,16 @@ export function generateWilds(planIn, seed = 1) {
     };
     // Water: a river through it or a pond (or a few pools in a swamp, an oasis in a desert).
     const words = `${plan.name} ${plan.summary} ${spots.map(s => s.name).join(' ')}`.toLowerCase();
-    const wantsRiver = /river|stream|creek|brook|ford|rapids/.test(words), wantsPond = /pond|lake|pool|lagoon|spring|oasis|waterfall/.test(words);
-    // Open country (downs, moors, plains): grass with few trees; the woods only in patches.
-    const open = OPEN_COUNTRY.test(`${plan.kind} ${plan.name}`.toLowerCase()) && !/forest|woods|jungle|swamp/.test(`${plan.kind} ${plan.name}`.toLowerCase());
-    if (wantsRiver || (!wantsPond && (theme === 'jungle' ? r() < 0.6 : theme === 'forest' ? r() < 0.45 : false))) addWater(c, W, H, r, 'river');
-    if (wantsPond || theme === 'desert' || (theme !== 'snow' && r() < 0.5)) addWater(c, W, H, r, 'pond');
+    // Water only when the place (not a spot's stock name) asks for it: a "Dry Wash" spot is no reason for a river.
+    const asked = `${plan.name} ${plan.summary}`.toLowerCase();
+    const wantsRiver = /river|stream|creek|brook|\bford\b|rapids/.test(asked), wantsPond = /pond|lake|pool|lagoon|spring|oasis|waterfall/.test(asked);
+    // Open country (downs, moors, plains, hills): grass with few trees; the woods only in patches. Dry land (a dusty gully, scrub, bare rock) is browner still, with rocks instead of flowers.
+    const kindWords = `${plan.kind} ${plan.name}`.toLowerCase();
+    const dryLand = /\b(dry|dust|dusty|arid|barren|scrub|scrubland|badlands?|bare rock|parched|sun-?baked|drought|gully|ravine|rocky)\b/.test(words) && !/forest|woods|jungle|swamp|lush/.test(kindWords);
+    const open = (OPEN_COUNTRY.test(kindWords) || dryLand) && !/forest|woods|jungle|swamp/.test(kindWords);
+    // Water where it's asked for; by chance only in the woods and jungle, never on open or dry land.
+    if (wantsRiver || (!wantsPond && !open && (theme === 'jungle' ? r() < 0.6 : theme === 'forest' ? r() < 0.45 : false))) addWater(c, W, H, r, 'river');
+    if (wantsPond || theme === 'desert' || (!open && theme !== 'snow' && r() < 0.5)) addWater(c, W, H, r, 'pond');
     if (theme === 'swamp') for (let i = 0; i < 4 + Math.floor(r() * 3); i++) addWater(c, W, H, r, 'pool');
     // The spots: clearings spread over the land, each sized to what it is.
     const centers = [];
@@ -2066,7 +2103,7 @@ export function generateWilds(planIn, seed = 1) {
         place.rooms[cc.sp.id] = { id: cc.sp.id, name: cc.sp.name, type: cc.sp.type, floor: 'F0', rect: { x: cc.x - cc.rad, y: cc.y - cc.rad, w: cc.rad * 2 + 1, h: cc.rad * 2 + 1 }, lit: true, description: cc.sp.description, exit: false };
     }
     // The ground: a darker floor under the trees, sunnier glades where the spots are.
-    const floorDark = { jungle: [118, 46, 16], forest: [105, 34, 22], swamp: [78, 26, 18] }[theme];
+    const floorDark = open ? (dryLand ? [46, 34, 40] : [74, 34, 38]) : { jungle: [118, 46, 16], forest: [105, 34, 22], swamp: [78, 26, 18] }[theme];
     if (floorDark) {
         for (const cc of centers) map.areas.push({ x: cc.x - cc.rad, y: cc.y - cc.rad, w: cc.rad * 2 + 1, h: cc.rad * 2 + 1, floor: 'grass', floorC: theme === 'jungle' ? [100, 44, 30] : theme === 'swamp' ? [80, 30, 26] : [96, 36, 32], room: cc.sp.id });
         map.areas.push({ x: 0, y: 0, w: W, h: H, floor: 'grass', floorC: floorDark });
@@ -2107,7 +2144,7 @@ export function generateWilds(planIn, seed = 1) {
         cc.sp.items.forEach(it => { const p = freeIn(cc); if (!p) return; const id = `I${Object.keys(place.items).length + 1}`; place.items[id] = { id, name: it.name, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], hidden: it.hidden, note: it.note, state: 'here' }; });
     }
     // The land around, grown thick; the clearings and trails stay open.
-    growWilds(map, c, W, H, r, theme, (x, y) => inClearing(x, y) || trail.has(K(x, y)), open ? 0.3 : 1);
+    growWilds(map, c, W, H, r, theme, (x, y) => inClearing(x, y) || trail.has(K(x, y)), open ? (dryLand ? 0.1 : 0.2) : 1, { open, dry: dryLand });
     // The people of the plan, in their spots.
     for (const g of plan.guards) {
         const cc = centers.find(x => x.sp.id === g.room) ?? centers[0];

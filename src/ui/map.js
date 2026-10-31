@@ -14,7 +14,7 @@ import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
 import { currentPlace, buildFromRequest, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
 import { moveBudget, conditionsOf } from '../core/world.js';
-import { restraintOf } from '../core/restraints.js';
+import { restraintOf, escapeOptions, lockedLine } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
 import { trespassOf } from '../core/access.js';
 import { statsForName } from '../st/sheets.js';
@@ -290,7 +290,8 @@ function renderMap(center = false) {
         return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} <b>${coord}</b>${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}${b.place?.guards?.[name]?.down ? ` · ${{ asleep: 'asleep', unconscious: 'out cold', bound: 'tied up' }[b.place.guards[name].down]}` : ''}</span>`;
     }).join('');
     const exploring = b.kind === 'place';
-    const props = exploring ? '' : (map.props || []).filter(pr => !pr.hidden && !PROPS[pr.type]?.decal).map(pr => `<span>${escapeHtml(pr.label || PROPS[pr.type]?.name || pr.type)} <b>${toCoord(pr.x, pr.y)}</b></span>`).join('');
+    const seenSq = b.place && b.floor ? (x, y) => isExplored(b.place, b.floor.id, x, y) : () => true;
+    const props = exploring ? '' : (map.props || []).filter(pr => !pr.hidden && !PROPS[pr.type]?.decal && seenSq(pr.x, pr.y)).map(pr => `<span>${escapeHtml(pr.label || PROPS[pr.type]?.name || pr.type)} <b>${toCoord(pr.x, pr.y)}</b></span>`).join('');
     const pending = [selection.move ? `move to ${selection.move}` : '', selection.target ? `target ${selection.target}` : ''].filter(Boolean).join(', ');
     const floors = exploring ? b.place.floors.filter(f => (b.place.state.explored[f.id] || '').includes('1')).sort((x, y) => y.level - x.level) : [];
 
@@ -323,9 +324,6 @@ function renderMap(center = false) {
 ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
 <div class="dm-map-body">
   <div class="dm-map-busy-note"><i class="fa-solid fa-hourglass-half"></i> The DM is thinking. Hold on: nobody moves until it's done.</div>
-  <div class="dm-map-view"><div class="dm-map-stage"><canvas class="dm-map-canvas"></canvas><div class="dm-map-bubbles"></div></div></div>
-  <div class="dm-map-hover dm-muted">&nbsp;</div>
-  <div class="dm-map-roster">${roster}</div>
   ${exploring
         ? choosing ? `<div class="dm-map-actions dm-map-choose"><span class="dm-map-pending"><b>${escapeHtml(choosing.title)}</b> Tap one on the map, or pick:</span>${choosing.choices.map((ch, i) => `<div class="menu_button" data-pick="${i}" title="${escapeHtml(ch.where || '')}"><b>${i + 1}</b> ${escapeHtml(ch.name)}<small> · ${escapeHtml(ch.where || '')}</small></div>`).join('')}<div class="menu_button" data-pick="-1">Never mind</div></div>`
         : `<div class="dm-map-actions"><span class="dm-map-pending">${lockedReason(c, c.meta.persona.name) ? escapeHtml(lockedReason(c, c.meta.persona.name)) : 'Tap a square to walk there, or tap someone for options. Doors open as you go; locked ones need a key or a plan.'}</span></div>`
@@ -334,6 +332,9 @@ ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
     <div class="menu_button" data-act="add" ${pending ? '' : 'disabled'}>Add to message</div>
     <div class="menu_button" data-act="clear">Clear</div>
   </div>`}
+  <div class="dm-map-view"><div class="dm-map-stage"><canvas class="dm-map-canvas"></canvas><div class="dm-map-bubbles"></div></div></div>
+  <div class="dm-map-hover dm-muted">&nbsp;</div>
+  <div class="dm-map-roster">${roster}</div>
   ${props ? `<div class="dm-map-legend">${props}</div>` : ''}
 </div>`;
 
@@ -377,7 +378,7 @@ ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
         // people do goes through the chat, so the story and the characters decide it.
         const who = exploring ? whoAt(b.positions, map, sq) : null;
         if (who) {
-            showPerson(ev, c, b, who);
+            if (!(who === c.meta.persona.name && showEscapeMenu(ev, c))) showPerson(ev, c, b, who);
             return;
         }
         // Furniture and windows: smash, shove, search, break, climb out.
@@ -1026,4 +1027,22 @@ async function askRebuild() {
     if (typeof text !== 'string' || !text.trim()) return;
     const mr = mapRequest(`make the map: ${text}`) ?? { kind: '', size: '' };
     await buildFromRequest({ ...mr, text: text.trim(), redo: true });
+}
+
+/**
+ * Tapped yourself while tied up, cuffed or caged: the ways to try to get free (each one is said in
+ * the chat as what you do, and the DM is told what roll it takes). Nothing when you can move.
+ */
+function showEscapeMenu(ev, c) {
+    const player = c.meta.persona.name;
+    const r = restraintOf(conditionsOf(c.docs.world, player));
+    if (!r.locked || r.hurt) return false;
+    const options = escapeOptions(player, r);
+    if (!options.length) return false;
+    showMenu(ev, player, lockedLine(player, r).replace(/\s*Tap .*$/, ''), options.map(([label, icon, text]) => [label, icon, () => {
+        setMapAction(`${player} tries to get free: ${text} Ask for that roll (DC by how they're held: rope 12, cuffs or a cage lock 15). On a success remove the restraint with state_changes.conditions_remove and say they're loose; on a failure they stay held.`);
+        sendAsPlayer(text);
+        closeMenu();
+    }]));
+    return true;
 }

@@ -28,7 +28,7 @@ import { sfx } from '../ui/sound.js';
 import { watchParty } from './watch.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, isWildKind } from '../core/architect.js';
-import { kindFromWords } from '../core/triage.js';
+import { kindFromWords, nameFromWords } from '../core/triage.js';
 import { isCamp, campFromBrief, generateCamp, campInteriors } from '../core/camp.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
@@ -615,6 +615,7 @@ async function decideFollow(c, name, fromRoom, toRoom) {
 let mapAction = '';
 export function setMapAction(text) { mapAction = String(text || ''); }
 export function takeMapAction() { const t = mapAction; mapAction = ''; return t; }
+export function peekMapAction() { return mapAction; }
 
 /** Walk up next to a thing (a rect of squares) on the map. Resolves true when standing beside it. */
 export async function approachSpot(spot, redraw = () => { }, { inTurn = false } = {}) {
@@ -1046,7 +1047,7 @@ async function noteRoom(c, place, { quiet = false } = {}) {
 
 /** A room's description from its facts: the local model if there is one, else put together in code. */
 async function writeDescription(place, room) {
-    const facts = { things: thingsIn(place, room).map(t => t.name), condition: place.condition || 'kept', placeName: place.name, kind: place.kind };
+    const facts = { things: thingsIn(place, room).map(t => t.name), condition: place.condition || 'kept', placeName: place.name, kind: place.kind, time: campaign()?.docs?.world?.time || '', outdoors: OUTDOOR.has(place.floors[0]?.map?.theme) };
     const s = settings();
     if (s.useHelper) {
         try {
@@ -1071,10 +1072,12 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     const c = campaign();
     if (!c || !req?.name) return null;
     const existing = atlasEntry(req.name, c);
+    let replacing = null;
     if (existing && req.replace) {
-        // The map is to be done again (it came out wrong, or the player asked): the old one and everything on it go.
+        // The map is to be done again (it came out wrong, or the player asked): the old one and everything
+        // on it go, but only once the new one is built, so a failed build leaves the map you were on.
+        replacing = (existing.parent && atlas(c).places[existing.parent]) || existing;
         status?.note(`Replacing ${existing.name}`);
-        await forgetFamily(c, (existing.parent && atlas(c).places[existing.parent]) || existing);
     } else if (existing) {
         // Already there (the DM named it again): nothing to do.
         if (currentPlace(c)?.key === existing.key || currentPlace(c)?.place.parent?.key === existing.key) return currentPlace(c).place;
@@ -1083,7 +1086,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     }
     if (building) return null;
     const big = req.size === 'big';
-    const camp = isCamp(req.kind, req.name);
+    let camp = isCamp(req.kind, `${req.name} ${req.why || ''} ${req.objective || ''} ${req.start || ''}`);
     const town = !camp && /town|village|hamlet|city|outpost|settlement/.test(String(req.kind || '').toLowerCase());
     const byClaude = settings().mapBuilder === 'claude';
     // Land, camps and towns cost nothing to build (code from a short brief): no need to ask.
@@ -1111,6 +1114,8 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         if (!raw) {
             const brief = normalizeBrief(await askPlaceBrief({ ...req, town }, { signal }).catch(error => { console.warn('[Dungeon Master] brief failed, building from the request', error); return {}; }), req);
             if (town) brief.kind = brief.kind && /town|village|city|hamlet/.test(brief.kind) ? brief.kind : 'town';
+            // The brief may show it's a camp after all (a stockade of raiders holding captives): the fort builder, not a castle.
+            if (!camp && !town && isCamp(brief.kind, `${brief.name} ${brief.summary} ${brief.mood} ${brief.creatures}`)) camp = true;
             raw = town ? townFromBrief(brief, seed) : camp ? campFromBrief(brief, seed) : isWildKind(brief.kind, brief.name) || isWildKind(req.kind, req.name) ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
             // The land hears what was asked for (a stream, standing stones) in the builder's own words.
             if (raw?.wild && req.why) raw.summary = [raw.summary, req.why].filter(Boolean).join(' ');
@@ -1133,6 +1138,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         }
         anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : camp ? `Posting ${Object.keys(place.guards).length} people` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
+        if (replacing) await forgetFamily(c, replacing);
         const key = placeKey(place.name || req.name);
         // A building is two maps: its grounds outside (with the front door) and its inside. The front
         // door goes between them; the party starts outside when they're arriving (or out in the yard).
@@ -1174,7 +1180,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         const summary = town
             ? `🗺️ **${place.name}** is ready: ${Object.keys(place.buildings).length} buildings. Their insides are built when you walk in.`
             : camp ? `🗺️ **${place.name}** is ready: ${{ small: 'a small camp', medium: 'a camp', big: 'a big camp', massive: 'a sprawling war camp' }[place.camp?.size] ?? 'a camp'} ${place.camp?.walls === 'stone' ? 'behind stone walls' : place.camp?.walls === 'palisade' ? 'behind a palisade' : 'in the open'}, ${Object.keys(place.guards).length} people${Object.values(place.buildings).filter(b => b.kind !== 'tunnels').length ? ', and its houses have insides (walk in through their doors)' : ''}. The inside shows itself as you see it.`
-            : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} rooms${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
+            : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} ${wild ? 'spots joined by trails' : 'rooms'}${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
         await anim.finish(summary);
         await enterPlace(enterKey, { quiet });
         return place;
@@ -1242,7 +1248,9 @@ export async function buildFromRequest(mr, { status = null } = {}) {
     const top = here ? (here.place.parent?.key ? atlas(c).places[here.place.parent.key] : atlas(c).places[here.key]) ?? null : null;
     const location = c.docs.world.location || c.docs.world.sceneCard?.place || '';
     const kind = mr.kind || (top && isWildKind(top.kind, top.name) ? top.kind : '') || kindFromWords(location) || 'wilderness';
-    const name = top?.name || location || 'The Wilds';
+    // The old map's name only when the new one is the same kind of place; a jungle asked for on a cave's map is not "Oubliette Cave".
+    const sameKind = top && (!mr.kind || kindFromWords(`${top.kind} ${top.name}`) === mr.kind);
+    const name = (sameKind ? top.name : '') || (kindFromWords(location) === kind ? location : '') || nameFromWords(mr.text) || location || 'The Wilds';
     const size = mr.size || (top?.size === 'big' ? 'big' : 'small');
     status?.note(`Building the map you asked for (${kind}${size === 'big' ? ', big' : ''})`);
     return requestBuild({ name, size, kind, why: `the player asked for this map, in their own words: "${mr.text.slice(0, 200)}"`, start: 'where the party is right now', replace: true }, { status, confirm: false });
@@ -2047,12 +2055,13 @@ export function syncContext(c) {
         .map(d => ({ id: d.id, name: `${d.state} ${d.kind === 'cell' ? 'cell door' : 'door'}`, at: at(d.x, d.y), room: d.rooms.map(r => place.rooms[r]?.name).filter(Boolean).join(' / ') }));
     // Every room on this floor (the ones the party knows first): the story can send a guard back to his post even if the party hasn't been there.
     const floorRooms = Object.values(place.rooms).filter(r => r.floor === floorId).sort((a, b) => Number(place.state.visited.includes(b.id) || rooms.has(b.id)) - Number(place.state.visited.includes(a.id) || rooms.has(a.id))).slice(0, 40).map(r => ({ id: r.id, name: r.name }));
+    const labels = Object.fromEntries([...things.map(t => [t.id, t.name]), ...doors.map(d => [d.id, d.name]), ...floorRooms.map(r => [r.id, r.name])]);
     const items = Object.values(place.items || {}).filter(i => i.state !== 'taken' && i.floor === floorId && (rooms.has(i.room) || seen[i.y * map.w + i.x])).slice(0, 20)
         .map(i => ({ id: i.id, name: i.name, room: place.rooms[i.room]?.name ?? 'here', hidden: i.hidden && !i.found }));
     const w = c.docs.world;
     const carried = Object.fromEntries(names.map(n => [n, [...(w.inventory?.[n] ?? []), ...(n === names[0] ? (w.items ?? []) : [])]]).filter(([, l]) => l.length));
     return {
         party, people, things: [...things, ...doors], rooms: floorRooms, items, carried,
-        known: { party: names, people: guards.map(g => g.name), peopleInfo: Object.fromEntries(guards.map(g => [g.name, g.description || ''])), things: things.map(t => t.id), doors: doors.map(d => d.id), rooms: floorRooms.map(r => r.id), items: items.map(i => i.id), carried },
+        known: { party: names, people: guards.map(g => g.name), peopleInfo: Object.fromEntries(guards.map(g => [g.name, g.description || ''])), things: things.map(t => t.id), doors: doors.map(d => d.id), rooms: floorRooms.map(r => r.id), items: items.map(i => i.id), carried , labels },
     };
 }

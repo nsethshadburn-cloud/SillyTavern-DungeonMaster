@@ -8,7 +8,7 @@
 // (rules.js) as a plan Claude writes, then the same geometry. Pure module.
 
 import { roomType } from './rooms.js';
-import { nameKey } from './text.js';
+import { nameKey, singular } from './text.js';
 
 // ---------- randomness ----------
 
@@ -617,6 +617,8 @@ export function planFromBrief(briefIn, seed = 1) {
         const next = bp.maze ? Math.min(...used) - 1 : !used.includes(1) ? 1 : !used.includes(-1) ? -1 : Math.max(...used) + 1;
         addRoom(pick(r, bp.filler), full && used.length < maxLevels ? next : chance(r, 0.7) ? lv[0] : pick(r, lv), {});
     }
+    // No two rooms with the same name (two "Gate Room 3"s): the later one gets a number of its own.
+    for (const [i, rm] of rooms.entries()) { let k = 2; const base = rm.name.replace(/\s+\d+$/, ''); while (rooms.slice(0, i).some(o => o.name === rm.name)) rm.name = `${base} ${k++}`; }
     const notes = [];
 
     // The story's rooms: an existing room of that kind takes the story's name and things; otherwise one is added.
@@ -868,7 +870,7 @@ export function planFromBrief(briefIn, seed = 1) {
     const people = [], guards = [];
     const monsters = /dungeon|crypt|cave/.test(bp.id) || (brief.creatures ? /\b(rat|skeleton|zombie|ghoul|spider|bat|wolf|goblin|bandit|cultist|kobold|troglodyte|ghost|shade|bear|boar|snake|orc|troll|ogre|zealot|thug|pirate)/i.test(brief.creatures) : false);
     const nG = brief.guards ?? int(r, ...(bp.guards.n[brief.size] ?? bp.guards.n.small));
-    const word = brief.creatures ? cap(brief.creatures.replace(/s$/i, '')) : null;
+    const word = brief.creatures ? cap(singular(brief.creatures)) : null;
     const wordUsed = {};
     const nonPrivate = l => rooms.filter(x => x.level === l && !x.hidden && !['cell', 'bathroom', 'vault', 'pantry'].includes(x.type));
     for (let i = 0; i < nG; i++) {
@@ -1356,6 +1358,9 @@ export function townFromBrief(briefIn, seed = 1) {
     }
     while (buildings.length < n) add('house', `${pick(r, ['The', 'Old', ''])} ${familyName(r)} House`.trim(), `${pick(r, GIVEN)} ${familyName(r)}`, pick(r, ['a quiet family home', 'a cramped cottage', 'a house with a well-kept garden', 'a shuttered house', 'a house full of children']), 'small');
     const features = shuffle(r, ['market square', 'fountain', 'well', 'pond', 'graveyard', 'notice board', 'stocks']).slice(0, int(r, 1, 3));
+    const waterWords = `${brief.name} ${brief.summary} ${brief.mood} ${brief.kind}`.toLowerCase();
+    if (/\b(lake|lakeside|fishing|fishermen|harbou?r|shore|coast|seaside|\bsea\b|bay\b)/.test(waterWords)) features.push('lake');
+    else if (/\b(river|stream|ford|mill|brook|creek|bridge)\b/.test(waterWords)) features.push('river');
     return {
         name: brief.name,
         summary: [brief.summary, `${brief.name} is ${pick(r, ['a sleepy', 'a busy', 'a wary', 'a prosperous', 'a struggling', 'a festive'])} ${brief.size === 'big' ? 'town' : 'village'}${brief.mood ? `, ${brief.mood}` : ''}.`].filter(Boolean).join(' '),
@@ -1374,7 +1379,7 @@ const SPOTS = {
     swamp: ['Sunken Shrine', 'Hag\'s Hut Ruin', 'Rotting Jetty', 'Will-o\'-wisp Pool', 'Croc Bank', 'Bog Graves', 'Reed Island', 'Dead Tree Grove', 'Smugglers\' Camp', 'Drowned Statue'],
     camp: ['Campfire Circle', 'Supply Tents', 'Picket Line', 'Lookout Post', 'Latrine Ditch', 'Commander\'s Tent', 'Stream Crossing', 'Wood Pile'],
     other: ['Clearing', 'Old Ruin', 'Stream Pool', 'Shrine', 'Campsite', 'Graves', 'Den', 'Standing Stones', 'Ford', 'Lookout'],
-    open: ['Standing Stones', 'Grassy Rise', 'Dry Stream Bed', 'Lone Oak', 'Sheepfold Ruin', 'Old Cairn', 'Hollow Way', 'Wind-bent Thorn', 'Shepherd\'s Hut', 'Boggy Dip', 'The Lookout', 'Rabbit Warren', 'Stream Crossing'],
+    open: ['Standing Stones', 'Grassy Rise', 'Dry Wash', 'Lone Oak', 'Sheepfold Ruin', 'Old Cairn', 'Hollow Way', 'Wind-bent Thorn', 'Shepherd\'s Hut', 'Boggy Dip', 'The Lookout', 'Rabbit Warren', 'Cart Track'],
 };
 const WILD_CREATURES = { jungle: ['Jungle Cat', 'Giant Snake', 'Ape', 'Poison Frog Swarm', 'Bandit'], forest: ['Wolf', 'Bandit', 'Bear', 'Boar', 'Goblin'], swamp: ['Crocodile', 'Bog Zombie', 'Giant Toad', 'Lizardfolk', 'Bandit'], camp: ['Bandit', 'Sentry', 'Mercenary'], other: ['Wolf', 'Bandit', 'Boar'], open: ['Wolf', 'Bandit', 'Wild Dog', 'Boar'] };
 
@@ -1398,7 +1403,7 @@ export function wildsFromBrief(briefIn, seed = 1) {
     if (rooms.length > 4) links.push({ a: rooms[1].id, b: rooms[rooms.length - 1].id, via: 'door' });
     const guards = [];
     const nG = brief.guards ?? int(r, 0, brief.size === 'big' ? 5 : 3);
-    for (let i = 0; i < nG; i++) { const w = brief.creatures ? cap(brief.creatures.replace(/s$/i, '')) : pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `a ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
+    for (let i = 0; i < nG; i++) { const w = brief.creatures ? cap(singular(brief.creatures)) : pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `a ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
     const nT = brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 0, 2);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });
     return {

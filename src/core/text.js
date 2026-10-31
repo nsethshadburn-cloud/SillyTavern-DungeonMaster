@@ -149,14 +149,29 @@ export function nameKey(s) {
 
 /** Find best match for a speaker name among candidates (exact, then first-name, then contains). */
 export function matchName(name, candidates) {
-    const key = nameKey(name);
+    const key = nameKey(name).replace(/^(?:the|a|an|some) /, '');
     if (!key) return null;
     let hit = candidates.find(c => nameKey(c) === key);
     if (hit) return hit;
-    hit = candidates.find(c => nameKey(c).split(' ')[0] === key.split(' ')[0]);
+    // "Raider 1" is not "Raider 2": when the name carries a number, only names with that number (or none) can be it.
+    const num = s => (/\b(\d+)\b/.exec(s) || [])[1] ?? null;
+    const n = num(key);
+    const pool = n === null ? candidates : candidates.filter(c => { const m = num(nameKey(c)); return m === null || m === n; });
+    hit = pool.find(c => nameKey(c).split(' ')[0] === key.split(' ')[0]);
     if (hit) return hit;
-    hit = candidates.find(c => nameKey(c).includes(key) || key.includes(nameKey(c)));
+    hit = pool.find(c => nameKey(c).includes(key) || key.includes(nameKey(c)));
     return hit ?? null;
+}
+
+/** One of them: "sentries" → "sentry", "wolves" → "wolf", "boxes" → "box", "raiders" → "raider". */
+export function singular(word) {
+    const w = String(word ?? '').trim();
+    if (!w) return w;
+    if (/ies$/i.test(w)) return w.replace(/ies$/i, 'y');
+    if (/ves$/i.test(w)) return w.replace(/ves$/i, 'f');
+    if (/(ss|us|is)$/i.test(w)) return w;
+    if (/(x|ch|sh|s)es$/i.test(w)) return w.replace(/es$/i, '');
+    return w.replace(/s$/i, '');
 }
 
 const STOPWORDS = new Set(('a an and or but so if then than the to of in on at for with from by as into onto up down out over about '

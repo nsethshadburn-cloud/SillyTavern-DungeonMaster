@@ -67,7 +67,7 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
  *   items (the party); itemsOf = what someone carries (their own and the shared pack)
  */
 /** States the bookkeeper may never set or clear: the dice, the DM's own fields and the map own these. */
-const NOT_THE_BOOKKEEPERS = /unconscious|incapacitated|out cold|senseless|dead|dying|asleep|sleeping|caged|uncaged|cuffed|shackled|chained|locked|free|freed|conscious|awake|alive/i;
+const NOT_THE_BOOKKEEPERS = /unconscious|incapacitated|out cold|senseless|dead|dying|asleep|sleeping|caged|uncaged|cuffed|shackled|chained|locked|free|freed|conscious|awake|alive|restrained|tied|bound|rope|netted|caught|paraly|stunned/i;
 
 /**
  * Fence the bookkeeper's changes: conditions only on the party (never the place's people), never

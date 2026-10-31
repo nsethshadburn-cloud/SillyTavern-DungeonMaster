@@ -4,7 +4,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isWildKind, wildsFromBrief, normalizeBrief, WILD_KINDS } from '../src/core/architect.js';
 import { generateWilds, normalizePlan } from '../src/core/layout.js';
-import { mapRequest, kindFromWords, ruleTriage } from '../src/core/triage.js';
+import { mapRequest, kindFromWords, ruleTriage, nameFromWords } from '../src/core/triage.js';
+import { campFromBrief, generateCamp, isCamp } from '../src/core/camp.js';
+import { matchName, singular } from '../src/core/text.js';
+import { looksLikeThing, NOT_A_PERSON } from '../src/core/explore.js';
+import { parseMapSync } from '../src/core/mapsync.js';
+import { dropFallen, combatSummary } from '../src/core/world.js';
+import { doubleDice } from '../src/core/dice.js';
+import { inferStanding } from '../src/core/access.js';
+import { planFromBrief, townFromBrief } from '../src/core/architect.js';
+import { generatePlace, generateTown, normalizeTownPlan } from '../src/core/layout.js';
+import { parseBookkeeping, tidyBookkeeping } from '../src/core/bookkeeper.js';
 import { themeFor, normalizeMap } from '../src/core/grid.js';
 import { diceText } from '../src/core/dice.js';
 import { createWorldState, startCombat, ensureEnemy, applyStateChanges } from '../src/core/world.js';
@@ -100,4 +110,77 @@ test('a place change that names nothing says so instead of vanishing; a fighter 
     const positions = placeNear(map, { Amber: toCoord(2, 2) }, ['Gaunt Raider'], { x: 2, y: 2 }, 3);
     assert.ok(positions['Gaunt Raider'], 'placed');
     assert.ok(/replace": true/.test(DM_RULES) && /WHAT DIDN'T TAKE/.test(DM_RULES) && /from the player's own hits/.test(DM_RULES));
+});
+
+test('live test, finding 1: a camp with a story spot in the pens builds (the zone lookup no longer hands back false)', () => {
+    for (const rooms of [[{ room: 'the cages', has: ['a rusted key'], note: 'captives in cages' }], [{ room: 'the pens', name: 'The Meat Pens', has: [] }], [{ room: 'the chief\'s tent', has: ['the letter'] }, { room: 'the cages', has: ['the cell key'] }]]) {
+        const brief = normalizeBrief({ name: 'Gyre Roost', kind: 'fort', size: 'medium', summary: 'A lashed-timber stockade on a crag where the raiders keep captives in cages to eat.', start: 'locked in a cage', rooms });
+        assert.ok(isCamp('fort', `${brief.name} ${brief.summary}`), 'captives make it a camp');
+        const p = generateCamp(campFromBrief(brief, 3), 3);
+        assert.ok(p && Object.values(p.rooms).some(rm => rm.type === 'cell'), 'built, with a pen');
+    }
+});
+
+test('live test, finding 4: "Raider 1" is not "Raider 2"; sentries are a sentry', () => {
+    assert.equal(matchName('Aarakocra Raider 1', ['Aarakocra Raider 2', 'Aarakocra Raider 3']), null);
+    assert.equal(matchName('Aarakocra Raider 1', ['Aarakocra Raider 2', 'Aarakocra Raider 1']), 'Aarakocra Raider 1');
+    assert.equal(matchName('the raider', ['Aarakocra Raider 2']), 'Aarakocra Raider 2');
+    assert.equal(matchName('Judy', ['Judy Hopps', 'Amber']), 'Judy Hopps');
+    assert.equal(singular('sentries'), 'sentry'); assert.equal(singular('wolves'), 'wolf'); assert.equal(singular('raiders'), 'raider'); assert.equal(singular('boss'), 'boss');
+});
+
+test('live test, finding 9: a fire is not a person, for the map sync and for the DM', () => {
+    assert.ok(looksLikeThing('Fire') && looksLikeThing('the smoke') && NOT_A_PERSON.test('a fire'));
+    assert.ok(!looksLikeThing('Gaunt Raider') && !looksLikeThing('Mother Gristle'));
+    const ops = parseMapSync(JSON.stringify({ changes: [{ op: 'spawn', name: 'Fire', what: 'a fire in Crooked Hall spreading north', near: 'P4', hostile: false, intent: 'wander' }, { op: 'spawn', name: 'Guard Dog', what: 'a snarling mastiff', near: 'P4', hostile: true, intent: 'attack' }] }), { party: ['Amber'], people: [], things: ['P4'], doors: [], rooms: [] }, { story: 'The torch catches the straw and the fire spreads north. A snarling mastiff bursts out of the kennel.' });
+    assert.deepEqual(ops.map(o => o.name), ['Guard Dog']);
+    const map = { w: 6, h: 6, rows: Array(6).fill('......'), theme: 'house', props: [] };
+    const place = { name: 'x', floors: [{ id: 'F0', name: 'x', level: 0, map }], rooms: {}, doors: {}, traps: {}, items: {}, guards: {}, stairs: [], exits: [], buildings: {}, state: { positions: {}, explored: {}, floor: 'F0' } };
+    const log = applyPlaceChanges(place, { guards: { Fire: { at: 'b2', description: 'a fire spreading', hostile: false } } });
+    assert.ok(log.some(l => /⚠️ guards\.Fire/.test(l)) && !Object.keys(place.guards).length);
+});
+
+test('live test, finding 20: the sync only walks a companion where the story said', () => {
+    const known = { party: ['Amber', 'Judy Hopps'], people: [], things: ['P4'], doors: [], rooms: ['R2'], labels: { P4: 'crate', R2: 'The Blue Room' } };
+    assert.equal(parseMapSync(JSON.stringify({ changes: [{ op: 'move', who: 'Judy Hopps', to: 'R2' }] }), known, { story: 'Judy runs for the stairs.' }).length, 0);
+    assert.equal(parseMapSync(JSON.stringify({ changes: [{ op: 'move', who: 'Judy Hopps', to: 'R2' }] }), known, { story: 'Judy ducks into the blue room.' }).length, 1);
+});
+
+test('live test, findings 19 and 26: the dead leave the order and are named dead; a critical doubles every die', () => {
+    const world = createWorldState();
+    world.party = { Amber: { hp: 60, hp_max: 60, conditions: [] } };
+    startCombat(world, { enemies: [{ name: 'Raider 2', hp: 13, ac: 12, dex: 0 }, { name: 'Raider 3', hp: 13, ac: 12, dex: 0 }] }, [], () => 0.5);
+    world.combat.enemies['Raider 2'].hp = 0;
+    assert.deepEqual(dropFallen(world), ['Raider 2']);
+    assert.ok(!world.combat.order.some(o => o.name === 'Raider 2') && world.combat.order.some(o => o.name === 'Raider 3'));
+    assert.ok(/DEAD .*Raider 2/.test(combatSummary(world, 'Amber')));
+    assert.equal(doubleDice('1d6+5+3d6'), '2d6+5+6d6');
+    assert.equal(doubleDice('d8+2'), '2d8+2');
+});
+
+test('live test, findings 31 and 32: a captive in a castle cell is a prisoner; a dart trap ties nobody up', () => {
+    const castle = { kind: 'castle', name: 'Gyre Roost', rooms: {}, state: {} };
+    assert.equal(inferStanding(castle, { start: 'locked in a cell together', why: 'taken there' }).label, 'prisoner');
+    assert.equal(inferStanding({ kind: 'hills', name: 'Windscar Reach', rooms: {}, state: {} }, { start: 'outside' }).label, 'free');
+    const tidy = tidyBookkeeping({ conditions_add: { 'Judy Hopps': ['restrained (rope)', 'poisoned'] } }, { party: ['Judy Hopps'] });
+    assert.deepEqual(tidy, { conditions_add: { 'Judy Hopps': ['poisoned'] } });
+});
+
+test('live test, findings 12 and 16: a dry gully is dry, a lake room holds water, a fishing village has its lake', () => {
+    const land = (kind, name, summary, seed) => generateWilds(normalizePlan(wildsFromBrief(normalizeBrief({ name, kind, size: 'small', summary, start: 'outside' }), seed)), seed);
+    const gully = land('hills', 'Windscar Reach Gully', 'A dry gully in bare hills: bare rock, scrub, dust and dry wind.', 7);
+    const rows = gully.floors[0].map.rows.join('');
+    assert.ok((rows.match(/T/g) || []).length / rows.length < 0.08, 'few trees');
+    assert.ok(!/[~w]/.test(rows), 'no water nobody asked for');
+    assert.ok(!gully.floors[0].map.props.some(p => p.type === 'fern' || p.type === 'mushroom' || p.type === 'lilypad'), 'no fern or mushroom on dry land');
+    const cave = generatePlace(normalizePlan(planFromBrief(normalizeBrief({ name: 'Oubliette Cave', kind: 'cave', size: 'small', summary: 'A dark cave with an underground lake.', rooms: [{ room: 'the underground lake', has: [] }], start: 'entrance' }), 3)), 3);
+    assert.ok(cave && cave.floors.some(f => /[~w]/.test(f.map.rows.join(''))), 'water in the lake room');
+    const town = generateTown(normalizeTownPlan(townFromBrief(normalizeBrief({ name: 'Oubliette', kind: 'village', size: 'small', summary: 'A small fishing village by a lake, nets drying on the shore.' }), 4)), 4);
+    assert.ok(/w/.test(town.floors[0].map.rows.join('')) && /b/.test(town.floors[0].map.rows.join('')), 'a lake and a jetty');
+});
+
+test('live test, finding 13: a map asked for by its kind gets a name of its own', () => {
+    assert.equal(nameFromWords('regenerate the map: a small bandit camp by a river'), 'Bandit Camp by a River');
+    assert.equal(nameFromWords('make it a large map of woods with a stream'), 'Woods with a Stream');
+    assert.equal(nameFromWords('open downs with standing stones'), 'Open Downs with Standing Stones');
 });

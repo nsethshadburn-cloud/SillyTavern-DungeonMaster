@@ -222,3 +222,13 @@ export function mapRequest(text) {
         redo: /\b(re-?gen\w*|regen\w*|rebuild|redo|re-?make|remake|again|change|fix|correctly|properly|new map|replace|different|other)\b/.test(w),
     };
 }
+
+/** A place name out of a request's words: "regenerate the map: a small bandit camp by a river" → "Bandit Camp by a River". */
+export function nameFromWords(text) {
+    let t = String(text || '').replace(/^.*?\b(?:map|grid)\b\s*[:,-]?\s*/i, '').replace(/^(?:make it|make|build|with|of)\s+/i, '').replace(/[.!?].*$/, '').trim();
+    t = t.replace(/^(?:a|an|the|some)\s+/i, '').replace(/\b(large|big|huge|massive|small|tiny|little|wide|vast|sprawling|please|now|map)\b/gi, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:a|an|the|some)\s+/i, '');
+    const words = t.split(' ').filter(Boolean).slice(0, 6);
+    if (!words.length) return '';
+    return words.map((w, i) => (i > 0 && /^(by|of|on|in|at|with|and|under|near|the|to|a|an)$/i.test(w) ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
+}
+

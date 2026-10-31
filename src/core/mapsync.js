@@ -5,7 +5,7 @@
 // that exist, only sensible states) before anything moves. Pure module.
 
 import { extractJson, nameKey, matchName } from './text.js';
-import { INTENTS, looksLikeThing } from './explore.js';
+import { INTENTS, looksLikeThing, NOT_A_PERSON } from './explore.js';
 
 /**
  * The prompt. party/people: [{name, at, room, note}]; things: [{id, name, at, room}];
@@ -94,7 +94,7 @@ export function parseMapSync(text, known, { story = '' } = {}) {
         let ch = null;
         if (op === 'spawn') {
             const name = String(raw.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-            if (!name || matchName(name, party) || looksLikeThing(name)) continue;
+            if (!name || matchName(name, party) || looksLikeThing(name) || NOT_A_PERSON.test(String(raw.what ?? '').trim().split(/\s+/).slice(0, 2).join(' '))) continue;
             const what = String(raw.what ?? '').trim();
             if (!inStory(name, what)) continue;
             const already = people.find(p => nameKey(p) === nameKey(name)) ?? sameAs(name, what);
@@ -108,7 +108,7 @@ export function parseMapSync(text, known, { story = '' } = {}) {
             if (!who) continue;
             // Someone the story doesn't mention didn't move.
             if (op !== 'intent' && !inStory(who)) continue;
-            if (op === 'move') { const to = spotOf(raw.to); if (to && nameKey(to) !== nameKey(who)) ch = { op, who, to }; }
+            if (op === 'move') { const to = spotOf(raw.to); const label = known.labels?.[to] ?? to; if (to && nameKey(to) !== nameKey(who) && (!known.labels || !party.includes(who) || inStory(label))) ch = { op, who, to }; }
             else if (op === 'hide') { if (party.includes(who)) ch = { op, who, in: idOf(raw.in, known.things || []) ?? '' }; }
             else if (op === 'pose') {
                 const how = String(raw.how ?? '').toLowerCase().trim();

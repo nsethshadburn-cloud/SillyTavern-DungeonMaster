@@ -80,11 +80,11 @@ export function describeRoom(room, { things = [], condition = 'kept', placeName 
 }
 
 /** The prompt for the local model to describe a room from its facts. */
-export function describePrompt(room, { things = [], condition = 'kept', placeName = '', kind = '', mood = '' } = {}) {
+export function describePrompt(room, { things = [], condition = 'kept', placeName = '', kind = '', mood = '', time = '', outdoors = false } = {}) {
     const system = 'You write short, vivid room descriptions for a tabletop roleplaying game. Plain simple English. Reply with the description only.';
     const user = [
         `Place: ${placeName}${kind ? ` (${kind})` : ''}${mood ? `, ${mood}` : ''}; ${condition === 'ruined' ? 'ruined and abandoned' : condition === 'worn' ? 'lived in and a bit run down' : 'kept up and tidy'}.`,
-        `Room: ${room.name} (${String(room.type).replace(/_/g, ' ')}), ${room.lit ? 'lit' : 'dark'}.`,
+        `${outdoors ? 'Spot' : 'Room'}: ${room.name} (${String(room.type).replace(/_/g, ' ')}), ${room.lit ? 'lit' : 'dark'}${time ? `, ${time}` : ''}.${outdoors ? ' Outdoors, open land: no walls, lamps or furniture unless listed.' : ''}`,
         `In it: ${things.length ? things.join(', ') : 'nothing much'}.`,
         room.hint ? `Notes: ${room.hint}` : '',
         '',

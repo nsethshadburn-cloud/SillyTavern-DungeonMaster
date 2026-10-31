@@ -635,6 +635,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         let g = personByName(place, name);
         // Someone new on the map, or moved: {"at": "ab14" | "room": "G5", "description": "the cook", "hostile": false}.
         if (raw && typeof raw === 'object') {
+            if (!g && looksLikeThing(name)) { log.push(`⚠️ guards.${name}: that's not a person (fire, smoke, a noise and the like are never someone on the map; use map_effects or narration)`); continue; }
             const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : null);
             const info = { description: raw.description, hostile: raw.hostile === true };
             g = where ? placePerson(place, name, where, { floor, info, arrive: true }) : null;
@@ -919,10 +920,14 @@ export function searchRadius(total, dc = 12) {
 /** Trap words: a "covered pit", a "pressure plate (darts)", an "alarm glyph" is a trap, never someone. */
 const TRAP_WORDS = /\b(trap|traps|pit|plate|dart|darts|needle|glyph|sigil|rune|runes|ward|warding|snare|net|tripwire|wire|blade|blades|spike|spikes|stones|boulder|gas|alarm|pendulum|portcullis|trapdoor|mechanism)\b/i;
 
+/** Things the story talks about that are not anyone: fire, smoke, noises, weather, light. */
+export const NOT_A_PERSON = /^(?:the |a |an |some )?(?:fire|flames?|blaze|smoke|embers?|sparks?|light|lantern ?light|torch ?light|glow|noise|sounds?|footsteps|voices?|shouts?|screams?|alarm|bells?|horn|wind|rain|storm|thunder|lightning|snow|fog|mist|smell|stench|shadows?|darkness|dust|water|flood|blood|rubble|cave-?in|collapse|trap|darts?|arrows?|net)s?$/i;
+
 /** Does a name look like an object (a tin of lamp oil, a ledger, a spike pit) rather than a person or creature? */
 export function looksLikeThing(name) {
     const s = String(name || '').trim();
     if (!s) return true;
+    if (NOT_A_PERSON.test(s)) return true;
     if (BEING_WORDS.test(s)) return false;
     // A name with a thing word in it and no creature word: an object (a proper name like "Graves" has neither).
     return THING_WORDS.test(s) || TRAP_WORDS.test(s);

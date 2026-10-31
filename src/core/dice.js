@@ -217,3 +217,8 @@ export function diceText(request, natural) {
     const both = adv && Array.isArray(request?.dice) ? request.dice.filter(d => Number(d.sides) === die).map(d => Number(d.value)).slice(0, 2) : [];
     return both.length === 2 ? `(${both.join(', ')} → ${natural ?? '?'}, ${adv})` : `(${natural ?? '?'})`;
 }
+
+/** Every die in a damage formula doubled (a critical hit): "1d6+5+3d6" → "2d6+5+6d6". */
+export function doubleDice(formula) {
+    return String(formula ?? '').replace(/(\d*)\s*d\s*(\d+)/gi, (m, n, sides) => `${(Number(n) || 1) * 2}d${sides}`);
+}

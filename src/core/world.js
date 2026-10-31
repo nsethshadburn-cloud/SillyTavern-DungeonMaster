@@ -396,6 +396,14 @@ export function ensureEnemy(world, name, { hp = 10, ac = 12, dex = 0, sprite = '
     return clean;
 }
 
+/** Anyone in the fight at 0 HP leaves the initiative order (they take no more turns). Returns who was dropped. */
+export function dropFallen(world) {
+    if (!world.combat) return [];
+    const dead = world.combat.order.filter(o => world.combat.enemies?.[o.name]?.hp <= 0).map(o => o.name);
+    if (dead.length) world.combat.order = world.combat.order.filter(o => !dead.includes(o.name));
+    return dead;
+}
+
 export function addToInitiative(world, name, total) {
     if (!world.combat) return;
     world.combat.order = world.combat.order.filter(o => o.name !== name);
@@ -451,7 +459,8 @@ export function newRound(world) {
 
 export function combatSummary(world, player = '') {
     if (!world.combat) return 'Not in combat.';
-    const lines = [`Round ${world.combat.round}. Initiative: ${world.combat.order.map(o => `${o.name} ${o.init}`).join(', ')}.`];
+    const fallen = Object.entries(world.combat.enemies || {}).filter(([, e]) => e.hp <= 0).map(([n]) => n);
+    const lines = [`Round ${world.combat.round}. Initiative: ${world.combat.order.map(o => `${o.name} ${o.init}`).join(', ')}.${fallen.length ? ` DEAD (take no turns, never act or speak again, their bodies lie where they fell): ${fallen.join(', ')}.` : ''}`];
     const at = world.combat.order.findIndex(o => o.name === player);
     if (player && at < 0) lines.push(`WAITING for ${player}'s initiative roll: nobody acts yet. Ask for it (player_roll kind "initiative") if it isn't already asked.`);
     else if (player) {

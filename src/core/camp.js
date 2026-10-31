@@ -9,7 +9,7 @@
 import { ensureIds, clearDoorways, normalizePlan, generatePlace } from './layout.js';
 import { generateTunnels } from './warren.js';
 import { PROPS, MAX_PLACE_SIZE, terrainAt } from './grid.js';
-import { nameKey } from './text.js';
+import { nameKey, singular } from './text.js';
 
 // ---------- randomness ----------
 
@@ -39,7 +39,7 @@ function smoothNoise(seed, scale = 6) {
 // ---------- what counts as a camp ----------
 
 /** Words that make a place hostile ground (its people attack or seize the party). */
-export const HOSTILE_WORDS = /bandit|raider|marauder|brigand|cannibal|reaver|outlaw|warband|horde|cutthroat|pirate|slaver|goblin|orc|hostile|enemy|raiding|war ?camp|hideout|lair|mercenar|cult/i;
+export const HOSTILE_WORDS = /bandit|raider|marauder|brigand|cannibal|reaver|outlaw|warband|horde|cutthroat|pirate|slaver|goblin|orc|hostile|enemy|raiding|war ?camp|hideout|lair|mercenar|cult|captives?|prisoners?|\bcages?\b|slaves?|flesh|man-?eat|eat(?:ing|s)? (?:their|the) (?:captives|prisoners|dead)|stockade|kidnap/i;
 const PEACEFUL_WORDS = /caravan|pilgrim|travell?er|merchant|refugee|hunters?'|hunting|woodcutter|picnic|campsite|resting|our camp|the party'?s camp|shepherd|fishing|army camp|soldiers'|expedition|survey/i;
 
 /**
@@ -122,20 +122,24 @@ export function campFromBrief(brief, seed = 1) {
     for (const role of roles) { counts[role] = (counts[role] ?? 0) + 1; room(`${role.toUpperCase()}${counts[role] > 1 ? counts[role] : ''}`, nameOf(role), ZONE_TYPES[role], { role }); }
     const find = re => rooms.find(x => re.test(`${x.role} ${x.name}`.toLowerCase()));
     // The story's spots: what's in them goes into the zone that fits.
+    // (Plain rules in order, never a `&&` chain under `??`: a rule that doesn't match gives false, and
+    // false is not null, so a chain like that stops at the first rule and hands back `false` as a room.)
+    const ZONE_RULES = [
+        [/chief|boss|leader|lodge|war ?lord|captain|tent of|his tent|her tent|command/, () => find(/^lodge|^keep/) ?? find(/^fire/)],
+        [/cage|\bpens?\b|prison|captive|slave|hostage|\bcells?\b/, () => find(/^pens|^keep/) ?? find(/^fire/)],
+        [/fire|bonfire|circle/, () => find(/^fire/)],
+        [/gate|front|entrance/, () => find(/^gate/)],
+        [/loot|store|supply|supplies|wagon|cart|plunder/, () => find(/^supplies/)],
+        [/cook|kettle|kitchen|butcher|meat/, () => find(/^cook/)],
+        [/forge|smith|anvil/, () => find(/^smithy/)],
+        [/shrine|altar|totem|idol|skull/, () => find(/^shrine/)],
+        [/tent|sleep|bedroll/, () => find(/^tents/)],
+        [/outside|woods|tree|approach|hill|ridge/, () => rooms[0]],
+    ];
     const zoneFor = text => {
         const t = String(text || '').toLowerCase();
-        return (/chief|boss|leader|lodge|war ?lord|captain|tent of|his tent|her tent|command/.test(t) && (find(/^lodge|^keep/) ?? find(/^fire/)))
-            ?? (/cage|pen|prison|captive|slave|hostage/.test(t) && (find(/^pens|^keep/) ?? find(/^fire/)))
-            ?? (/fire|bonfire|circle/.test(t) && find(/^fire/))
-            ?? (/gate|front|entrance/.test(t) && find(/^gate/))
-            ?? (/loot|store|supply|supplies|wagon|cart|plunder/.test(t) && find(/^supplies/))
-            ?? (/cook|kettle|kitchen|butcher|meat/.test(t) && find(/^cook/))
-            ?? (/forge|smith|anvil/.test(t) && find(/^smithy/))
-            ?? (/shrine|altar|totem|idol|skull/.test(t) && find(/^shrine/))
-            ?? (/tent|sleep|bedroll/.test(t) && find(/^tents/))
-            ?? (/outside|woods|tree|approach|hill|ridge/.test(t) && rooms[0])
-            ?? rooms.find(x => nameKey(x.name).includes(nameKey(t)) || nameKey(t).includes(nameKey(x.name)))
-            ?? find(/^lodge|^keep/) ?? find(/^fire/) ?? rooms[1];
+        for (const [re, get] of ZONE_RULES) if (re.test(t)) { const rm = get(); if (rm) return rm; }
+        return rooms.find(x => nameKey(x.name).includes(nameKey(t)) || nameKey(t).includes(nameKey(x.name))) ?? find(/^lodge|^keep/) ?? find(/^fire/) ?? rooms[1];
     };
     for (const s of brief.rooms) {
         const rm = zoneFor(`${s.room} ${s.name}`);
@@ -148,7 +152,7 @@ export function campFromBrief(brief, seed = 1) {
     if (obj && !/escape|get out|flee|leave|freedom/i.test(obj) && !rooms.some(x => x.items.some(it => nameKey(it.name) === nameKey(obj))) && !brief.people.some(p => nameKey(p.name) === nameKey(obj))) (find(/^lodge|^keep/) ?? find(/^fire/)).items.push({ name: obj, hidden: false, note: 'what the party came for' });
     // Who holds the camp: a chief (the brief's leader, or one of ours) and the band.
     const guards = [];
-    const band = spec.cannibal ? CANNIBAL_WORDS : brief.creatures ? [cap(brief.creatures.replace(/s$/i, ''))] : BAND_WORDS;
+    const band = spec.cannibal ? CANNIBAL_WORDS : brief.creatures ? [cap(singular(brief.creatures))] : BAND_WORDS;
     const chiefIn = brief.people.find(p => p.hostile && /chief|boss|leader|war ?lord|captain|king|queen|lord|matriarch|patriarch|head/i.test(p.what));
     const lodge = find(/^lodge|^keep/) ?? find(/^fire/);
     const chiefName = chiefIn ? chiefIn.name : `${pick(r, CHIEF_NAMES)} ${pick(r, CHIEF_EPITHETS)}`;
