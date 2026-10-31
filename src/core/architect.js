@@ -532,6 +532,8 @@ export function normalizeBrief(raw, req = {}) {
         walls: ['palisade', 'stone', 'none'].includes(str(d.walls).toLowerCase()) ? str(d.walls).toLowerCase() : '',
         gates: ['open', 'closed', 'locked'].includes(str(d.gates).toLowerCase()) ? str(d.gates).toLowerCase() : '',
         shape: ['round', 'square'].includes(str(d.shape).toLowerCase()) ? str(d.shape).toLowerCase() : '',
+        tunnels: ['yes', 'no'].includes(str(d.tunnels).toLowerCase()) ? str(d.tunnels).toLowerCase() : /^(true|1)$/.test(str(d.tunnels).toLowerCase()) ? 'yes' : /^(false|0)$/.test(str(d.tunnels).toLowerCase()) ? 'no' : '',
+        horror: ['gruesome', 'plain'].includes(str(d.horror).toLowerCase()) ? str(d.horror).toLowerCase() : /gruesome|horror|grisly|gore/.test(str(d.horror).toLowerCase()) ? 'gruesome' : /plain|none|no\b/.test(str(d.horror).toLowerCase()) ? 'plain' : '',
         floors: num(d.floors) === null ? null : Math.max(1, Math.min(5, Math.round(num(d.floors)))),
         exterior: d.exterior && typeof d.exterior === 'object' ? d.exterior : null,
     };

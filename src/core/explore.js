@@ -579,6 +579,7 @@ function bump(place, floorId) {
 export function setDoorState(place, door, state) {
     door.state = state;
     const map = floorById(place, door.floor).map;
+    if (door.kind === 'trapdoor') { const hatch = map.props.find(p => p.door === door.id); if (hatch) { hatch.hidden = state === 'hidden'; hatch.open = state === 'open' || state === 'broken'; } }
     const rows = map.rows.map(r => r.split(''));
     rows[map.h - 1 - door.y][door.x] = doorChar(door);
     map.rows = rows.map(r => r.join(''));
@@ -1443,7 +1444,7 @@ const coord = (x, y) => `${colName(x)}${y + 1}`;
 function doorLine(place, d, fromRoom) {
     const other = d.rooms.find(id => id && id !== fromRoom);
     const where = d.exit ? 'OUTSIDE (the way out)' : d.enter ? `building ${d.enter}` : other ? `${other} ${place.rooms[other]?.name ?? ''}` : 'a corridor';
-    const bits = [d.kind !== 'door' ? d.kind : '', d.key ? `key: ${d.key}` : '', d.kind === 'locked' || d.kind === 'cell' ? `pick DC ${lockDc(place, d)}` : '', d.kind === 'secret' ? `find DC ${d.dc ?? 15}` : ''].filter(Boolean).join(', ');
+    const bits = [d.kind !== 'door' ? d.kind : '', d.key ? `key: ${d.key}` : '', d.kind === 'locked' || d.kind === 'cell' ? `pick DC ${lockDc(place, d)}` : '', d.kind === 'secret' || (d.kind === 'trapdoor' && d.state === 'hidden') ? `find DC ${d.dc ?? 15}` : '', d.kind === 'trapdoor' ? `${d.name || 'a trapdoor'}${d.state === 'hidden' ? ', hidden: reveal it with doors {"' + d.id + '": "found"} when they find it' : ''}` : ''].filter(Boolean).join(', ');
     return `${d.id}→${where}${bits ? ` (${bits})` : ''}`;
 }
 

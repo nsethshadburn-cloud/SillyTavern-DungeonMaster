@@ -394,5 +394,34 @@ export const PROP_ART = {
         ctx.strokeStyle = hsl(28, 36, 22); ctx.lineWidth = Math.max(1, k / 50); for (const ox of [-0.06, 0.06]) { ctx.beginPath(); ctx.moveTo(cx + ox * k, cy + k * 0.38); ctx.lineTo(cx + ox * k, cy + k * 0.49); ctx.stroke(); }
         ellipse(ctx, cx + k * 0.18, cy - k * 0.18, k * 0.1, k * 0.1, '#3a3a3a', '#222', 1.5); flame(ctx, cx + k * 0.18, cy - k * 0.2, k * 0.1);
     },
+    trapdoor(ctx, r, cx, cy, s, w, h, prop = {}) {
+        shadow(ctx, cx + s * 0.04, cy + s * 0.06, s * 0.4, s * 0.3);
+        if (prop.open) {
+            // Flung open: the black hole, the top of the ladder, the hatch thrown back beside it.
+            ellipse(ctx, cx, cy, s * 0.36, s * 0.3, '#0a0705', 'rgba(60,40,20,0.9)', Math.max(1.5, s * 0.05));
+            for (const dx of [-0.12, 0.12]) line(ctx, cx + dx * s, cy - s * 0.2, cx + dx * s, cy + s * 0.2, hsl(30, 38, 45), Math.max(2, s * 0.06));
+            for (let i = 0; i < 3; i++) line(ctx, cx - s * 0.14, cy - s * 0.12 + i * s * 0.12, cx + s * 0.14, cy - s * 0.12 + i * s * 0.12, hsl(30, 38, 55), Math.max(1.5, s * 0.04));
+            woodBox(ctx, r, cx + s * 0.24, cy - s * 0.4, s * 0.2, s * 0.8, 26);
+            return;
+        }
+        woodBox(ctx, r, cx - s * 0.4, cy - s * 0.32, s * 0.8, s * 0.64, 28);
+        for (let i = 1; i < 3; i++) line(ctx, cx - s * 0.4 + i * s * 0.27, cy - s * 0.3, cx - s * 0.4 + i * s * 0.27, cy + s * 0.3, 'rgba(0,0,0,0.35)', 1);
+        line(ctx, cx - s * 0.36, cy - s * 0.2, cx + s * 0.36, cy - s * 0.2, '#3a3a3e', Math.max(1.5, s * 0.05));
+        line(ctx, cx - s * 0.36, cy + s * 0.2, cx + s * 0.36, cy + s * 0.2, '#3a3a3e', Math.max(1.5, s * 0.05));
+        ellipse(ctx, cx + s * 0.22, cy, s * 0.08, s * 0.08, null, '#555', Math.max(1.5, s * 0.04));
+    },
+    carcass(ctx, r, cx, cy, s) {
+        // Hung from a hook by a chain: a flayed side, red and pale, dripping into a pool below.
+        line(ctx, cx, cy - s * 0.48, cx, cy - s * 0.3, '#9aa1a8', Math.max(1.5, s * 0.04));
+        ctx.strokeStyle = '#9aa1a8'; ctx.lineWidth = Math.max(1.5, s * 0.045); ctx.beginPath(); ctx.arc(cx + s * 0.04, cy - s * 0.26, s * 0.05, Math.PI, Math.PI * 0.2, true); ctx.stroke();
+        blob(ctx, cx + s * 0.06, cy + s * 0.42, s * 0.3, 'rgba(110,0,0,0.5)');
+        shadow(ctx, cx + s * 0.05, cy + s * 0.4, s * 0.2, s * 0.08);
+        ellipse(ctx, cx, cy + s * 0.02, s * 0.2, s * 0.34, hsl(8, 55, 42), hsl(8, 60, 18), 1.5);
+        ellipse(ctx, cx - s * 0.04, cy - s * 0.04, s * 0.1, s * 0.22, hsl(20, 50, 68, 0.9));
+        for (let i = 0; i < 3; i++) line(ctx, cx - s * 0.14, cy - s * 0.16 + i * s * 0.12, cx + s * 0.12, cy - s * 0.12 + i * s * 0.12, hsl(0, 60, 28), 1.5);
+        line(ctx, cx - s * 0.08, cy + s * 0.3, cx - s * 0.1, cy + s * 0.44, hsl(8, 55, 42), Math.max(2, s * 0.07));
+        line(ctx, cx + s * 0.08, cy + s * 0.3, cx + s * 0.1, cy + s * 0.44, hsl(8, 55, 42), Math.max(2, s * 0.07));
+        for (let i = 0; i < 2; i++) ellipse(ctx, cx + between(r, -0.1, 0.1) * s, cy + s * 0.46 + i * s * 0.04, s * 0.03, s * 0.02, '#7a1010');
+    },
     skullpole(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.06, cy + s * 0.3, s * 0.12, s * 0.06); ctx.fillStyle = hsl(26, 36, 20); ctx.fillRect(cx - s * 0.04, cy - s * 0.38, s * 0.08, s * 0.72); line(ctx, cx - s * 0.22, cy - s * 0.2, cx + s * 0.22, cy - s * 0.2, hsl(26, 36, 20), s * 0.06); for (const [dx, dy, k] of [[0, -0.36, 0.13], [-0.22, -0.18, 0.1], [0.22, -0.18, 0.1]]) { ellipse(ctx, cx + dx * s, cy + dy * s, s * k, s * k * 1.05, hsl(45, 20, 86)); ellipse(ctx, cx + dx * s - s * k * 0.35, cy + dy * s - s * k * 0.1, s * k * 0.25, s * k * 0.3, '#222'); ellipse(ctx, cx + dx * s + s * k * 0.35, cy + dy * s - s * k * 0.1, s * k * 0.25, s * k * 0.3, '#222'); } for (let i = 0; i < 3; i++) line(ctx, cx + s * 0.04, cy + s * (0.05 + i * 0.08), cx + s * 0.18, cy + s * (0.1 + i * 0.08), hsl(0, 50, 30), 1.5); },
 };

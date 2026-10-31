@@ -28,7 +28,7 @@ import { sfx } from '../ui/sound.js';
 import { watchParty } from './watch.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
 import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
-import { isCamp, campFromBrief, generateCamp } from '../core/camp.js';
+import { isCamp, campFromBrief, generateCamp, campInteriors } from '../core/camp.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
 import { voiceLine } from './voices.js';
@@ -1133,6 +1133,21 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         const partyNames = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
         const standing = inferStanding(place, { start: req.start, why: req.why, objective: req.objective, startRoom: place.start?.room ?? null });
         for (const n of partyNames) setStanding(place, n, standing);
+        if (camp) {
+            // The camp's houses and its tunnels have their insides already: built with the camp and linked
+            // to it (each inside's parent is the camp, through the house's door; a tunnel shaft comes up
+            // through the trapdoor it belongs to, in the camp or in the chief's lodge).
+            const keyOf = id => `${key}--${slug(id, 12)}`;
+            for (const { building: bid, place: inside } of campInteriors(place, seed)) {
+                const b = place.buildings[bid];
+                inside.parent = { key, door: b.door };
+                for (const x of Object.values(inside.buildings)) if (x.interior === null) x.interior = keyOf(x.id);
+                for (const e of inside.exits) if (e.up) e.up.key = e.up.host ? keyOf(e.up.host) : key;
+                for (const n of partyNames) setStanding(inside, n, inferStanding(inside, { why: 'walked in through the door' }));
+                storePlace(c, keyOf(bid), inside, { size: big ? 'big' : 'small', parent: key });
+                b.interior = keyOf(bid);
+            }
+        }
         if (placePlan?.building) {
             anim.step('Laying out the grounds');
             outside = generateGrounds(placePlan, place, seed + 1);
@@ -1149,7 +1164,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         await flushWrites();
         const summary = town
             ? `🗺️ **${place.name}** is ready: ${Object.keys(place.buildings).length} buildings. Their insides are built when you walk in.`
-            : camp ? `🗺️ **${place.name}** is ready: ${{ small: 'a small camp', medium: 'a camp', big: 'a big camp', massive: 'a sprawling war camp' }[place.camp?.size] ?? 'a camp'} ${place.camp?.walls === 'stone' ? 'behind stone walls' : place.camp?.walls === 'palisade' ? 'behind a palisade' : 'in the open'}, ${Object.keys(place.guards).length} people. The inside shows itself as you see it.`
+            : camp ? `🗺️ **${place.name}** is ready: ${{ small: 'a small camp', medium: 'a camp', big: 'a big camp', massive: 'a sprawling war camp' }[place.camp?.size] ?? 'a camp'} ${place.camp?.walls === 'stone' ? 'behind stone walls' : place.camp?.walls === 'palisade' ? 'behind a palisade' : 'in the open'}, ${Object.keys(place.guards).length} people${Object.values(place.buildings).filter(b => b.kind !== 'tunnels').length ? ', and its houses have insides (walk in through their doors)' : ''}. The inside shows itself as you see it.`
             : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} rooms${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
         await anim.finish(summary);
         await enterPlace(enterKey, { quiet });
@@ -1222,7 +1237,8 @@ async function enterBuilding(c, townKey, town, door) {
     }
     // Arrive just inside the front door (its first way out).
     const inside = await loadPlace(key, c);
-    const front = inside?.exits?.[0];
+    // The tunnels have several ways up: arrive at the one under this trapdoor.
+    const front = inside?.exits?.find(e => e.up && e.up.door === door.id && e.up.key === townKey) ?? inside?.exits?.find(e => !e.up) ?? inside?.exits?.[0];
     const at = front ? { floor: front.floor, ...freeNear(inside, front.floor, front.x, front.y) } : null;
     await enterPlace(key, { at });
 }
@@ -1618,7 +1634,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             if (up) { handoff = { stairs: up }; break; }
             const exit = exitAt(place, floorId, x, y);
             if (exit) { handoff = { exit }; break; }
-            if (d?.enter) { handoff = { building: d }; break; }
+            if (d?.enter && d.state !== 'hidden') { handoff = { building: d }; break; }
             if (d?.exit) { handoff = { exit: d }; break; }
         }
         // Wait for anyone still deciding, then everyone following catches up (unless something happened).
@@ -1678,10 +1694,14 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         } else if (handoff?.exit) {
             if (place.parent) {
                 // Out of a building, back onto the street in front of its door.
-                const town = await loadPlace(place.parent.key, c);
-                const td = town?.doors[place.parent.door];
+                // (A tunnel's shaft comes up through its own trapdoor, in the woods, the pen or the lodge.)
+                const up = handoff.exit.up && atlas(c).places[handoff.exit.up.key] ? handoff.exit.up : null;
+                const upKey = up?.key ?? place.parent.key;
+                const town = await loadPlace(upKey, c);
+                const td = town?.doors[up?.door ?? place.parent.door];
+                if (td && td.state === 'hidden') setDoorState(town, td, 'open');
                 const outside = td ? freeNear(town, td.floor, td.x, td.y) : null;
-                await enterPlace(place.parent.key, { at: outside ? { floor: td.floor, ...outside } : null, quiet: true });
+                await enterPlace(upKey, { at: outside ? { floor: td.floor, ...outside } : null, quiet: true });
             } else {
                 // Leaving the map for good: ask first (a stray tap shouldn't end it).
                 const ok = await ST.callGenericPopup(`<h3>Leave ${escape(place.name)}?</h3><p>You'll walk out and this map closes. The DM takes the story from there (it can bring you back here later).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Leave', cancelButton: 'Stay' });

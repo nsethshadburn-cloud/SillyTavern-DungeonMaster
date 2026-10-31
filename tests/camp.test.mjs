@@ -1,7 +1,7 @@
 // The fort builder: camps and forts as one outdoor map, from a brief.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isCamp, campSpec, campFromBrief, generateCamp } from '../src/core/camp.js';
+import { isCamp, campSpec, campFromBrief, generateCamp, campInteriors } from '../src/core/camp.js';
 import { normalizeBrief } from '../src/core/architect.js';
 import { findPath, walkable, computeVisible } from '../src/core/explore.js';
 import { PROPS, terrainAt } from '../src/core/grid.js';
@@ -18,6 +18,11 @@ function reachableRoom(p, rm, keys = true) {
         if (findPath(p, 'F0', p.start, { x, y }, { knownOnly: false, keys })) return true;
     }
     return false;
+}
+/** The square in front of a building's door can be walked to from the start. */
+function reachableDoor(p, b, keys = true) {
+    const d = p.doors[b.door];
+    return Boolean(findPath(p, 'F0', p.start, { x: d.x, y: d.y }, { knownOnly: false, keys }));
 }
 
 test('camps and forts are told from buildings and towns', () => {
@@ -55,17 +60,25 @@ test('a small bandit camp: a palisade with a gate, towers, stakes outside, a fir
     const rows = map.rows.map(s => s.split(''));
     rows[map.h - 1 - gate.y][gate.x] = '#';
     const sealed = { ...p, floors: [{ ...p.floors[0], map: { ...map, rows: rows.map(s => s.join('')) } }] };
-    const lodge = Object.values(p.rooms).find(rm => rm.hut && rm.type === 'master_bedroom');
+    const lodge = Object.values(p.buildings).find(b => b.kind === 'lodge');
     assert.ok(lodge, 'the chief has a lodge');
-    assert.ok(!reachableRoom(sealed, lodge), 'with the gate walled up the lodge cannot be reached');
-    assert.ok(reachableRoom(p, lodge), 'through the gate it can');
-    for (const t of ['watchtower', 'spikes', 'bonfire', 'tent', 'chest', 'torch', 'bed']) assert.ok(map.props.some(pr => pr.type === t), t);
+    assert.ok(p.doors[lodge.door]?.enter === lodge.id && map.roofs.length >= 1, 'a roofed building with a door into it');
+    assert.ok(!reachableDoor(sealed, lodge), 'with the gate walled up the lodge cannot be reached');
+    assert.ok(reachableDoor(p, lodge), 'through the gate it can');
+    for (const t of ['watchtower', 'spikes', 'bonfire', 'tent', 'torch']) assert.ok(map.props.some(pr => pr.type === t), t);
+    // Inside the lodge: his hall, his bed and strongbox, and the chief himself.
+    const inside = campInteriors(p, 3).find(x => x.building === lodge.id)?.place;
+    assert.ok(inside && inside.kind === 'interior' && inside.exits.length >= 1, 'the lodge has an inside with a way out');
+    const iprops = inside.floors[0].map.props;
+    for (const t of ['chest', 'bed', 'weaponrack']) assert.ok(iprops.some(pr => pr.type === t), `${t} inside`);
+    assert.ok(iprops.some(pr => pr.type === 'chest' && /strongbox/.test(pr.label || '')), 'the strongbox');
     assert.ok(map.props.some(pr => pr.type === 'bonfire' && pr.w === 3 && pr.h === 3), 'a 3x3 bonfire');
     assert.ok(map.rows.join('').includes(':'), 'worn paths');
     assert.ok(map.props.filter(pr => pr.type === 'spikes').every(pr => terrainAt(map, pr.x, pr.y) !== '#'));
     assert.ok(map.rows.join('').includes('T'), 'woods outside');
-    const chief = Object.values(p.guards).find(g => /the|One-Eye|Ironjaw|Half-hand|Blackteeth|Nine-fingers|Wolfmother|Bonecrown/.test(g.name));
-    assert.ok(chief && inRect(lodge, chief.x, chief.y), 'the chief is in the lodge');
+    const chief = Object.values(inside.guards).find(g => g.name === lodge.keeper);
+    assert.ok(chief && chief.hostile && inside.rooms[chief.room]?.id === 'CHAMBER', 'the chief is in his chamber inside the lodge');
+    assert.ok(!Object.values(p.guards).some(g => g.name === lodge.keeper), 'and not out in the yard');
     assert.ok(Object.values(p.guards).some(g => g.lookout && map.props.some(t => t.type === 'watchtower' && g.x >= t.x && g.x < t.x + 2 && g.y >= t.y && g.y < t.y + 2)), 'a lookout stands on a tower');
     assert.ok(PROPS.watchtower.platform && !PROPS.watchtower.blocks);
     assert.equal(p.start.room, 'APPROACH');
@@ -90,6 +103,7 @@ test('every zone of every camp can be walked to from the gate; traps sit beside 
         assert.ok(map.w <= 64 && map.h <= 64, `${b.name} ${seed}: fits`);
         assert.ok(walkable(p, 'F0', p.start.x, p.start.y), `${b.name} ${seed}: dry start`);
         for (const rm of Object.values(p.rooms)) assert.ok(reachableRoom(p, rm), `${b.name} ${seed}: ${rm.name} can be reached`);
+        for (const bl of Object.values(p.buildings)) if (bl.kind !== 'tunnels') assert.ok(reachableDoor(p, bl), `${b.name} ${seed}: the door of ${bl.name} can be reached`);
         const doors = Object.values(p.doors);
         for (const t of Object.values(p.traps)) {
             assert.ok(t.state === 'hidden' && doors.every(d => Math.abs(d.x - t.x) > 1 || Math.abs(d.y - t.y) > 1), `${b.name} ${seed}: trap ${t.id} away from doors`);
@@ -108,12 +122,12 @@ test('a massive war camp has an inner stockade with its own locked gate, holding
     assert.equal(inner.state, 'locked');
     const keep = p.rooms[inner.rooms[0]];
     assert.ok(keep && keep.role === 'keep');
-    const lodge = Object.values(p.rooms).find(rm => rm.hut && rm.type === 'master_bedroom');
+    const lodge = Object.values(p.buildings).find(b => b.kind === 'lodge');
     const pen = Object.values(p.rooms).find(rm => rm.hut && rm.type === 'cell');
     assert.ok(lodge && pen, 'a lodge and a pen');
     assert.ok(inRect(keep, lodge.rect.x, lodge.rect.y) && inRect(keep, pen.rect.x, pen.rect.y), 'both inside the stockade');
     // Without the keys the inner gate (and the pen's barred gate) stop you; with them you get in.
-    assert.ok(!reachableRoom(p, lodge, false) && reachableRoom(p, lodge, true));
+    assert.ok(!reachableDoor(p, lodge, false) && reachableDoor(p, lodge, true));
     assert.ok(Object.values(p.guards).some(g => g.role === 'prisoner' && inRect(pen, g.x, g.y)), 'a captive in the pen');
     assert.ok(Object.values(p.guards).filter(g => g.hostile).length >= 8, 'a band to hold it');
 });
@@ -131,20 +145,23 @@ test('a captive starts in the pen, behind a locked barred gate the pen keeps as 
     assert.ok(p.floors[0].map.props.filter(pr => pr.type === 'blood').length >= 6, 'blood on the ground');
     // From inside the pen you see the pen, not the camp beyond its walls.
     const vis = computeVisible(p, 'F0', [p.start]);
-    const lodge = Object.values(p.rooms).find(rm => rm.hut && rm.type === 'master_bedroom');
-    assert.ok(!vis[lodge.rect.y * p.floors[0].map.w + lodge.rect.x], 'the lodge is out of sight');
+    const lodge = Object.values(p.buildings).find(b => b.kind === 'lodge');
+    assert.ok(!vis[(lodge.rect.y + 1) * p.floors[0].map.w + lodge.rect.x + 1], 'the lodge is out of sight');
+    assert.ok(Object.values(p.buildings).some(b => b.kind === 'butchery'), 'a cannibal camp has a flesh house');
 });
 
 test('the story\'s things land where they belong; the same brief and seed give the same camp', () => {
     const brief = { name: 'Crowcamp', kind: 'bandit camp', size: 'medium', summary: 'Bandits hold the heir for ransom.', rooms: [{ room: 'the chief\'s tent', has: ['the ransom letter'] }], people: [{ name: 'Vask Ironjaw', what: 'the bandit chief', hostile: true }, { name: 'Lady Mira', what: 'the kidnapped heir, held in a cage', where: 'the cages' }], objective: 'the heir\'s signet ring' };
     const a = build(brief, 9), b = build(brief, 9);
     assert.deepEqual(a, b);
-    assert.ok(a.guards['Vask Ironjaw']?.hostile, 'the brief\'s chief leads the camp');
-    const lodge = Object.values(a.rooms).find(rm => rm.hut && rm.type === 'master_bedroom');
-    assert.ok(inRect(lodge, a.guards['Vask Ironjaw'].x, a.guards['Vask Ironjaw'].y), 'in the lodge');
-    const letter = Object.values(a.items).find(i => i.name === 'the ransom letter');
-    assert.ok(letter && inRect(lodge, letter.x, letter.y), 'the letter is in the lodge');
-    assert.ok(Object.values(a.items).some(i => /signet/.test(i.name)), 'the objective is somewhere in the camp');
+    const lodge = Object.values(a.buildings).find(b => b.kind === 'lodge');
+    assert.equal(lodge.keeper, 'Vask Ironjaw', 'the brief\'s chief leads the camp');
+    const inside = campInteriors(a, 9).find(x => x.building === lodge.id).place;
+    assert.ok(inside.guards['Vask Ironjaw']?.hostile, 'in the lodge');
+    const letter = Object.values(inside.items).find(i => i.name === 'the ransom letter');
+    assert.ok(letter && letter.room === 'CHAMBER', 'the letter is in the chief\'s chamber');
+    assert.ok(Object.values(inside.items).some(i => /signet/.test(i.name)), 'the objective is in the chief\'s keeping');
+    assert.deepEqual(campInteriors(a, 9).map(x => x.place), campInteriors(b, 9).map(x => x.place), 'the same insides too');
     const pen = Object.values(a.rooms).find(rm => rm.hut && rm.type === 'cell');
     assert.ok(inRect(pen, a.guards['Lady Mira'].x, a.guards['Lady Mira'].y) && a.guards['Lady Mira'].hostile === false);
     assert.notDeepEqual(build(brief, 10).floors[0].map.rows, a.floors[0].map.rows, 'another seed, another camp');

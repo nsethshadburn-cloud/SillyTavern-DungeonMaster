@@ -60,7 +60,7 @@ export function thingsOnFloor(place, floorId, { exclude = [] } = {}) {
     }
     for (const d of Object.values(place.doors || {})) {
         if (d.floor !== floorId || d.state === 'hidden' || d.state === 'walled' || !seen(d.x, d.y)) continue;
-        const name = d.kind === 'cell' ? 'cell door' : d.enter || d.exit ? 'front door' : 'door';
+        const name = d.kind === 'trapdoor' ? 'trapdoor' : d.kind === 'cell' ? 'cell door' : d.enter || d.exit ? 'front door' : 'door';
         out.push({ kind: 'door', id: d.id, name, keys: keysOf([name, 'door'], ['doorway', 'gate', ...(d.kind === 'cell' ? ['cell', 'bars'] : []), ...(d.state === 'locked' ? ['lock', 'locked'] : [])]), x: d.x, y: d.y, w: 1, h: 1 });
     }
     for (const w of Object.values(place.windows || {})) {

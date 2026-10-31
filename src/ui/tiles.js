@@ -27,6 +27,7 @@ const THEME_STYLE = {
     forest: { floor: 'grass', floorC: [100, 35, 30], wall: 'hedge', wallC: [120, 35, 16], dark: 0.05, moss: 0 },
     jungle: { floor: 'grass', floorC: [112, 44, 24], wall: 'hedge', wallC: [125, 45, 13], dark: 0.12, moss: 0.15 },
     camp: { floor: 'dirt', floorC: [32, 30, 30], wall: 'palisade', wallC: [26, 38, 26], dark: 0.12, moss: 0 },
+    warren: { floor: 'dirt', floorC: [28, 26, 20], wall: 'earth', wallC: [26, 32, 17], dark: 0.55, moss: 0.04 },
     swamp: { floor: 'mud', floorC: [70, 25, 20], wall: 'hedge', wallC: [95, 30, 13], dark: 0.2, moss: 0.2 },
     snow: { floor: 'snow', floorC: [210, 30, 88], wall: 'rock', wallC: [215, 10, 45], dark: 0, moss: 0 },
     desert: { floor: 'sand', floorC: [40, 55, 62], wall: 'sandstone', wallC: [32, 45, 48], dark: 0, moss: 0 },
@@ -39,7 +40,7 @@ const MATERIAL = {
 };
 const WALL_MATERIAL = {
     brick: [25, 7, 28], stoneblock: [30, 8, 36], wallpaper: [350, 30, 26], panel: [24, 35, 18], log: [26, 42, 28], timber: [38, 22, 54],
-    plaster: [40, 25, 66], rock: [24, 14, 20], hedge: [120, 35, 16], sandstone: [32, 45, 48], palisade: [26, 38, 26],
+    plaster: [40, 25, 66], rock: [24, 14, 20], hedge: [120, 35, 16], sandstone: [32, 45, 48], palisade: [26, 38, 26], earth: [26, 32, 17],
 };
 const OUTDOOR = new Set(['forest', 'jungle', 'camp', 'swamp', 'snow', 'desert', 'town']);
 /** Terrain that is drawn on top of a floor: its ground comes from the squares around it. */
@@ -193,6 +194,7 @@ function capColor(st) {
     if (['wallpaper', 'panel', 'timber', 'plaster'].includes(st.wall)) return [25, 22, 15];
     if (st.wall === 'log' || st.wall === 'palisade') return [28, 34, 30];
     if (st.wall === 'rock') return [c[0], c[1], c[2] + 6];
+    if (st.wall === 'earth') return [c[0], c[1] - 6, c[2] + 3];
     return [c[0], Math.round(c[1] * 0.7), Math.min(c[2] + 6, 46)];
 }
 
@@ -305,6 +307,15 @@ function wallFace(ctx, r, x, y, s, st, gx, gy) {
             ctx.moveTo(cx, cy); for (let k = 0; k < 4; k++) ctx.lineTo(cx + between(r, -0.25, 0.25) * s, cy + between(r, -0.25, 0.25) * s); ctx.fill();
         }
         speckle(ctx, r, x, y, s, 50, 0.25);
+    } else if (style === 'earth') {
+        // Packed earth with stones and roots in it, shored with timber: a post every other square, a beam along the top.
+        ctx.fillStyle = tone(c, r, 3); ctx.fillRect(x, y, s, s);
+        for (let i = 0; i < 5; i++) ellipse(ctx, x + r() * s, y + r() * s, s * between(r, 0.04, 0.1), s * between(r, 0.03, 0.07), r() < 0.5 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.08)');
+        ctx.strokeStyle = 'rgba(40,25,10,0.55)'; ctx.lineWidth = 1;
+        for (let i = 0; i < 2; i++) { const rx = x + r() * s, ry = y + r() * s * 0.3; ctx.beginPath(); ctx.moveTo(rx, ry); ctx.bezierCurveTo(rx + between(r, -0.2, 0.2) * s, ry + s * 0.3, rx + between(r, -0.3, 0.3) * s, ry + s * 0.5, rx + between(r, -0.2, 0.2) * s, ry + s * 0.9); ctx.stroke(); }
+        speckle(ctx, r, x, y, s, 40, 0.2);
+        if ((gx + gy) % 2 === 0) { const g = ctx.createLinearGradient(x + s * 0.08, 0, x + s * 0.3, 0); g.addColorStop(0, hsl(28, 40, 34)); g.addColorStop(0.5, hsl(28, 40, 26)); g.addColorStop(1, hsl(28, 40, 16)); ctx.fillStyle = g; ctx.fillRect(x + s * 0.08, y, s * 0.22, s); grain(ctx, r, x + s * 0.1, y + 2, s * 0.18, s - 4, true, 0.15); }
+        ctx.fillStyle = hsl(28, 38, 24); ctx.fillRect(x, y, s, s * 0.12); ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(x, y + s * 0.12, s, s * 0.03);
     } else if (style === 'timber' || style === 'plaster') {
         ctx.fillStyle = tone(c, r, 3); ctx.fillRect(x, y, s, s);
         speckle(ctx, r, x, y, s, 30, 0.08);
@@ -479,6 +490,12 @@ function stairs(ctx, r, x, y, s, up) {
     ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(x + s * 0.08, y, s * 0.06, s); ctx.fillRect(x + s * 0.86, y, s * 0.06, s);
     ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = `${s * 0.32}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(up ? '▲' : '▼', x + s / 2, y + s / 2);
+}
+/** A dirt shaft with a wooden ladder up it: the tunnels' way out. */
+function ladderShaft(ctx, r, x, y, s) {
+    ellipse(ctx, x + s / 2, y + s / 2, s * 0.46, s * 0.42, '#0a0705', 'rgba(70,45,22,0.85)', Math.max(2, s * 0.06));
+    for (const dx of [-0.16, 0.16]) line(ctx, x + s / 2 + dx * s, y + s * 0.12, x + s / 2 + dx * s, y + s * 0.9, hsl(30, 38, 42), Math.max(2, s * 0.07));
+    for (let i = 0; i < 4; i++) line(ctx, x + s * 0.32, y + s * (0.22 + i * 0.18), x + s * 0.68, y + s * (0.22 + i * 0.18), hsl(30, 38, 50), Math.max(1.5, s * 0.05));
 }
 /** Water colours by setting: [shallow, mid, deep] as [r, g, b]. */
 const WATER_TINTS = {
@@ -943,7 +960,7 @@ export function paintMapBase(map, tile) {
             else if (ch === '^') rubble(ctx, r, px, py, tile);
             else if (ch === 'T') { if (outdoor) trees.push([r, px, py]); else pillarTile(ctx, r, px, py, tile); }
             else if (ch === '+' || ch === '/' || ch === 'D') door(ctx, r, px, py, tile, ch === '/' ? 'open' : ch === 'D' ? 'locked' : 'closed', isWall(at(x - 1, y)) || isWall(at(x + 1, y)), gates.has(`${x},${y}`));
-            else if (ch === '<' || ch === '>') stairs(ctx, r, px, py, tile, ch === '<');
+            else if (ch === '<' || ch === '>') (map.theme === 'warren' ? ladderShaft : stairs)(ctx, r, px, py, tile, ch === '<');
             else if (ch === 'I' || ch === 'J' || ch === 'j') {
                 const barLike = c => c === 'I' || c === 'J' || c === 'j' || isWall(c);
                 ironBars(ctx, px, py, tile, barLike(at(x - 1, y)) || barLike(at(x + 1, y)), ch === 'I' ? 'bars' : ch === 'J' ? 'locked' : 'shut');

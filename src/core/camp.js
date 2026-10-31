@@ -6,8 +6,9 @@
 // where the prisoners and the chief are kept. Attacking one means getting through the wall; escaping
 // one means getting out through the gates. Pure module: a brief in, a place out, from a seed.
 
-import { ensureIds, clearDoorways } from './layout.js';
-import { PROPS, MAX_PLACE_SIZE } from './grid.js';
+import { ensureIds, clearDoorways, normalizePlan, generatePlace } from './layout.js';
+import { generateTunnels } from './warren.js';
+import { PROPS, MAX_PLACE_SIZE, terrainAt } from './grid.js';
 import { nameKey } from './text.js';
 
 // ---------- randomness ----------
@@ -67,7 +68,11 @@ export function campSpec(brief) {
     const gates = ['open', 'closed', 'locked'].includes(brief.gates) ? brief.gates : (/siege|locked|shut|barred|night/.test(words) ? 'locked' : hostile ? 'closed' : 'open');
     const shape = ['round', 'square'].includes(brief.shape) ? brief.shape : /\b(round|ring|circular|circle)\b/.test(words) ? 'round' : /\b(square|rectangular|rectangle)\b/.test(words) ? 'square' : walls === 'stone' ? 'square' : 'round';
     const pens = hostile && (cannibal || /prison|captive|cage|slave|hostage|kidnap|ransom|abduct|taken|held|pen\b|pens\b/.test(`${words} ${brief.start} ${brief.objective}`.toLowerCase()));
-    return { walls, size, cannibal, gates, hostile, pens, shape };
+    // Gruesome inside (torture rooms, larders of flesh, blood underfoot): a cannibal camp always, any camp the brief paints that way, never one the brief calls plain.
+    const horror = brief.horror === 'plain' ? false : brief.horror === 'gruesome' || cannibal || /horror|gruesome|torture|flay|gore|grisly|nightmare|skinned|butcher/.test(words);
+    // Tunnels under the camp: asked for, named in the brief, or (null) left to the dice.
+    const tunnels = brief.tunnels === 'yes' ? true : brief.tunnels === 'no' ? false : /tunnel|burrow|warren|underground|beneath|catacomb|below the camp|dug under/.test(words) ? true : null;
+    return { walls, size, cannibal, gates, hostile, pens, shape, horror, tunnels };
 }
 
 // ---------- names ----------
@@ -192,7 +197,7 @@ export function campFromBrief(brief, seed = 1) {
         floors: [{ id: 'F0', name: brief.name || 'The camp', level: 0 }],
         rooms, links: [], guards: [...guards, ...people], start,
         fixes: [],
-        camp: { ...spec, traps: nT, chief: spec.hostile ? chiefName : '' },
+        camp: { ...spec, tunnels: spec.tunnels ?? (spec.hostile && (spec.cannibal ? r() < 0.75 : spec.size === 'small' ? r() < 0.2 : r() < 0.4)), traps: nT, chief: spec.hostile ? chiefName : '' },
     };
 }
 
@@ -208,7 +213,7 @@ const TRAP_KINDS = [['covered spike pit', 'DEX', '2d6 piercing, in the pit'], ['
  */
 export function generateCamp(plan, seed = 1) {
     const r = rng(seed);
-    const spec = { walls: 'palisade', size: 'small', cannibal: false, gates: 'closed', hostile: true, pens: true, traps: 2, shape: 'round', ...(plan.camp || {}) };
+    const spec = { walls: 'palisade', size: 'small', cannibal: false, gates: 'closed', hostile: true, pens: true, traps: 2, shape: 'round', horror: false, tunnels: false, ...(plan.camp || {}) };
     const { W, H, margin } = SIZES[spec.size] ?? SIZES.small;
     const c = [...Array(H)].map(() => Array(W).fill('.'));
     const get = (x, y) => (x >= 0 && y >= 0 && x < W && y < H ? c[y][x] : '%');
@@ -268,7 +273,7 @@ export function generateCamp(plan, seed = 1) {
     const addDoor = (x, y, kind, state, rooms, extra = {}) => {
         const id = `D${++doorN}`;
         place.doors[id] = { id, floor: 'F0', x, y, kind, state, rooms, ...extra };
-        set(x, y, kind === 'cell' ? (state === 'locked' ? 'J' : state === 'open' ? '/' : 'j') : state === 'locked' ? 'D' : state === 'open' ? '/' : '+');
+        if (kind !== 'trapdoor') set(x, y, kind === 'cell' ? (state === 'locked' ? 'J' : state === 'open' ? '/' : 'j') : state === 'locked' ? 'D' : state === 'open' ? '/' : '+');
         return place.doors[id];
     };
     if (walled) {
@@ -371,12 +376,12 @@ export function generateCamp(plan, seed = 1) {
     if (middle) {
         let innerIn;
         if (round) {
-            const kx = 0.42, ky = 0.42;
+            const kx = 0.5, ky = 0.5;
             innerIn = (x, y) => ellipseIn(x, y, kx, ky);
             innerRect = { x: Math.floor(cxm - rx * kx), y: Math.floor(cym - ry * ky), w: Math.ceil(rx * kx * 2) + 1, h: Math.ceil(ry * ky * 2) + 1 };
         } else {
-            // Two squares bigger than its cell on every side: room for the lodge and the pen with a yard between.
-            innerRect = { x: middle.rect.x - 2, y: middle.rect.y - 2, w: middle.rect.w + 4, h: middle.rect.h + 4 };
+            // Three squares bigger than its cell on every side: room for the lodge and the pen with a yard between.
+            innerRect = { x: middle.rect.x - 3, y: middle.rect.y - 3, w: middle.rect.w + 6, h: middle.rect.h + 6 };
             innerIn = (x, y) => x >= innerRect.x && x < innerRect.x + innerRect.w && y >= innerRect.y && y < innerRect.y + innerRect.h;
         }
         const innerWall = (x, y) => innerIn(x, y) && DIRS8.some(([dx, dy]) => !innerIn(x + dx, y + dy));
@@ -424,7 +429,8 @@ export function generateCamp(plan, seed = 1) {
         if (!open(front[0], front[1])) return false;
         return !hutRects.some(q => x < q.x + q.w + 1 && x + w + 1 > q.x && y < q.y + q.h + 1 && y + h + 1 > q.y);
     };
-    const buildHut = (cl, w, h, { id, name, type, wall = 'log', floor = 'planks', door = 'door', state = 'closed', dc = null }, prefer = null) => {
+    let bN = 0;
+    const buildHut = (cl, w, h, { id, name, type, wall = 'log', floor = 'planks', door = 'door', state = 'closed', dc = null, enter = null }, prefer = null) => {
         // Anywhere in the camp (inside the stockade for the keep), nearest the zone's middle or the point asked for.
         const within = cl.role === 'keep' ? (x, y) => x >= cl.rect.x && x < cl.rect.x + cl.rect.w && y >= cl.rect.y && y < cl.rect.y + cl.rect.h : () => true;
         const spots = [];
@@ -448,14 +454,24 @@ export function generateCamp(plan, seed = 1) {
         const [x, y] = chosen;
         const outer = { x: x - 1, y: y - 1, w: w + 2, h: h + 2 };
         hutRects.push(outer);
-        for (let i = outer.x; i < outer.x + outer.w; i++) for (let j = outer.y; j < outer.y + outer.h; j++) if (i === outer.x || j === outer.y || i === outer.x + outer.w - 1 || j === outer.y + outer.h - 1) { set(i, j, '#'); taken.add(K(i, j)); }
+        // A building with an inside is solid on this map, under a roof; a pen is open to the sky, its walls a ring.
+        const roofed = Boolean(enter);
+        for (let i = outer.x; i < outer.x + outer.w; i++) for (let j = outer.y; j < outer.y + outer.h; j++) if (roofed || i === outer.x || j === outer.y || i === outer.x + outer.w - 1 || j === outer.y + outer.h - 1) { set(i, j, '#'); taken.add(K(i, j)); }
         // The door on the side that faces the camp's fire (the way everyone comes), in the middle of it.
         const dx = fireAt.x - (x + w / 2), dy = fireAt.y - (y + h / 2);
         const side = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'e' : 'w') : (dy > 0 ? 'n' : 's');
         const d = side === 'e' ? { x: outer.x + outer.w - 1, y: y + Math.floor(h / 2) } : side === 'w' ? { x: outer.x, y: y + Math.floor(h / 2) } : side === 'n' ? { x: x + Math.floor(w / 2), y: outer.y + outer.h - 1 } : { x: x + Math.floor(w / 2), y: outer.y };
-        const dr = addDoor(d.x, d.y, door, state, [id, roomIdOf(cl)], dc ? { dc } : {});
+        const dr = roofed ? addDoor(d.x, d.y, 'door', 'closed', [null, null], { enter }) : addDoor(d.x, d.y, door, state, [id, roomIdOf(cl)], dc ? { dc } : {});
         taken.delete(K(d.x, d.y));
         taken.add(K(d.x + (side === 'e' ? 1 : side === 'w' ? -1 : 0), d.y + (side === 'n' ? 1 : side === 's' ? -1 : 0)));
+        if (roofed) {
+            // The roof leaves the wall with the door showing, as a town house does.
+            const rf = side === 'n' ? { x: outer.x, y: outer.y, w: outer.w, h: outer.h - 1 } : side === 's' ? { x: outer.x, y: outer.y + 1, w: outer.w, h: outer.h - 1 } : side === 'e' ? { x: outer.x, y: outer.y, w: outer.w - 1, h: outer.h } : { x: outer.x + 1, y: outer.y, w: outer.w - 1, h: outer.h };
+            map.roofs.push({ ...rf, shape: rf.w >= 3 && rf.h >= 3 ? 'hip' : 'gable', ridge: rf.w >= rf.h ? 'h' : 'v', hue: int(r, 18, 30), sat: int(r, 22, 34), light: int(r, 22, 30), style: pick(r, ['thatch', 'thatch', 'shingle']), chimney: type === 'lodge' });
+            map.areas.push({ ...outer, wall, floor, building: enter });
+            place.buildings[enter] = { id: enter, name, kind: type, sign: '', keeper: '', description: '', size: 'small', enterable: true, door: dr.id, rect: { ...outer }, interior: null, zone: roomIdOf(cl) };
+            return { rect: outer, outer, door: dr, building: place.buildings[enter] };
+        }
         place.rooms[id] = { id, name, type, floor: 'F0', rect: { x, y, w, h }, lit: true, description: '', exit: false, hut: true };
         map.areas.push({ x, y, w, h, wall, floor, room: id });
         return { rect: { x, y, w, h }, outer, door: dr };
@@ -500,20 +516,35 @@ export function generateCamp(plan, seed = 1) {
     // A peaceful camp's leader sleeps in a big tent; a band's chief has a log lodge with his strongbox.
     const chiefLodge = (cl, prefer = null) => {
         if (!spec.hostile) { const free = freeIn(cl, { edge: 1 }).find(([x, y]) => !isTaken(x + 1, y) && !isTaken(x, y + 1) && !isTaken(x + 1, y + 1) && open(x + 1, y + 1)); if (free) put(free[0], free[1], 'tent', { w: 2, h: 2, label: 'the elder\'s tent' }); return null; }
-        const h = buildHut(cl, spec.size === 'small' ? 3 : 5, spec.size === 'small' ? 3 : int(r, 3, 4), { id: `${cl.roomId}H`, name: pick(r, ['Chief\'s Lodge', 'The Chief\'s Hut', 'War Lodge']), type: 'master_bedroom', wall: 'log', floor: 'planks' }, prefer);
-        if (!h) { put(cl.cx, cl.cy, 'tent', { w: 2, h: 2, label: 'the chief\'s tent' }); return null; }
+        const h = buildHut(cl, spec.size === 'small' ? 3 : 4, spec.size === 'small' ? 2 : 3, { id: `${cl.roomId}H`, name: pick(r, ['Chief\'s Lodge', 'The Chief\'s Hut', 'War Lodge']), type: 'lodge', wall: 'log', floor: 'planks', enter: `B${++bN}` }, prefer);
+        if (!h) { bN--; put(cl.cx, cl.cy, 'tent', { w: 2, h: 2, label: 'the chief\'s tent' }); return null; }
         hutDoors.push(h.door);
-        const { x, y, w, h: hh } = h.rect;
-        put(x, y, 'bed'); put(x + w - 1, y + hh - 1, 'chest', { label: 'the chief\'s strongbox' });
-        if (w > 4) put(x + Math.floor(w / 2), y + Math.floor(hh / 2), 'table');
-        map.props.push({ x: x + Math.floor(w / 2), y: y + Math.floor(hh / 2), type: 'rug' });
-        map.props.push({ x: x + 1, y, type: 'candles' });
-        put(x + w - 1, y, 'weaponrack');
-        if (spec.cannibal) put(x, y + hh - 1, 'skull');
+        h.building.keeper = spec.chief || '';
+        h.building.description = `The chief's log lodge: his hall and his bed, his strongbox${spec.cannibal ? ', and what he keeps of his meals' : ''}.`;
+        h.building.inside = { kind: 'lodge', size: spec.size, horror: spec.horror, cannibal: spec.cannibal, items: [], guards: [], tunnels: false };
+        return h;
+    };
+    // The camp's other houses: a cannibal camp's flesh house and bone shrine, a band's long house and store house.
+    const HOUSES = {
+        butchery: { names: ['The Flesh House', 'The Butcher\'s Hut', 'The Smokehouse'], w: 3, h: 2, description: 'Where the camp\'s meat is cut and hung. The smell reaches the gate.', keeper: ['the Butcher', 'Mother Gristle', 'Cleaver Jen', 'the Flayer'] },
+        shrine: { names: ['The Bone Shrine', 'House of Skulls', 'The Skull Lodge'], w: 2, h: 2, description: 'A hut of skulls and candles where the band\'s god is fed.', keeper: ['the Bone Priest', 'Old Marrow', 'the Mouth'] },
+        longhouse: { names: ['The Long House', 'Bunk Hall', 'The Sleeping Hall'], w: spec.size === 'medium' ? 4 : 5, h: 2, description: 'Bunks for the band, their chests and their drink.', keeper: ['Harl', 'Pim', 'Oska', 'Dunn', 'Wex'] },
+        storehouse: { names: ['The Stores', 'The Loot House', 'The Plunder Shed'], w: 3, h: 2, description: 'The band\'s plunder under a roof: crates, casks, locked chests.', keeper: [] },
+    };
+    const buildHouse = (cl, kind) => {
+        const H0 = HOUSES[kind];
+        if (!cl || !H0) return null;
+        const id = `B${++bN}`;
+        const h = buildHut(cl, H0.w, H0.h, { id, name: pick(r, H0.names), type: kind, wall: 'log', floor: 'planks', enter: id });
+        if (!h) { bN--; return null; }
+        hutDoors.push(h.door);
+        h.building.keeper = H0.keeper.length ? pick(r, H0.keeper) : '';
+        h.building.description = H0.description;
+        h.building.inside = { kind, size: spec.size, horror: spec.horror, cannibal: spec.cannibal, items: [], guards: [], band: spec.cannibal ? 'Cannibal' : 'Raider' };
         return h;
     };
     const buildPen = (cl, prefer = null) => {
-        const h = buildHut(cl, spec.size === 'small' ? 3 : int(r, 4, 5), spec.size === 'small' ? 2 : int(r, 3, 4), { id: `${cl.roomId}P`, name: pick(r, ['The Pen', 'The Cages', 'Prisoner Pen']), type: 'cell', wall: spec.walls === 'stone' ? 'stoneblock' : 'palisade', floor: 'mud', door: 'cell', state: 'locked', dc: 13 }, prefer);
+        const h = buildHut(cl, spec.size === 'small' ? 3 : cl.role === 'keep' ? 4 : int(r, 4, 5), spec.size === 'small' ? 2 : cl.role === 'keep' ? 3 : int(r, 3, 4), { id: `${cl.roomId}P`, name: pick(r, ['The Pen', 'The Cages', 'Prisoner Pen']), type: 'cell', wall: spec.walls === 'stone' ? 'stoneblock' : 'palisade', floor: 'mud', door: 'cell', state: 'locked', dc: 13 }, prefer);
         if (!h) return null;
         hutDoors.push(h.door);
         const { x, y, w, h: hh } = h.rect;
@@ -536,6 +567,12 @@ export function generateCamp(plan, seed = 1) {
         }
         if (cl.role === 'lodge' || cl.role === 'keep') chiefLodge(cl);
         if (cl.role === 'pens' || cl.role === 'keep') buildPen(cl);
+    }
+    if (spec.hostile) {
+        const want = spec.cannibal
+            ? [['butchery', 'cook'], ...(spec.size === 'big' || spec.size === 'massive' ? [['shrine', 'shrine']] : [])]
+            : [...(spec.size !== 'small' ? [['longhouse', 'tents']] : []), ...(spec.size === 'big' || spec.size === 'massive' ? [['storehouse', 'supplies']] : [])];
+        for (const [kind, role] of want) buildHouse(cells.find(x => x.role === role && x !== middle) ?? cells.find(x => !['gate', 'keep', 'fire'].includes(x.role)), kind);
     }
     // Lanes: nothing is ever built on them, so every part of the camp can be walked to. The street
     // runs from the gate to the fire and on to the back gate; each zone has a lane to the street.
@@ -646,6 +683,46 @@ export function generateCamp(plan, seed = 1) {
         const under = r();
         if (d >= 3 && under < 0.05) put(x, y, 'log'); else if (d >= 3 && under < 0.08) put(x, y, 'boulder'); else if (d >= 3 && under < 0.1) put(x, y, 'bush'); else if (under < 0.11 && d >= 3) put(x, y, 'tallgrass');
     }
+    // The tunnels: hidden trapdoors, one out in the woods, one under the straw of the pen, one under
+    // the chief's rug (that one is inside his lodge). Each is a door into the "tunnels" building.
+    const lodgeB = Object.values(place.buildings).find(b => b.kind === 'lodge');
+    if (spec.tunnels && spec.hostile) {
+        const entrances = [];
+        const hatch = (x, y, name) => { const d = addDoor(x, y, 'trapdoor', 'hidden', [null, null], { enter: 'TUN', dc: 15, name, under: get(x, y) }); map.props.push({ x, y, type: 'trapdoor', hidden: true, door: d.id }); taken.add(K(x, y)); return d; };
+        let first = null;
+        const woods = [];
+        for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
+            if (inside(x, y) || get(x, y) !== '.' || isTaken(x, y) || path.has(K(x, y)) || nearPath(x, y, 2) || nearDoorSq(x, y)) continue;
+            const d = walled ? wallDist(x, y) : 99;
+            if (walled && (d < 4 || d > 8)) continue;
+            const trees = DIRS8.filter(([dx, dy]) => get(x + dx, y + dy) === 'T').length;
+            if (trees >= 1 && DIRS.some(([dx, dy]) => get(x + dx, y + dy) === '.' && !isTaken(x + dx, y + dy))) woods.push([x, y, trees + r()]);
+        }
+        if (woods.length) {
+            const [x, y] = woods.sort((p, q) => q[2] - p[2])[0];
+            const d = hatch(x, y, 'a hidden trapdoor in the woods');
+            first = d;
+            const beside = DIRS.map(([dx, dy]) => [x + dx, y + dy]).find(([bx, by]) => get(bx, by) === '.' && !isTaken(bx, by));
+            if (beside) put(beside[0], beside[1], 'log');
+            entrances.push({ door: d.id, host: null, label: 'the woods' });
+        }
+        const penRoom = Object.values(place.rooms).find(rm => rm.hut && rm.type === 'cell');
+        if (penRoom && spec.cannibal) {
+            const rc = penRoom.rect, spots = [];
+            for (let x = rc.x; x < rc.x + rc.w; x++) for (let y = rc.y; y < rc.y + rc.h; y++) if (open(x, y) && !isTaken(x, y) && !nearDoorSq(x, y)) spots.push([x, y]);
+            if (spots.length) { const [x, y] = pick(r, spots); const d = hatch(x, y, 'a trapdoor under the straw of the pen'); first ??= d; entrances.push({ door: d.id, host: null, label: 'the pen' }); }
+        }
+        if (lodgeB) { lodgeB.inside.tunnels = true; entrances.push({ door: 'DH', host: lodgeB.id, label: 'the chief\'s lodge' }); }
+        if (entrances.length) {
+            const captiveN = plan.guards.filter(g => g.role === 'prisoner').length;
+            place.buildings.TUN = {
+                id: 'TUN', name: pick(r, ['The Tunnels', 'The Warren', 'The Holes Below', 'The Under-camp']), kind: 'tunnels', sign: '', keeper: '', size: spec.size, enterable: true,
+                description: `A maze of dirt tunnels under the camp, shored with timber: the band's bolt-hole${spec.horror ? ', its larder and its question room' : ' and its hoard'}. Its trapdoors are hidden (${entrances.map(e => e.label).join(', ')}).`,
+                door: first?.id ?? lodgeB?.door, rect: first ? { x: first.x, y: first.y, w: 1, h: 1 } : { ...lodgeB.rect }, interior: null,
+                inside: { kind: 'tunnels', size: spec.size, horror: spec.horror, cannibal: spec.cannibal, entrances, band: spec.cannibal ? 'Cannibal' : 'Raider', items: [{ name: 'the band\'s takings', hidden: false, note: 'coin, rings and trinkets' }], captives: spec.horror ? [1, 2].map(i => ({ name: `Captive ${captiveN + i}`, description: pick(r, CAPTIVES) })) : [{ name: `Captive ${captiveN + 1}`, description: pick(r, CAPTIVES) }] },
+            };
+        }
+    }
     // Nothing built may cut part of the camp off. Walk everywhere from the gate (doors count as open);
     // any crate, tent or fence that is the only thing between a reached square and an unreached one
     // is a plug, and goes. (Walls and the woods stay: they're the shape of the place.)
@@ -691,6 +768,8 @@ export function generateCamp(plan, seed = 1) {
         const cl = cells.find(x => x.roomId === rm.id) ?? (rm.id === fireRoom.id ? fireCl : null);
         for (const t of rm.traps ?? []) { const p = (cl ? freeIn(cl, { edge: 1 }) : insideSpots).find(([x, y]) => trapFree(x, y)); if (p) addTrap(p, rm.id, [t.kind, t.save || 'DEX', t.effect]); }
         for (const it of rm.items ?? []) {
+            const bld = Object.values(place.buildings).find(b => b.zone === rm.id && b.inside && b.kind === 'lodge');
+            if (bld) { bld.inside.items.push({ name: it.name, hidden: it.hidden === true, note: it.note || 'in the chief\'s strongbox' }); continue; }
             const hutId = Object.keys(place.rooms).find(id => id.startsWith(rm.id) && place.rooms[id].hut);
             const hut = hutId ? place.rooms[hutId].rect : null;
             const chest = hut ? map.props.find(p => p.type === 'chest' && p.x >= hut.x && p.x < hut.x + hut.w && p.y >= hut.y && p.y < hut.y + hut.h) : null;
@@ -712,6 +791,7 @@ export function generateCamp(plan, seed = 1) {
     const cellOf = roomId => cells.find(cl => cl.roomId === roomId) ?? (roomId === fireRoom.id ? fireCl : null);
     let towerN = 0;
     for (const g of plan.guards) {
+        if (g.chief && lodgeB) { lodgeB.inside.guards.push({ name: g.name, description: g.description, sprite: g.sprite || '' }); lodgeB.keeper = g.name; continue; }
         const cl = cellOf(g.room) ?? gateCell;
         let p;
         if (g.duty === 'lookout' && towers.length) { const t = towers[towerN++ % towers.length]; p = [t.x + (towerN % 2), t.y + (towerN % 2 ? 0 : 1)]; }
@@ -740,6 +820,109 @@ export function generateCamp(plan, seed = 1) {
     const explored = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) explored.push(!inside(x, y) || isWallSq(x, y) ? '1' : '0');
     place.state.explored.F0 = explored.join('');
-    place.camp = { walls: spec.walls, size: spec.size, cannibal: spec.cannibal, gate: `D1`, inner: innerGate?.id ?? null };
+    place.camp = { walls: spec.walls, size: spec.size, cannibal: spec.cannibal, horror: spec.horror, tunnels: Boolean(place.buildings.TUN), buildings: Object.keys(place.buildings), gate: `D1`, inner: innerGate?.id ?? null };
     return place;
+}
+
+// ---------- what's inside the camp's buildings ----------
+
+const TUNNEL_NAMES = ['The Tunnels', 'The Warren', 'The Holes Below', 'The Under-camp'];
+
+/**
+ * A hidden trapdoor in a room of a built place, under a rug, into the tunnels (building "TUN").
+ * The square keeps its floor: the hatch is a prop that shows once the door is found.
+ */
+function addHatch(inside, roomId, name, tunnelsName) {
+    const rm = inside.rooms[roomId] ?? Object.values(inside.rooms)[0];
+    if (!rm) return null;
+    const map = inside.floors.find(f => f.id === rm.floor).map;
+    const blocked = (x, y) => map.props.some(p => PROPS[p.type]?.blocks && !p.hidden && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1));
+    const nearDoor = (x, y) => Object.values(inside.doors).some(d => d.floor === rm.floor && Math.abs(d.x - x) <= 1 && Math.abs(d.y - y) <= 1);
+    const spots = [];
+    for (let x = rm.rect.x; x < rm.rect.x + rm.rect.w; x++) for (let y = rm.rect.y; y < rm.rect.y + rm.rect.h; y++) if ('._=:'.includes(terrainAt(map, x, y)) && !blocked(x, y) && !nearDoor(x, y)) spots.push([x, y, map.props.some(p => p.type === 'rug' && p.x === x && p.y === y) ? 1 : 0]);
+    if (!spots.length) return null;
+    const [x, y, rug] = spots.sort((p, q) => q[2] - p[2])[0];
+    inside.doors.DH = { id: 'DH', floor: rm.floor, x, y, kind: 'trapdoor', state: 'hidden', dc: 12, rooms: [rm.id, null], enter: 'TUN', name, under: terrainAt(map, x, y) };
+    if (!rug) map.props.push({ x, y, type: 'rug' });
+    map.props.push({ x, y, type: 'trapdoor', hidden: true, door: 'DH' });
+    inside.buildings.TUN = { id: 'TUN', name: tunnelsName, kind: 'tunnels', sign: '', keeper: '', description: 'The tunnels under the camp, through the trapdoor.', size: 'small', enterable: true, door: 'DH', rect: { x, y, w: 1, h: 1 }, interior: null };
+    ensureIds(inside);
+    return inside.doors.DH;
+}
+
+/** The inside of one of the camp's houses, planned by its kind and built like any building's inside. */
+function houseInterior(place, b, seed) {
+    const r = rng(seed);
+    const s = b.inside;
+    const horror = Boolean(s.horror), cannibal = Boolean(s.cannibal), big = s.size === 'big' || s.size === 'massive';
+    const gore = n => (horror ? Array(n).fill('blood') : []);
+    const room = (id, name, type, size, props, marks, extra = {}) => ({ id, name, type, size, lit: true, description: '', props: props.map(([type, count, label]) => ({ type, count, label: label || '' })), marks, traps: [], items: [], exit: false, windows: 'none', ...extra });
+    let rooms = [], links = [], guards = [], start;
+    const captiveName = () => pick(r, ['the Hanging Man', 'the Quiet Girl', 'Poor Wat', 'the One They Keep']);
+    if (s.kind === 'lodge') {
+        rooms = [
+            room('HALL', pick(r, ['The Chief\'s Hall', 'The War Hall', 'The Long Table']), 'room', 'medium', [['table', 1], ['chair', 2], ['weaponrack', 2], ['brazier', 1], ['banner', 1], ['rug', 1], ...(cannibal ? [['skull', 2], ['skullpole', 1]] : [])], [...gore(3), cannibal ? 'bones' : 'stain'], { exit: true, description: 'Where the chief holds court: a long table, the band\'s best weapons on the wall, his trophies.' }),
+            room('CHAMBER', pick(r, ['The Chief\'s Chamber', 'The Back Room', 'The Chief\'s Bed']), 'room', 'small', [['bed', 1], ['chest', 1, 'the chief\'s strongbox'], ['candles', 1], ['weaponrack', 1], ['rug', 1], ...(cannibal ? [['skull', 1], ['bones', 1]] : [])], gore(1), { description: 'The chief sleeps here, his strongbox by the bed.' }),
+        ];
+        links = [{ a: 'HALL', b: 'CHAMBER', via: 'door' }];
+        if (cannibal && big) { rooms.push(room('TROPHY', pick(r, ['The Trophy Room', 'The Hall of Faces', 'The Skin Room']), 'room', 'small', [['skull', 3], ['bones', 2], ['hooks', 1], ['carcass', 1], ['chains', 2]], [...gore(3), 'bones'], { description: 'What the chief keeps of the people he has eaten.' })); links.push({ a: 'HALL', b: 'TROPHY', via: 'door' }); }
+        for (const it of s.items) rooms[1].items.push(it);
+        guards = s.guards.map(g => ({ name: g.name, description: g.description, sprite: g.sprite || '', room: 'CHAMBER', patrol: ['HALL', 'CHAMBER'], hostile: true, role: 'hostile' }));
+        start = 'HALL';
+    } else if (s.kind === 'butchery') {
+        rooms = [
+            room('BUTCHERY', pick(r, ['The Cutting Room', 'The Block', 'The Butchery']), 'room', 'medium', [['slab', 2], ['hooks', 2], ['carcass', 2], ['cauldron', 1], ['barrel', 2], ['weaponrack', 1, 'cleavers and saws'], ['brazier', 1], ['cage', 1]], [...gore(6), 'bones', 'bones'], { exit: true, description: 'Blocks and slabs, cleavers on the wall, meat on hooks. The floor is never dry.' }),
+            room('LARDER', pick(r, ['The Larder', 'The Hanging Room', 'The Salt Room']), 'pantry', 'small', [['carcass', 2], ['hooks', 1], ['barrel', 1], ['sack', 1], ['crate', 1]], [...gore(3), 'bones'], { description: 'Salted, smoked and hung. Some of it still has hands.' }),
+        ];
+        links = [{ a: 'BUTCHERY', b: 'LARDER', via: 'door' }];
+        if (s.size !== 'small') { rooms.push(room('QUESTION', pick(r, ['The Question Room', 'The Screaming Room', 'The Back Room']), 'torture_chamber', 'small', [], gore(3), { description: 'A rack, hooks, a brazier of irons, and someone on the rack.' })); links.push({ a: 'BUTCHERY', b: 'QUESTION', via: 'door' }); guards.push({ name: captiveName(), description: 'strapped to the rack, alive, barely', room: 'QUESTION', patrol: ['QUESTION'], hostile: false, role: 'prisoner' }); }
+        if (b.keeper) guards.push({ name: b.keeper, description: `the camp's butcher, ${pick(r, ['in a leather apron stiff with blood', 'humming, with a cleaver in each hand', 'enormous, gentle-voiced, hands like hams', 'thin and precise, with a boning knife'])}`, room: 'BUTCHERY', patrol: ['BUTCHERY', 'LARDER'], hostile: true, role: 'hostile', sprite: 'human_cannibal' });
+        start = 'BUTCHERY';
+    } else if (s.kind === 'shrine') {
+        rooms = [room('SHRINE', pick(r, ['The Skull Shrine', 'The Altar of Teeth', 'The Hungry God\'s House']), 'room', 'medium', [['altar', 1], ['candles', 3], ['skull', 4], ['bones', 2], ['brazier', 2], ['skullpole', 1], ['banner', 1]], [...gore(4), 'bones'], { exit: true, description: 'An altar of stacked skulls, candles of tallow, offerings of flesh.' })];
+        if (big) { rooms.push(room('OSSUARY', pick(r, ['The Ossuary', 'The Bone Room']), 'crypt', 'small', [['skull', 3], ['bones', 3]], gore(2), { description: 'The bones of every meal, sorted and stacked.' })); links.push({ a: 'SHRINE', b: 'OSSUARY', via: 'door' }); }
+        if (b.keeper) guards.push({ name: b.keeper, description: `the band's priest, ${pick(r, ['painted with ash, a necklace of teeth', 'blind, chanting, a bone knife at the belt', 'fat and smiling, the first to eat'])}`, room: 'SHRINE', patrol: ['SHRINE'], hostile: true, role: 'hostile', sprite: 'human_cannibal' });
+        start = 'SHRINE';
+    } else if (s.kind === 'longhouse') {
+        rooms = [
+            room('BUNKS', pick(r, ['The Bunks', 'The Long Room', 'The Snoring Hall']), 'room', 'medium', [['bed', big ? 5 : 4], ['chest', 2], ['table', 1], ['chair', 2], ['weaponrack', 1], ['candles', 1], ['barrel', 1]], ['stain', 'debris', ...gore(1)], { exit: true, description: 'Bunks, chests, a table with dice on it. The band sleeps here in shifts.' }),
+            room('STORE', pick(r, ['The Back Store', 'The Drink Store']), 'storage', 'small', [['barrel', 2], ['sack', 1]], ['debris'], { description: 'Casks and sacks, the band\'s drink and bread.' }),
+        ];
+        links = [{ a: 'BUNKS', b: 'STORE', via: 'door' }];
+        if (b.keeper) guards.push({ name: b.keeper, description: `a ${(s.band || 'raider').toLowerCase()} off watch, asleep in a bunk, boots on`, room: 'BUNKS', patrol: ['BUNKS'], hostile: true, role: 'hostile' });
+        start = 'BUNKS';
+    } else if (s.kind === 'storehouse') {
+        rooms = [room('STORE', pick(r, ['The Plunder', 'The Store Room', 'The Loot']), 'storage', 'medium', [['chest', 3, 'a locked chest'], ['crate', 3], ['barrel', 2], ['sack', 2]], ['papers', 'debris'], { exit: true, description: 'The band\'s plunder: crates of goods, casks, locked chests of coin.', items: [{ name: 'the band\'s plunder', hidden: false, note: 'in the chests' }] })];
+        start = 'STORE';
+    } else return null;
+    const plan = normalizePlan({ name: b.name, kind: 'interior', theme: 'cabin', condition: 'worn', fog: false, floors: [{ id: 'F0', name: b.name, level: 0 }], rooms, links, guards, start, summary: b.description });
+    const inside = generatePlace(plan, seed);
+    if (!inside) return null;
+    inside.kind = 'interior';
+    inside.fog = false;
+    for (const f of inside.floors) inside.state.explored[f.id] = '1'.repeat(f.map.w * f.map.h);
+    for (const g of Object.values(inside.guards)) if (g.role === 'prisoner') g.held = true;
+    if (s.tunnels) addHatch(inside, 'CHAMBER', 'a trapdoor under the chief\'s rug', place.buildings.TUN?.name ?? TUNNEL_NAMES[0]);
+    return inside;
+}
+
+/**
+ * The insides of a camp's buildings, built with the camp (same seed, same insides): the chief's
+ * lodge (the chief in it, the story's things in his strongbox), a cannibal camp's flesh house and
+ * bone shrine, a band's long house and store house, and the tunnels under it all. Returns
+ * [{ building, place }]; the caller links them (each inside's parent is the camp, through the
+ * building's door; the tunnels' exits each name the host their trapdoor is in).
+ */
+export function campInteriors(place, seed = 1) {
+    const out = [];
+    let n = 0;
+    for (const b of Object.values(place.buildings || {})) {
+        if (!b.inside) continue;
+        const s = (Number(seed) || 1) * 31 + (++n) * 7919;
+        const inside = b.inside.kind === 'tunnels' ? generateTunnels(b, s) : houseInterior(place, b, s);
+        if (!inside) continue;
+        inside.hostKind = b.kind;
+        out.push({ building: b.id, place: inside });
+    }
+    return out;
 }

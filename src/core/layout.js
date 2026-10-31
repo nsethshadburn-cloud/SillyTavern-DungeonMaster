@@ -515,14 +515,18 @@ function furnish(r, room, rect, ctx, theme, condition = 'ruined') {
     const area = rect.w * rect.h;
     const targets = roomTiles(rect).filter(([x, y]) => ctx.reserved.has(K(x, y)));
     const stillConnected = () => {
-        if (targets.length < 2) return true;
-        const seen = new Set([K(...targets[0])]), queue = [targets[0]];
+        // Nothing may pocket off part of the room: from a doorway (anywhere, in a room with none) every
+        // doorway and every free square must still be reached, walking straight (no corner cutting).
+        const freeSq = roomTiles(rect).filter(([x, y]) => !ctx.blocked.has(K(x, y)) && charAt(x, y) === '.');
+        const from = targets[0] ?? freeSq[0];
+        if (!from) return true;
+        const seen = new Set([K(...from)]), queue = [from];
         while (queue.length) {
             const [x, y] = queue.shift();
-            if ((x !== targets[0][0] || y !== targets[0][1]) && (charAt(x, y) === '<' || charAt(x, y) === '>')) continue;
+            if ((x !== from[0] || y !== from[1]) && (charAt(x, y) === '<' || charAt(x, y) === '>')) continue;
             for (const [dx, dy] of DIRS) { const nx = x + dx, ny = y + dy, k = K(nx, ny); if (!seen.has(k) && inside(nx, ny) && !ctx.blocked.has(k)) { seen.add(k); queue.push([nx, ny]); } }
         }
-        return targets.every(t => seen.has(K(...t)));
+        return targets.every(t => seen.has(K(...t))) && freeSq.every(t => seen.has(K(...t)));
     };
     const put = (type, x, y, w = 1, h = 1, extra = {}) => {
         const blocks = PROPS[type]?.blocks;
@@ -1020,6 +1024,8 @@ export function ensureIds(place) {
 }
 
 export function doorChar(door) {
+    // A trapdoor is a door in the floor: the square keeps its ground, the hatch is a prop.
+    if (door.kind === 'trapdoor') return door.under || '.';
     if (door.state === 'hidden' || door.state === 'walled') return '#';
     if (door.kind === 'arch' || door.state === 'broken') return '.';
     // A barred cell door: locked, shut (but unlocked), or swung open.

@@ -38,7 +38,7 @@ export const TERRAIN = Object.freeze({
 });
 
 /** Map themes: they set the palette and what "." and "#" look like. */
-export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'mansion', 'cabin', 'town', 'forest', 'jungle', 'camp', 'swamp', 'snow', 'desert', 'ship']);
+export const THEMES = Object.freeze(['dungeon', 'crypt', 'cave', 'mine', 'sewer', 'castle', 'temple', 'prison', 'tavern', 'library', 'house', 'mansion', 'cabin', 'town', 'forest', 'jungle', 'camp', 'warren', 'swamp', 'snow', 'desert', 'ship']);
 
 /**
  * Things placed on top of the terrain: "blocks" = can't stand there; "light" = radius in squares;
@@ -57,6 +57,8 @@ export const PROPS = Object.freeze({
     crystal: { name: 'crystals', blocks: true }, mushroom: { name: 'mushrooms' }, tent: { name: 'tent', blocks: true }, cart: { name: 'cart', blocks: true, cover: true },
     // Camps and forts. A watchtower is a platform: a lookout stands on it (and has cover up there).
     bonfire: { name: 'bonfire', blocks: true, light: 5 }, spikes: { name: 'sharpened stakes', blocks: true }, watchtower: { name: 'watchtower', cover: true, light: 4, size: [2, 2], platform: true }, skullpole: { name: 'skull pole', blocks: true },
+    // A trapdoor (hidden until found: a door in the floor into the tunnels); a carcass hung from the ceiling.
+    trapdoor: { name: 'trapdoor' }, carcass: { name: 'hanging carcass', blocks: true },
     // Furniture
     wardrobe: { name: 'wardrobe', blocks: true, cover: true }, dresser: { name: 'dresser', blocks: true }, nightstand: { name: 'nightstand', blocks: true },
     desk: { name: 'desk', blocks: true, cover: true }, sofa: { name: 'sofa', blocks: true, cover: true, size: [2, 1] }, armchair: { name: 'armchair', blocks: true },
