@@ -245,7 +245,7 @@ test("the DM's view: the whole place with secrets (cached), and where the party 
 
 test('DM protocol: building, entering and changing places', () => {
     const t = parseDmTurn(JSON.stringify({ build_place: { name: 'Blackmoor Manor', size: 'big', kind: 'Mansion', why: 'they are taken there', start: 'locked in a cell together' }, enter_place: 'Hollowbrook', leave_place: true, place_changes: { doors: { D4: 'open' } } }));
-    assert.deepEqual(t.build_place, { name: 'Blackmoor Manor', size: 'big', kind: 'mansion', why: 'they are taken there', start: 'locked in a cell together' });
+    assert.deepEqual(t.build_place, { name: 'Blackmoor Manor', size: 'big', kind: 'mansion', why: 'they are taken there', start: 'locked in a cell together', replace: false });
     assert.equal(t.enter_place, 'Hollowbrook');
     assert.equal(t.leave_place, true);
     assert.deepEqual(t.place_changes, { doors: { D4: 'open' } });

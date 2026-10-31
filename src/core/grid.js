@@ -419,3 +419,22 @@ export function clampMove(map, from, to, max, blocked = new Set()) {
     }
     return best;
 }
+
+/**
+ * The theme for a map drawn without one (a battle grid, a scene map): from where the party is
+ * (the location's words, then the scene's setting), so a fight on the downs isn't on dungeon stone.
+ */
+export function themeFor(setting = '', location = '') {
+    const w = String(location || '').toLowerCase();
+    // Rooms first (a manor on the moor is a manor), the land last.
+    const byWords = [
+        [/jungle|rainforest/, 'jungle'], [/swamp|marsh|\bbog\b|\bfen\b/, 'swamp'], [/\bsnow|\bice\b|frozen|tundra|glacier/, 'snow'], [/desert|\bdunes?\b|\bsand\b|oasis/, 'desert'],
+        [/\bcamp\b|encampment|palisade/, 'camp'],
+        [/town|village|city|street|market|square|hamlet/, 'town'], [/\bcaves?\b|cavern|grotto|\bmine\b|tunnel|burrow/, 'cave'], [/crypt|tomb|catacomb|grave|barrow|ossuary/, 'crypt'], [/sewer/, 'sewer'],
+        [/castle|\bkeep\b|\bfort\b|fortress|citadel|tower|gatehouse|bailey/, 'castle'], [/temple|church|shrine|chapel|cathedral|abbey/, 'temple'], [/prison|jail|gaol|\bcells?\b|dungeon/, /dungeon/.test(w) ? 'dungeon' : 'prison'],
+        [/tavern|\binn\b|alehouse|taproom/, 'tavern'], [/mansion|manor|estate|palace/, 'mansion'], [/\bhouse|\bhome\b|cottage|cabin|lodge|\bhut\b/, 'house'], [/\bship\b|\bdeck\b|\bboat\b|galleon|\bhold\b/, 'ship'], [/library|archive/, 'library'],
+        [/forest|\bwoods?\b|\bgrove\b|glade|clearing|thicket|\bdowns\b|\bhills?\b|\bplains?\b|meadow|\bfields?\b|grass|\bmoors?\b|\bheath\b|prairie|\bridge\b|valley|\bstones\b|\briver\b|\bstream\b|\blake\b|\bshore\b|\btrail\b|\broad\b|\bwilds?\b|wilderness/, 'forest'],
+    ];
+    for (const [re, theme] of byWords) if (re.test(w)) return theme;
+    return { wild: 'forest', road: 'forest', town: 'town', sea: 'ship', dungeon: 'dungeon' }[String(setting || '').toLowerCase()] ?? 'dungeon';
+}

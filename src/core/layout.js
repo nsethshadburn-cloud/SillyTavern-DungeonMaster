@@ -8,7 +8,8 @@ import { placeClass, zoneOf } from './access.js';
 import { ROOM_SIZES, recipeFor, roomType, WALLPAPER_HUES, CARPET_HUES } from './rooms.js';
 import { nameKey } from './text.js';
 import { applyRules, checkPlace } from './rules.js';
-import { interiorPlan } from './architect.js';
+import { interiorPlan, WILD_KINDS, OPEN_COUNTRY } from './architect.js';
+export { WILD_KINDS };
 
 // ---------- small helpers ----------
 function rng(seed) {
@@ -1918,7 +1919,6 @@ function castleGrounds(plan, ext, theme, bw, bd, slots, gate, r, seed) {
 // ---------- wild places: jungles, forests, swamps, clearings ----------
 
 /** Kinds of place that are land, not a building: built as clearings joined by trails. */
-export const WILD_KINDS = /jungle|rainforest|forest|woods|\bwood\b|grove|glade|clearing|swamp|marsh|bog|meadow|wilderness|wilds|valley|canyon|oasis|beach|coast|riverbank|river|lakeshore|lake|waterfall|camp|grassland|plains|savanna/;
 
 /** Smooth noise over the map (-1..1), for thickets and clearings that feel natural. */
 function smoothNoise(seed, scale = 6) {
@@ -2020,6 +2020,8 @@ export function generateWilds(planIn, seed = 1) {
     // Water: a river through it or a pond (or a few pools in a swamp, an oasis in a desert).
     const words = `${plan.name} ${plan.summary} ${spots.map(s => s.name).join(' ')}`.toLowerCase();
     const wantsRiver = /river|stream|creek|brook|ford|rapids/.test(words), wantsPond = /pond|lake|pool|lagoon|spring|oasis|waterfall/.test(words);
+    // Open country (downs, moors, plains): grass with few trees; the woods only in patches.
+    const open = OPEN_COUNTRY.test(`${plan.kind} ${plan.name}`.toLowerCase()) && !/forest|woods|jungle|swamp/.test(`${plan.kind} ${plan.name}`.toLowerCase());
     if (wantsRiver || (!wantsPond && (theme === 'jungle' ? r() < 0.6 : theme === 'forest' ? r() < 0.45 : false))) addWater(c, W, H, r, 'river');
     if (wantsPond || theme === 'desert' || (theme !== 'snow' && r() < 0.5)) addWater(c, W, H, r, 'pond');
     if (theme === 'swamp') for (let i = 0; i < 4 + Math.floor(r() * 3); i++) addWater(c, W, H, r, 'pool');
@@ -2072,6 +2074,12 @@ export function generateWilds(planIn, seed = 1) {
     const taken = new Set();
     const put = (x, y, type, extra = {}) => { if (c[y]?.[x] === undefined || !'.:'.includes(c[y][x]) || taken.has(K(x, y)) || trail.has(K(x, y))) return false; map.props.push({ x, y, type, ...extra }); taken.add(K(x, y)); return true; };
     const freeIn = cc => { for (let tries = 0; tries < 40; tries++) { const x = int(r, cc.x - cc.rad + 1, cc.x + cc.rad - 1), y = int(r, cc.y - cc.rad + 1, cc.y + cc.rad - 1); if (c[y]?.[x] && '.:'.includes(c[y][x]) && !taken.has(K(x, y)) && Math.hypot(x - cc.x, y - cc.y) < cc.rad - 0.5) return [x, y]; } return null; };
+    // Standing stones: a ring of them at the spot named for them (or the first), to fight round and hide behind.
+    if (/standing stones|stone circle|menhir|the stones\b/.test(words)) {
+        const cc = centers.find(x => /stone/.test(x.sp.name.toLowerCase())) ?? centers[0];
+        const n = int(r, 4, 7);
+        for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2 + r() * 0.3; put(Math.round(cc.x + Math.cos(a) * (cc.rad - 1)), Math.round(cc.y + Math.sin(a) * (cc.rad - 1) / 1.1), 'boulder', { label: 'standing stone' }); }
+    }
     // What's in each spot: its plan props, and what fits its name.
     for (const cc of centers) {
         const nm = `${cc.sp.type} ${cc.sp.name}`.toLowerCase();
@@ -2099,7 +2107,7 @@ export function generateWilds(planIn, seed = 1) {
         cc.sp.items.forEach(it => { const p = freeIn(cc); if (!p) return; const id = `I${Object.keys(place.items).length + 1}`; place.items[id] = { id, name: it.name, room: cc.sp.id, floor: 'F0', x: p[0], y: p[1], hidden: it.hidden, note: it.note, state: 'here' }; });
     }
     // The land around, grown thick; the clearings and trails stay open.
-    growWilds(map, c, W, H, r, theme, (x, y) => inClearing(x, y) || trail.has(K(x, y)));
+    growWilds(map, c, W, H, r, theme, (x, y) => inClearing(x, y) || trail.has(K(x, y)), open ? 0.3 : 1);
     // The people of the plan, in their spots.
     for (const g of plan.guards) {
         const cc = centers.find(x => x.sp.id === g.room) ?? centers[0];

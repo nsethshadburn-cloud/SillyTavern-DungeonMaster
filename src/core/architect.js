@@ -483,6 +483,25 @@ const GENERIC = {
 };
 
 /** The blueprint for a kind of place. */
+/** Kinds of place built as land: woods, water, open country. (Towns and camps are matched before this.) */
+export const WILD_KINDS = /jungle|rainforest|forest|\bwoods?\b|\bgrove\b|glade|clearing|swamp|marsh|\bbogs?\b|meadow|wilderness|\bwilds?\b|valley|canyon|oasis|beach|\bcoast|riverbank|\briver\b|lakeshore|\blake\b|waterfall|\bcamp\b|grassland|\bplains?\b|savanna|\bdowns\b|\bhills?\b|hilltop|hillside|foothills|\bmoors?\b|\bheath\b|prairie|steppe|tundra|\bfields?\b|pasture|farmland|countryside|open country|\bridge\b|\bmountains?\b|\bglen\b|\bdale\b|\bdell\b|\bcopse\b|thicket|woodland|\bshore\b|riverside|\bford\b|standing stones|stone circle|menhir|\bcairn\b|crossroads|\btrail\b|the wild\b|outdoors|open ground/;
+/** Open country within that: grass with few trees (downs, moors, plains), not woods. */
+export const OPEN_COUNTRY = /\bdowns\b|\bhills?\b|hilltop|hillside|foothills|\bmoors?\b|\bheath\b|\bplains?\b|prairie|steppe|tundra|\bfields?\b|pasture|farmland|meadow|grassland|savanna|open country|\bridge\b|standing stones|stone circle|menhir|\bcairn\b|open ground/;
+
+/**
+ * Is this place land (a wild place) rather than rooms? A kind the blueprints know (a mansion, a
+ * cave, a crypt) is never land; a wild kind is; a kind the blueprints don't know ("downs",
+ * "standing stones", "the moor") is land when its words or its name say so. Otherwise it's the
+ * generic building, as before.
+ */
+export function isWildKind(kind = '', name = '') {
+    const k = String(kind || '').toLowerCase().trim(), n = String(name || '').toLowerCase();
+    if (/town|village|hamlet|city|settlement/.test(k)) return false;
+    if (BLUEPRINTS.some(b => b.match.test(k))) return false;
+    if (WILD_KINDS.test(k)) return true;
+    return !k || /^(place|site|location|area|land|outside|the open)$/.test(k) || !BLUEPRINTS.some(b => b.match.test(n)) ? WILD_KINDS.test(n) || WILD_KINDS.test(k) : false;
+}
+
 export function blueprintFor(kind, name = '') {
     // The kind decides first (a guard post called "Watch House" is a guard post); the name only if the kind says nothing.
     const k = String(kind || '').toLowerCase(), n = String(name || '').toLowerCase();
@@ -1355,15 +1374,16 @@ const SPOTS = {
     swamp: ['Sunken Shrine', 'Hag\'s Hut Ruin', 'Rotting Jetty', 'Will-o\'-wisp Pool', 'Croc Bank', 'Bog Graves', 'Reed Island', 'Dead Tree Grove', 'Smugglers\' Camp', 'Drowned Statue'],
     camp: ['Campfire Circle', 'Supply Tents', 'Picket Line', 'Lookout Post', 'Latrine Ditch', 'Commander\'s Tent', 'Stream Crossing', 'Wood Pile'],
     other: ['Clearing', 'Old Ruin', 'Stream Pool', 'Shrine', 'Campsite', 'Graves', 'Den', 'Standing Stones', 'Ford', 'Lookout'],
+    open: ['Standing Stones', 'Grassy Rise', 'Dry Stream Bed', 'Lone Oak', 'Sheepfold Ruin', 'Old Cairn', 'Hollow Way', 'Wind-bent Thorn', 'Shepherd\'s Hut', 'Boggy Dip', 'The Lookout', 'Rabbit Warren', 'Stream Crossing'],
 };
-const WILD_CREATURES = { jungle: ['Jungle Cat', 'Giant Snake', 'Ape', 'Poison Frog Swarm', 'Bandit'], forest: ['Wolf', 'Bandit', 'Bear', 'Boar', 'Goblin'], swamp: ['Crocodile', 'Bog Zombie', 'Giant Toad', 'Lizardfolk', 'Bandit'], camp: ['Bandit', 'Sentry', 'Mercenary'], other: ['Wolf', 'Bandit', 'Boar'] };
+const WILD_CREATURES = { jungle: ['Jungle Cat', 'Giant Snake', 'Ape', 'Poison Frog Swarm', 'Bandit'], forest: ['Wolf', 'Bandit', 'Bear', 'Boar', 'Goblin'], swamp: ['Crocodile', 'Bog Zombie', 'Giant Toad', 'Lizardfolk', 'Bandit'], camp: ['Bandit', 'Sentry', 'Mercenary'], other: ['Wolf', 'Bandit', 'Boar'], open: ['Wolf', 'Bandit', 'Wild Dog', 'Boar'] };
 
 /** A wild place's plan from a brief: its spots (clearings), how trails join them, what lives there. */
 export function wildsFromBrief(briefIn, seed = 1) {
     const brief = briefIn.normalized ? briefIn : normalizeBrief(briefIn);
     const r = rngOf(seed);
     const words = `${brief.kind} ${brief.name}`.toLowerCase();
-    const set = /jungle|rainforest/.test(words) ? 'jungle' : /swamp|marsh|bog/.test(words) ? 'swamp' : /camp/.test(words) ? 'camp' : /forest|wood|grove/.test(words) ? 'forest' : 'other';
+    const set = /jungle|rainforest/.test(words) ? 'jungle' : /swamp|marsh|bog/.test(words) ? 'swamp' : /camp/.test(words) ? 'camp' : /forest|wood|grove/.test(words) ? 'forest' : OPEN_COUNTRY.test(words) ? 'open' : 'other';
     const n = brief.size === 'big' ? int(r, 7, 10) : brief.size === 'medium' ? int(r, 5, 7) : int(r, 3, 5);
     const names = shuffle(r, SPOTS[set]);
     const rooms = [{ id: 'W1', name: pick(r, ['Trailhead', 'Edge of the Trees', 'Where the Path Starts']), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: true }];
@@ -1382,7 +1402,7 @@ export function wildsFromBrief(briefIn, seed = 1) {
     const nT = brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 0, 2);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });
     return {
-        name: brief.name, kind: brief.kind, theme: set === 'other' ? 'forest' : set === 'camp' ? 'camp' : set, condition: 'worn',
+        name: brief.name, kind: brief.kind, wild: true, theme: set === 'other' || set === 'open' ? 'forest' : set === 'camp' ? 'camp' : set, condition: 'worn',
         summary: [brief.summary, `${brief.name}: ${rooms.length} spots joined by trails${brief.mood ? `, ${brief.mood}` : ''}.`].filter(Boolean).join(' '),
         floors: [{ id: 'F0', name: brief.name, level: 0 }],
         rooms, links, guards, people: brief.people.filter(p => !p.hostile).map(p => ({ name: p.name, description: p.what, room: (rooms.find(x => nameKey(x.name).includes(nameKey(p.where))) ?? rooms[1] ?? rooms[0]).id })),

@@ -375,6 +375,27 @@ export function startCombat(world, start, companions, rng) {
     return world.combat;
 }
 
+/**
+ * Someone in a fight who isn't on its roster (they joined after it started, or the DM never named
+ * them): add them as an enemy with HP and AC, roll their initiative into the order. Returns the name
+ * on the roster (the one already there when they were), or null outside a fight.
+ */
+export function ensureEnemy(world, name, { hp = 10, ac = 12, dex = 0, sprite = '', rng } = {}) {
+    if (!world.combat) return null;
+    const clean = String(name || '').trim().slice(0, 60);
+    if (!clean) return null;
+    world.combat.enemies ??= {};
+    const known = matchName(clean, Object.keys(world.combat.enemies));
+    if (known) return known;
+    world.combat.enemies[clean] = { hp, hp_max: hp, ac, conditions: [], ...(sprite ? { sprite } : {}) };
+    if (!world.combat.order.some(o => o.name === clean)) {
+        const r = roll(`1d20${dex >= 0 ? '+' : ''}${dex}`, { rng });
+        world.combat.order.push({ name: clean, init: r?.total ?? 10, detail: r?.detail ?? '' });
+        sortInitiative(world.combat);
+    }
+    return clean;
+}
+
 export function addToInitiative(world, name, total) {
     if (!world.combat) return;
     world.combat.order = world.combat.order.filter(o => o.name !== name);

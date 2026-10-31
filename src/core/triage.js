@@ -13,7 +13,8 @@ export const CATEGORIES = ['banter', 'action', 'risky_action', 'scene_move', 'co
  * @param {{pendingRoll?: object|null, inCombat?: boolean}} ctx
  */
 export function ruleTriage(text, ctx = {}) {
-    const raw = String(text ?? '').trim();
+    // "*(OOC)* ..." (the marker in italics, as players type it) is OOC like the plain forms.
+    const raw = String(text ?? '').trim().replace(/^[*_]+\s*\(\s*ooc\s*\)\s*[*_]+\s*:?\s*/i, 'OOC: ');
     const t = raw.toLowerCase();
     const result = { category: null, ooc: false, oocText: '', rollResult: false, roll: null, needsHelper: true };
 
@@ -22,10 +23,15 @@ export function ruleTriage(text, ctx = {}) {
     if (ooc) {
         result.ooc = true;
         result.oocText = (ooc[1] ?? ooc[2] ?? ooc[3] ?? ooc[4] ?? ooc[5] ?? '').trim() || raw;
+        result.mapRequest = mapRequest(result.oocText);
         result.category = 'question';
         result.needsHelper = false;
         return result;
     }
+
+    // "Claude, regenerate the map": said in character, still a request for a map.
+    const mr = /\b(claude|dm|game master|gm)\b/i.test(raw) ? mapRequest(raw) : null;
+    if (mr) result.mapRequest = mr;
 
     // Answer to a pending roll request.
     if (ctx.pendingRoll) {
@@ -179,5 +185,40 @@ export function parseCompanionAction(text, places = [], message = '') {
         ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}),
         ...(ok && ['sit', 'lie', 'sleep'].includes(pose) ? { pose } : {}),
         ...(['close', 'follow', 'stay'].includes(stance) ? { stance } : {}),
+    };
+}
+
+// ---------- a map, asked for in the player's own words ----------
+
+const KIND_WORDS = [
+    [/\b(jungle|rainforest)\b/, 'jungle'], [/\b(swamp|marsh|bog)\b/, 'swamp'], [/\b(desert|dunes?)\b/, 'desert'], [/\b(snow|snowy|frozen|tundra)\b/, 'snow'],
+    [/\b(bandit camp|war camp|raiders?' camp|cannibal camp|camp)\b/, 'camp'], [/\b(town|village|city|hamlet)\b/, 'town'],
+    [/\b(woods?|forest|trees|woodland|grove|wooded)\b/, 'forest'], [/\b(downs|hills?|plains?|meadow|grass(land)?|fields?|moor|heath|prairie|steppe|open country|wilderness|wilds|countryside|standing stones)\b/, 'downs'],
+    [/\b(cave|cavern|grotto)\b/, 'cave'], [/\b(crypt|tomb|catacombs?)\b/, 'crypt'], [/\bdungeon\b/, 'dungeon'], [/\b(castle|keep|fortress|fort)\b/, 'castle'],
+    [/\b(mansion|manor|estate)\b/, 'mansion'], [/\b(tavern|inn)\b/, 'tavern'], [/\b(temple|church|shrine)\b/, 'temple'], [/\b(prison|jail|gaol)\b/, 'prison'], [/\b(house|cottage|cabin)\b/, 'house'], [/\b(ship|boat)\b/, 'ship'],
+];
+
+/** The kind of place some words describe ("a big forest with a stream" → forest), or ''. */
+export function kindFromWords(text) {
+    const w = String(text ?? '').toLowerCase();
+    return KIND_WORDS.find(([re]) => re.test(w))?.[1] ?? '';
+}
+
+/**
+ * The player asking for a map ("make the map", "regenerate the map, a large map of woods with a
+ * stream"): what they asked for, or null. kind and size come from their words when they gave any;
+ * redo = they want the current map done again (not just one made).
+ */
+export function mapRequest(text) {
+    const t = String(text ?? '').trim();
+    if (!t || !/\b(map|grid|battle ?map)\b/i.test(t)) return null;
+    if (!/\b(re-?)?(gen(erate|erated|erating)?|regen\w*|build|rebuild|make|remake|create|draw|redraw|render|redo|re-?roll|change|fix|update|do|give|want|need)\b|\bnew map\b|\bmap (please|now|again|correctly|properly)\b/i.test(t)) return null;
+    if (/\b(don'?t|do not|never|without|no need|stop)\b[^.?!]{0,40}\b(map|grid)\b/i.test(t) || /\b(can i see|where is|open|show|hide|close|minimi[sz]e)\b[^.?!]{0,30}\b(the )?map\b/i.test(t)) return null;
+    const w = t.toLowerCase();
+    return {
+        text: t,
+        kind: kindFromWords(w),
+        size: /\b(large|big|huge|massive|wide|bigger|larger|vast|sprawling|great big)\b/.test(w) ? 'big' : /\b(small|tiny|little)\b/.test(w) ? 'small' : '',
+        redo: /\b(re-?gen\w*|regen\w*|rebuild|redo|re-?make|remake|again|change|fix|correctly|properly|new map|replace|different|other)\b/.test(w),
     };
 }

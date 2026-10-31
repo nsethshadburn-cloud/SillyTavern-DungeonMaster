@@ -205,3 +205,15 @@ export function parsePlayerRoll(text, dieSides = 20) {
     if (natural === null && total === null) return null;
     return { natural, total };
 }
+
+/**
+ * The dice of a resolved roll request for its card: "(18, 7 → 18, advantage)" when two d20 were
+ * rolled for advantage or disadvantage (so nobody wonders whether it was applied), else "(18)".
+ * @param {{die?: number, advantage?: string, dice?: Array<{sides: number, value: number}>}} request
+ */
+export function diceText(request, natural) {
+    const adv = request?.advantage && request.advantage !== 'none' ? request.advantage : '';
+    const die = Number(request?.die) || 20;
+    const both = adv && Array.isArray(request?.dice) ? request.dice.filter(d => Number(d.sides) === die).map(d => Number(d.value)).slice(0, 2) : [];
+    return both.length === 2 ? `(${both.join(', ')} → ${natural ?? '?'}, ${adv})` : `(${natural ?? '?'})`;
+}

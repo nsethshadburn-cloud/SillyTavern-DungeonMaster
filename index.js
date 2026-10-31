@@ -20,7 +20,8 @@ import { hideStatus } from './src/ui/status.js';
 import { roll } from './src/core/dice.js';
 import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
-import { forgetPlaces, loadCurrentPlace, requestBuild, rebuildPlace } from './src/st/atlas.js';
+import { forgetPlaces, loadCurrentPlace, requestBuild, rebuildPlace, buildFromRequest, atlasEntry } from './src/st/atlas.js';
+import { mapRequest } from './src/core/triage.js';
 import { onMessagesDeleted, forgetTurns } from './src/st/undo.js';
 import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
 import { ensureFigures, redoFigure, partyFigures } from './src/st/figures.js';
@@ -203,7 +204,7 @@ function registerSlashCommands() {
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmrebuild',
-        helpString: 'Throw a saved map away and build it again with the newest rules: /dmrebuild for the map you\'re on, or /dmrebuild Blackmoor Manor. Asks first.',
+        helpString: 'Build a map again: /dmrebuild for the map you\'re on (asks first), /dmrebuild Blackmoor Manor for a saved one, or /dmrebuild a big forest with a stream to say what the map you\'re on should be (no asking).',
         unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'the place name (optional: the map you\'re on)', typeList: [ARGUMENT_TYPE.STRING], isRequired: false })],
         callback: async (_args, text) => {
             if (!campaign()) {
@@ -211,7 +212,10 @@ function registerSlashCommands() {
                 return '';
             }
             try {
-                await rebuildPlace(String(text || '').trim());
+                const t = String(text || '').trim();
+                // A saved map's name rebuilds that map; anything else is what the map should be.
+                if (t && !atlasEntry(t)) await buildFromRequest({ ...(mapRequest(`rebuild the map: ${t}`) ?? { kind: '', size: '' }), text: t, redo: true });
+                else await rebuildPlace(t);
             } catch (error) {
                 toastr.error(String(error?.message || error), 'Dungeon Master');
             }
@@ -282,7 +286,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.46.0-beta';
+export const LOADED_VERSION = '0.47.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

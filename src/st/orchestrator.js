@@ -14,11 +14,11 @@ import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } f
 import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
-import { normalizeMap, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
+import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
 import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -27,8 +27,8 @@ import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
-import { roll, judge, formatModifier, random01, saveDamage } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
+import { roll, judge, formatModifier, random01, saveDamage, diceText } from '../core/dice.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
@@ -438,7 +438,13 @@ async function turnBody(c, opts, status, signal) {
         await taskWalk;
         // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
         const quiet = !triage.ooc && !triage.speakers?.length && (['action', 'risky_action', 'scene_move'].includes(triage.category) || (opts.force === 'explore' && !/first meeting/.test(opts.placeEvent || '')));
+        // The player asked for the map to be done again: a build of the same name replaces it.
+        if (triage.mapRequest?.redo && result.turn.build_place) result.turn.build_place.replace = true;
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
+        // The player asked for a map and the DM didn't build one: the code does, from their own words.
+        if (triage.mapRequest && mapsOn() && !result.turn.build_place && !result.turn.enter_place && !signal.aborted) {
+            try { await buildFromRequest(triage.mapRequest, { status }); } catch (error) { status.note(`Map not built: ${error.message}`); }
+        }
         // Their action is resolved: done with the turn, or more to do (movement, a bonus action)?
         const cb = c.docs.world.combat;
         if (cb && turnPromptsOn() && cb.phase === 'player' && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0)) {
@@ -641,6 +647,46 @@ function joinLateFighters(c) {
 }
 
 /** Who an attack is at: the DM's target, or someone its own words name, or (an enemy attacking) the player. */
+/**
+ * Someone in the fight who isn't on its roster yet (they joined after it started, or the DM named
+ * them for the first time): put them on it with their NPC stats when there are any (HP 10, AC 12
+ * otherwise), roll their initiative in, and on a built map let them fight from where they stand.
+ * Returns their name on the roster, or null (the party, nobody, or no fight).
+ */
+async function enemyHere(c, name, status = null) {
+    const world = c.docs.world, meta = c.meta;
+    const clean = String(name || '').trim();
+    if (!world.combat || !clean || /^(someone|something|somebody|anyone|the party|everyone|nobody|no one|you|them|it)$/i.test(clean)) return null;
+    const party = [meta.persona.name, ...meta.party.map(p => p.name)];
+    if (matchName(clean, party)) return null;
+    const known = matchName(clean, Object.keys(world.combat.enemies || {}));
+    if (known) return known;
+    const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(clean)) ?? (c.docs.npcs || []).find(n => matchName(clean, [n.name]));
+    const stats = String(npc?.stats || '');
+    const hp = Number(/\bHP\s*(\d+)/i.exec(stats)?.[1]) || 10, ac = Number(/\bAC\s*(\d+)/i.exec(stats)?.[1]) || 12;
+    const added = ensureEnemy(world, npc?.name ?? clean, { hp, ac, sprite: npc?.sprite || '' });
+    if (!added) return null;
+    const here = currentPlace(c);
+    const g = here ? personByName(here.place, added) : null;
+    if (g) { g.hostile = true; g.state = 'alert'; if (world.combat.map) world.combat.positions[added] = toCoord(g.x, g.y); }
+    status?.note(`${added} joins the fight (HP ${hp}, AC ${ac})`);
+    await postDiceCard(`⚔️ **${added}** joins the fight: HP ${hp}, AC ${ac}, initiative ${world.combat.order.find(o => o.name === added)?.init ?? '?'}.`, { combat: true });
+    saveDoc('world');
+    return added;
+}
+
+/** Who the player's attack is on: the DM's target, a fighter named in the reason, or the only one standing. */
+function playerTarget(c, pr) {
+    const world = c.docs.world, meta = c.meta;
+    const foes = Object.entries(world.combat?.enemies ?? {}).filter(([, e]) => !(e.hp <= 0) && !e.dead).map(([n]) => n);
+    const all = [...foes, ...meta.party.map(p => p.name)];
+    if (pr.target) return matchName(pr.target, all) ?? pr.target;
+    const words = nameKey(`${pr.reason || ''} ${pr.skill || ''}`);
+    const named = all.find(n => words.includes(nameKey(n)) || (nameKey(n).split(' ')[0].length > 3 && words.includes(nameKey(n).split(' ')[0])));
+    if (named) return named;
+    return foes.length === 1 ? foes[0] : '';
+}
+
 function attackTarget(c, r) {
     const meta = c.meta, world = c.docs.world;
     const party = [meta.persona.name, ...meta.party.map(p => p.name)];
@@ -1042,7 +1088,7 @@ async function resolvePlayerRoll(c, parsed, status) {
     const dcText = pr.dc !== null && pr.kind !== 'damage' ? ` vs ${pr.kind === 'attack' ? 'AC' : 'DC'} ${pr.dc}` : '';
     const card = pr.kind === 'damage'
         ? `🎲 **${meta.persona.name}** — damage: **${total}**`
-        : `🎲 **${meta.persona.name}** — ${pr.skill}: d${pr.die || 20} (${natural ?? '?'}) ${formatModifier(mod)} = **${total}** ${mark}${dcText}${flair}`;
+        : `🎲 **${meta.persona.name}** — ${pr.skill}: d${pr.die || 20} ${diceText(pr, natural)} ${formatModifier(mod)} = **${total}** ${mark}${dcText}${flair}`;
     await postDiceCard(card, { roll: { who: meta.persona.name, ...pr, natural, total, success: judged.success } });
     if (pr.kind === 'attack') playAnim(meta.persona.name, 'attack');
     c.docs.rolls_log.push({ at: new Date().toISOString(), who: meta.persona.name, what: pr.skill, kind: pr.kind, natural, mod, total, dc: pr.dc, success: judged.success });
@@ -1058,7 +1104,7 @@ async function resolvePlayerRoll(c, parsed, status) {
     if (pr.kind === 'attack' && judged.success === true) {
         const dice = judged.critical ? (attackDamage(statsForName(meta.persona.name, meta), `${pr.reason || ''} ${pr.skill || ''}`, { critical: true }) || pr.damage) : pr.damage;
         if (dice) {
-            await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: dice, half: false, bonus: null, spot: null });
+            await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: dice, half: false, bonus: null, spot: null, target: playerTarget(c, pr) });
             saveHurt += ` The code has already asked ${meta.persona.name} to roll damage (${dice}): don't ask again; narrate the hit and wait for the total.`;
         }
     }
@@ -1086,7 +1132,20 @@ async function resolvePlayerRoll(c, parsed, status) {
     const search = pr.kind !== 'damage' && /perception|investigation|search/i.test(`${pr.skill} ${pr.reason || ''}`) ? searchForTraps(c, meta.persona.name, total, { dc: pr.dc }) : null;
     if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
     const searchText = search ? ` Searching with that roll (${search.radius ? `${search.radius} squares around them` : 'a failed roll: nothing'}), the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
-    if (pr.kind === 'damage') return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
+    if (pr.kind === 'damage') {
+        // The target takes it here and now (registered in the fight if they weren't yet), so the DM never has to bookkeep it.
+        const who = pr.target ? (await enemyHere(c, pr.target, status), matchName(pr.target, [...Object.keys(c.docs.world.combat?.enemies ?? {}), ...meta.party.map(p => p.name)])) : null;
+        if (who) {
+            const line = changeHp(c.docs.world, who, -total, [meta.persona.name, ...meta.party.map(p => p.name)]);
+            saveDoc('world');
+            fallenInFight(c);
+            playAnim(who, 'hurt');
+            refreshMap();
+            await postDiceCard(`💥 **${who}** takes **${total}** damage${line ? ` (${line})` : ''}.`, { state: true });
+            return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. The code already took it off ${who}: ${line || 'applied'}${/\(down\)/.test(line || '') ? ' (0 HP: dead; narrate the death)' : ''}. Don't apply it again (no state_changes.hp for this hit). Narrate it.`;
+        }
+        return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
+    }
     return searchText + saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
 }
 
@@ -1261,6 +1320,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (npc) npc.lastSeen = world.location;
     }
 
+    // Anyone the DM hurts, or who attacks or is attacked, is on the fight's roster (HP tracked, a turn in
+    // the order) even when start_combat never named them: a raider who swoops in halfway through.
+    if (world.combat) {
+        for (const who of Object.keys(t.state_changes?.hp || {})) await enemyHere(c, who, status);
+        for (const r of t.npc_rolls || []) if (r.kind === 'attack') { await enemyHere(c, r.who, status); if (r.target) await enemyHere(c, r.target, status); }
+    }
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     fallenInFight(c);
@@ -1332,7 +1397,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 .map(g => `${g.name} (${g.description || 'someone who belongs here'}, ${dist(g)} squares away${g.role === 'guard' ? ', a guard' : ''})`);
             here.place.state.fight = { turn: meta.turn, hears };
         } else if (mapsOn()) {
-            combat.map = roomMap ? roomMap.map : normalizeMap(t.start_combat.map || {});
+            combat.map = roomMap ? roomMap.map : normalizeMap({ ...(t.start_combat.map || {}), theme: t.start_combat.map?.theme || themeFor(world.setting, world.location) });
             combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
         }
         mapChanged = true;
@@ -1468,8 +1533,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         world.sceneMap = null;
         refreshMap();
     } else if (t.scene_map && typeof t.scene_map === 'object') {
-        world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap(t.scene_map), positions: {} };
-        mapChanged = true;
+        // On a built map the place IS the scene: a drawn room would kick the party onto a little grid out of nowhere.
+        if (currentPlace(c)) status.note('Scene map ignored: the party is on a built map');
+        else {
+            world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap({ ...t.scene_map, theme: t.scene_map.theme || themeFor(world.setting, world.location) }), positions: {} };
+            mapChanged = true;
+        }
     }
     const inside = currentPlace(c);
     const partyNames = [meta.persona.name, ...meta.party.map(p => p.name)];
@@ -1660,6 +1729,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // its own words), against their AC when the DM left it out, with the DM's dice or the attacker's.
         if (r.kind === 'attack') {
             r.target = attackTarget(c, r);
+            await enemyHere(c, r.who, status);
+            await enemyHere(c, r.target, status);
             if (r.dc === null && r.target) r.dc = armorOf(c, r.target);
             if (!r.damage) r.damage = attackDice(c, r);
         }

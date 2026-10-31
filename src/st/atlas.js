@@ -27,7 +27,8 @@ import { lineRole } from '../core/lines.js';
 import { sfx } from '../ui/sound.js';
 import { watchParty } from './watch.js';
 import { describeRoom, describePrompt, cleanDescription } from '../core/describe.js';
-import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, blueprintFor } from '../core/architect.js';
+import { normalizeBrief, planFromBrief, townFromBrief, wildsFromBrief, isWildKind } from '../core/architect.js';
+import { kindFromWords } from '../core/triage.js';
 import { isCamp, campFromBrief, generateCamp, campInteriors } from '../core/camp.js';
 import { callLocal } from './llm.js';
 import { settings } from './settings.js';
@@ -1070,7 +1071,11 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     const c = campaign();
     if (!c || !req?.name) return null;
     const existing = atlasEntry(req.name, c);
-    if (existing) {
+    if (existing && req.replace) {
+        // The map is to be done again (it came out wrong, or the player asked): the old one and everything on it go.
+        status?.note(`Replacing ${existing.name}`);
+        await forgetFamily(c, (existing.parent && atlas(c).places[existing.parent]) || existing);
+    } else if (existing) {
         // Already there (the DM named it again): nothing to do.
         if (currentPlace(c)?.key === existing.key || currentPlace(c)?.place.parent?.key === existing.key) return currentPlace(c).place;
         status?.note(`Back to ${existing.name}`);
@@ -1081,7 +1086,9 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
     const camp = isCamp(req.kind, req.name);
     const town = !camp && /town|village|hamlet|city|outpost|settlement/.test(String(req.kind || '').toLowerCase());
     const byClaude = settings().mapBuilder === 'claude';
-    if ((big || ask) && confirm) {
+    // Land, camps and towns cost nothing to build (code from a short brief): no need to ask.
+    const cheap = !byClaude && (camp || town || isWildKind(req.kind, req.name));
+    if ((big || ask) && confirm && !cheap) {
         const ok = await ST.callGenericPopup(
             `<h3>Build ${escape(req.name)}?</h3><p>Claude wants to build <b>${escape(req.name)}</b> as a full map${req.why ? `: ${escape(req.why)}` : ''}.</p><p>Every room on every floor is made once and kept for the rest of the campaign (${byClaude ? 'Claude plans it: about $0.15–0.30, a minute or so' : 'built by the map algorithm from a short brief: a few seconds, nearly free'}).</p>`,
             ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Build it', cancelButton: 'Not now' });
@@ -1104,14 +1111,16 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         if (!raw) {
             const brief = normalizeBrief(await askPlaceBrief({ ...req, town }, { signal }).catch(error => { console.warn('[Dungeon Master] brief failed, building from the request', error); return {}; }), req);
             if (town) brief.kind = brief.kind && /town|village|city|hamlet/.test(brief.kind) ? brief.kind : 'town';
-            raw = town ? townFromBrief(brief, seed) : camp ? campFromBrief(brief, seed) : WILD_KINDS.test(`${brief.kind} ${brief.name}`.toLowerCase()) && !blueprintFor(brief.kind).building ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
+            raw = town ? townFromBrief(brief, seed) : camp ? campFromBrief(brief, seed) : isWildKind(brief.kind, brief.name) || isWildKind(req.kind, req.name) ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
+            // The land hears what was asked for (a stream, standing stones) in the builder's own words.
+            if (raw?.wild && req.why) raw.summary = [raw.summary, req.why].filter(Boolean).join(' ');
         }
         anim.step(town ? 'Building the town' : camp ? 'Building the camp' : 'Building the floors');
         await sleep(300);
         // (Not 'plan': that's the ready plan this was called with, read above.)
         const placePlan = town ? null : camp ? raw : normalizePlan({ ...raw, name: raw.name || req.name, kind: raw.kind || req.kind });
         // A wild place (a jungle, a forest, a swamp, a camp) is land: clearings joined by trails, not rooms.
-        const wild = !town && !camp && !placePlan.building && WILD_KINDS.test(`${placePlan.kind} ${placePlan.name}`.toLowerCase());
+        const wild = !town && !camp && (raw?.wild === true || (!placePlan.building && isWildKind(placePlan.kind, placePlan.name)));
         const place = town ? generateTown(normalizeTownPlan(raw), seed) : camp ? generateCamp(placePlan, seed) : wild ? generateWilds(placePlan, seed) : generatePlace(placePlan, seed);
         if (place) {
             // Nobody of the place may be named like a party member: "Judy" in a cage IS Judy Hopps, whom
@@ -1190,9 +1199,21 @@ export async function rebuildPlace(name = '', { status = null } = {}) {
     const entry = name ? atlasEntry(name, c) : list[c.docs.world.place?.key];
     if (!entry) throw new Error(name ? `There's no saved map called "${name}".` : 'You\'re not on a map right now. Name the one to rebuild, e.g. /dmrebuild Blackmoor Manor');
     const top = (entry.parent && list[entry.parent]) || entry;
-    const family = Object.values(list).filter(e => e.key === top.key || e.parent === top.key || e.key.startsWith(`${top.key}--`));
     const ok = await ST.callGenericPopup(`<h3>Rebuild ${escape(top.name)}?</h3><p>This map is thrown away, with everything that happened on it (opened doors, sprung traps, moved furniture), and Claude plans it again with the newest rules (about $0.05–0.30).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Rebuild', cancelButton: 'Keep it' });
     if (ok !== ST.POPUP_RESULT.AFFIRMATIVE && ok !== true && ok !== 1) return null;
+    const { kind, wasHere, where } = await forgetFamily(c, top);
+    status?.note(`Rebuilding ${top.name}`);
+    return requestBuild({ name: top.name, size: top.size === 'big' ? 'big' : 'small', kind: kind === 'interior' ? '' : kind, why: 'the player asked to rebuild this map', start: wasHere ? where : '' }, { status, confirm: false });
+}
+
+/**
+ * Throw a place and its whole family away (a building's grounds and inside, a town's buildings, a
+ * camp's houses and tunnels): the party leaves it if they were on it. Returns what a rebuild needs:
+ * the kind it was, whether the party was there, and where the scene card said they stood.
+ */
+async function forgetFamily(c, top) {
+    const list = atlas(c).places;
+    const family = Object.values(list).filter(e => e.key === top.key || e.parent === top.key || e.key.startsWith(`${top.key}--`));
     // The kind of place it is: the inside's kind for a building (its grounds are kind "grounds").
     const kind = top.kind === 'grounds' ? (family.find(e => e.parent === top.key)?.kind ?? '') : top.kind;
     const wasHere = family.some(e => e.key === c.docs.world.place?.key);
@@ -1204,8 +1225,27 @@ export async function rebuildPlace(name = '', { status = null } = {}) {
         await deleteFile(e.file).catch(() => false);
     }
     saveDoc('atlas');
-    status?.note(`Rebuilding ${top.name}`);
-    return requestBuild({ name: top.name, size: top.size === 'big' ? 'big' : 'small', kind: kind === 'interior' ? '' : kind, why: 'the player asked to rebuild this map', start: wasHere ? where : '' }, { status, confirm: false });
+    return { kind, wasHere, where };
+}
+
+/**
+ * A map the player asked for in their own words ("regenerate the map: a big forest with a stream"),
+ * from the map panel's button, /dmrebuild, or when the DM was asked and didn't build one. The map
+ * they're on (if any) is thrown away and the new one built from what they said: its kind and size
+ * from their words when they gave any, the rest from the story through the brief. Free; no asking.
+ * @param {{text: string, kind?: string, size?: string, redo?: boolean}} mr see mapRequest()
+ */
+export async function buildFromRequest(mr, { status = null } = {}) {
+    const c = campaign();
+    if (!c || !mr?.text) return null;
+    const here = currentPlace(c);
+    const top = here ? (here.place.parent?.key ? atlas(c).places[here.place.parent.key] : atlas(c).places[here.key]) ?? null : null;
+    const location = c.docs.world.location || c.docs.world.sceneCard?.place || '';
+    const kind = mr.kind || (top && isWildKind(top.kind, top.name) ? top.kind : '') || kindFromWords(location) || 'wilderness';
+    const name = top?.name || location || 'The Wilds';
+    const size = mr.size || (top?.size === 'big' ? 'big' : 'small');
+    status?.note(`Building the map you asked for (${kind}${size === 'big' ? ', big' : ''})`);
+    return requestBuild({ name, size, kind, why: `the player asked for this map, in their own words: "${mr.text.slice(0, 200)}"`, start: 'where the party is right now', replace: true }, { status, confirm: false });
 }
 
 function escape(s) {

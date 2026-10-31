@@ -7,10 +7,12 @@
 // Claude never sees an image: it reads and writes maps as plain text.
 
 import { campaign } from '../st/campaign.js';
+import { ST } from '../st/st.js';
+import { mapRequest } from '../core/triage.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
+import { currentPlace, buildFromRequest, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
 import { moveBudget, conditionsOf } from '../core/world.js';
 import { restraintOf } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
@@ -311,6 +313,7 @@ function renderMap(center = false) {
   <div class="dm-map-tools">
   ${floors.length > 1 ? `<select class="dm-map-floor text_pole" title="Look at another floor you've explored">${floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === b.floor.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>` : ''}
   ${map.w > 16 || map.h > 16 ? '<span class="dm-map-btn fa-solid fa-magnifying-glass-minus" data-act="out" title="Zoom out"></span><span class="dm-map-btn fa-solid fa-magnifying-glass-plus" data-act="in" title="Zoom in"></span>' : ''}
+  <span class="dm-map-btn fa-solid fa-hammer" data-act="rebuild" title="Rebuild this map: say what it should be"></span>
   <span class="dm-map-btn fa-solid fa-cloud-rain ${settings().mapAmbience === false ? 'dm-map-off' : ''}" data-act="ambience" title="Weather and ambient particles: on/off (fire and spells always show)"></span>
   <span class="dm-map-btn fa-solid fa-location-crosshairs ${follow ? 'dm-hidden' : ''}" data-act="center" title="Follow ${escapeHtml(c.meta.persona.name)} again"></span>
   <span class="dm-map-btn fa-solid fa-window-minimize" data-act="min" title="Minimize"></span>
@@ -399,6 +402,7 @@ ${b.kind === 'combat' ? `<div class="dm-map-turn">${turnStrip(c)}</div>` : ''}
     panel.querySelector('[data-act="in"]')?.addEventListener('click', () => { zoom = Math.min(1.5, zoom + 0.25); sizeCanvas(canvas, b); mountBubbles(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="out"]')?.addEventListener('click', () => { zoom = Math.max(0.25, zoom - 0.25); sizeCanvas(canvas, b); mountBubbles(canvas, b); if (follow) centerOnParty(view, canvas, b); });
     panel.querySelector('[data-act="close"]').addEventListener('click', closeMap);
+    panel.querySelector('[data-act="rebuild"]')?.addEventListener('click', () => { askRebuild().catch(error => toastr.error(String(error?.message || error), 'Dungeon Master')); });
     panel.querySelector('[data-act="ambience"]')?.addEventListener('click', () => { settings().mapAmbience = settings().mapAmbience === false; saveSettings(); renderMap(); });
     panel.querySelector('[data-act="min"]').addEventListener('click', () => {
         anchorAboveForm();
@@ -1006,4 +1010,20 @@ function showMenu(ev, title, sub, actions) {
         closeMenu();
         try { await actions[i][2](); } catch (error) { toastr.error(String(error?.message || error), 'Map'); }
     });
+}
+
+/**
+ * Build this map again from the player's own words (the rebuild button): a box for what it should
+ * be, then the map they're on is thrown away and the new one built from what they said.
+ */
+async function askRebuild() {
+    const c = campaign();
+    if (!c) return;
+    const here = currentPlace(c);
+    const text = await ST.callGenericPopup(
+        `<h3>Rebuild the map</h3><p>Say what it should be, in your own words: the kind of place, how big, what's in it. For example "a big forest with a stream", "open downs with standing stones", "a small bandit camp".${here ? ` <b>${escapeHtml(here.place.name)}</b> and everything on it are thrown away.` : ''}</p>`,
+        ST.POPUP_TYPE.INPUT, '', { okButton: 'Build it', cancelButton: 'Keep it' });
+    if (typeof text !== 'string' || !text.trim()) return;
+    const mr = mapRequest(`make the map: ${text}`) ?? { kind: '', size: '' };
+    await buildFromRequest({ ...mr, text: text.trim(), redo: true });
 }

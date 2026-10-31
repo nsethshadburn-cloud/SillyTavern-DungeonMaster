@@ -113,6 +113,9 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
     if (c.meta.pacing?.inCombat) parts.push({ key: 'combat', text: renderTemplate(s.templates.combat, vars) });
     if (state.avoid) parts.push({ key: 'avoid', text: renderTemplate(s.templates.avoid, { ...vars, avoid: state.avoid }) });
     if (brief) parts.push({ key: 'brief', text: renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }) });
+    // One length rule at a time: with a brief's own length (or the fight's "one short line") the scene
+    // note's standing length line goes, so a thinking model has nothing to reconcile and ramble over.
+    if (brief || c.meta.pacing?.inCombat) { const scene = parts.find(p => p.key === 'scene'); if (scene) scene.text = scene.text.split('\n').filter(l => !/\bkeep replies to\b|\d-\d sentences/i.test(l)).join('\n'); }
     // Sized to the player's setting and the live context, so the note never crowds out the chat.
     return fitNote(parts, noteBudget(s, { maxContext: ST.maxContext, responseLength: ST.responseLength })).join('\n');
 }
@@ -310,6 +313,25 @@ async function speakMember(name, chid, brief, { signal, length = 'normal', npc =
     }
     await stripEchoedName(name);
     rememberBriefOnReply(name, brief, length);
+    emptyReplyWarning(name);
+}
+
+/**
+ * A reply that came back empty: a thinking model that spent its whole response length thinking
+ * (the reasoning is there, the words never came), or a connection that answered nothing. Say so,
+ * with what to change, once per character per session; the empty message stays as the evidence.
+ */
+const warnedEmpty = new Set();
+function emptyReplyWarning(name) {
+    const msg = ST.chat[ST.chat.length - 1];
+    if (!msg || msg.is_user || msg.name !== name || String(msg.mes || '').trim()) return;
+    const thought = Boolean(msg.extra?.reasoning);
+    console.warn('[Dungeon Master] empty reply from', name, thought ? '(reasoning only: the response length ran out while thinking)' : '');
+    if (warnedEmpty.has(name)) return;
+    warnedEmpty.add(name);
+    toastr.warning(thought
+        ? `${name}'s reply came back empty: the model used its whole response length on thinking. Raise "Response (tokens)" in SillyTavern's AI Response settings for that connection, or turn reasoning off for it.`
+        : `${name}'s reply came back empty. Check that connection's response length, and that the model answered at all.`, 'Dungeon Master', { timeOut: 15000 });
 }
 
 /** Store the brief on the reply itself, so swiping THAT reply reuses the same brief. */
