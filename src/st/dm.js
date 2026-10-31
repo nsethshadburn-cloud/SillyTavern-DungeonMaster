@@ -121,7 +121,7 @@ async function memoryBookEntries(max = 4) {
 }
 
 const REASON_TEXT = {
-    ooc: 'The player asked you something out of character. Answer in "ooc". Only add narration if the question changes the scene.',
+    ooc: 'The player asked you something out of character. Answer in "ooc". Only add narration if the question changes the scene. If they ask for a map (make, generate, regenerate, rebuild, fix the map), send build_place THIS turn, with "replace": true when a map of that place already exists, kind and size from their words; the code builds it from their words if you don\'t, so never just promise one.',
     roll_result: 'The player rolled for your last request. The result is below. Narrate the outcome.',
     risky_action: 'The player attempted something with an uncertain outcome. Rule on it: ask for a roll (player_roll) or narrate the result if no roll is needed.',
     scene_move: 'The player wants to move the scene (travel, rest, leave, time skip). Compress the uneventful part unless they are in a real conversation, then land them at the next interesting moment or the destination, and describe where they arrive.',
@@ -238,6 +238,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     for (const r of reasons) sections.push(`- ${REASON_TEXT[r] ?? r}`);
     if (handUp) sections.push('', ESCALATE_INSTRUCTION);
     if (oocText) sections.push('', `Player's out-of-character question: ${oocText}`);
+    if (c.meta.turnProblems?.length) sections.push('', `WHAT DIDN'T TAKE LAST TURN (the code dropped these and the player saw a warning). Fix each one now with the exact names and ids in the state above, and never claim in the story what the tracker doesn't show:\n${c.meta.turnProblems.map(p => `- ${p}`).join('\n')}`);
     if (rollResolution) sections.push('', `ROLL RESULT: ${rollResolution}`);
     if (placeEvent) sections.push('', `PLACE EVENT: ${placeEvent}`);
     if (events.length) {

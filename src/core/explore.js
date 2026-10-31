@@ -601,7 +601,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     const c = changes && typeof changes === 'object' ? changes : {};
     for (const [id, raw] of Object.entries(c.doors || {})) {
         const door = place.doors[id] ?? Object.values(place.doors).find(d => d.id.toLowerCase() === String(id).toLowerCase());
-        if (!door) continue;
+        if (!door) { log.push(`⚠️ doors.${id}: no door with that id`); continue; }
         const want = String(raw).toLowerCase();
         const state = { open: 'open', opened: 'open', unlocked: 'closed', closed: 'closed', close: 'closed', locked: 'locked', lock: 'locked', broken: 'broken', break: 'broken', found: 'closed', revealed: 'closed', hidden: 'hidden', walled: 'walled', bricked: 'walled' }[want];
         if (!state) continue;
@@ -611,7 +611,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     }
     for (const [id, raw] of Object.entries(c.traps || {})) {
         const trap = findByIdOrName(place.traps, id);
-        if (!trap) continue;
+        if (!trap) { log.push(`⚠️ traps.${id}: no trap with that id or name`); continue; }
         const state = { found: 'found', spotted: 'found', disarmed: 'disarmed', sprung: 'sprung', triggered: 'sprung' }[String(raw).toLowerCase()];
         if (!state) continue;
         // The DM revealing a trap in the story: the party all hear about it.
@@ -624,7 +624,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     }
     for (const [id, raw] of Object.entries(c.items || {})) {
         const item = findByIdOrName(place.items, id);
-        if (!item) continue;
+        if (!item) { log.push(`⚠️ items.${id}: no item with that id or name`); continue; }
         const v = String(raw);
         if (/^(taken|picked|carried|gone)/i.test(v)) item.state = 'taken';
         else if (/^(found|revealed|spotted)/i.test(v)) { item.hidden = false; item.found = true; }
@@ -638,7 +638,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
             const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : null);
             const info = { description: raw.description, hostile: raw.hostile === true };
             g = where ? placePerson(place, name, where, { floor, info, arrive: true }) : null;
-            if (!g) { log.push(`couldn't place ${name} (no square or room given)`); continue; }
+            if (!g) { log.push(`⚠️ guards.${name}: couldn't place them (no square or room given)`); continue; }
             if (raw.description) g.description = String(raw.description).slice(0, 240);
             if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
             if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(id => findRoom(place, id)?.id).filter(Boolean);
@@ -675,13 +675,15 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         else {
             // A square or a room: move them there (someone new appears there).
             g = placePerson(place, name, v, { floor, arrive: true });
-            if (!g) { log.push(`couldn't place ${name} at ${v}`); continue; }
+            if (!g) { log.push(`⚠️ guards.${name}: couldn't place them at ${v}`); continue; }
         }
         if (g) log.push(`${g.name}: ${v}`);
+        else log.push(`⚠️ guards.${name}: nobody by that name on the map`);
     }
     for (const [id, v] of Object.entries(c.rooms || {})) {
         const rm = place.rooms[id];
-        if (!rm || !v || typeof v !== 'object') continue;
+        if (!rm) { log.push(`⚠️ rooms.${id}: no room with that id`); continue; }
+        if (!v || typeof v !== 'object') continue;
         if (typeof v.lit === 'boolean') {
             rm.lit = v.lit;
             const area = floorById(place, rm.floor).map.areas?.find(a => a.room === id);
@@ -694,7 +696,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     // Things on the map: smashed, removed, moved.
     for (const [id, raw] of Object.entries(c.props || {})) {
         const found = propById(place, id);
-        if (!found) continue;
+        if (!found) { log.push(`⚠️ props.${id}: no prop with that id`); continue; }
         const v = raw && typeof raw === 'object' ? raw : { state: String(raw) };
         const st = String(v.state || '').toLowerCase();
         if (/^(broken|smashed|destroyed|debris)$/.test(st)) { const name = found.prop.label || PROPS[found.prop.type]?.name || id; smashProp(place, id); log.push(`${name} smashed`); continue; }

@@ -9,6 +9,8 @@ import { themeFor, normalizeMap } from '../src/core/grid.js';
 import { diceText } from '../src/core/dice.js';
 import { createWorldState, startCombat, ensureEnemy, applyStateChanges } from '../src/core/world.js';
 import { parseDmTurn, DM_RULES } from '../src/core/protocol.js';
+import { applyPlaceChanges } from '../src/core/explore.js';
+import { placeNear, toCoord } from '../src/core/grid.js';
 
 test('open country and standing stones are land, not the generic house; buildings stay buildings', () => {
     for (const [kind, name] of [['downs', 'Ashen Downs'], ['standing stones', 'Ashen Downs Standing Stones'], ['', 'Ashen Downs Standing Stones'], ['the moor', 'Wolf Moor'], ['hills', 'The Grey Hills'], ['forest', 'Dark Wood'], ['wilderness', 'Nowhere'], ['open country', 'the plain'], ['woods', 'the trees']]) assert.ok(isWildKind(kind, name), `${kind || '(no kind)'} / ${name}`);
@@ -86,4 +88,16 @@ test('someone who joins a fight late is on the roster with HP, and damage to the
     assert.equal(world.combat.enemies['Gaunt Raider'].hp, 4);
     assert.ok(log[0].includes('Gaunt Raider HP 13 → 4'));
     assert.equal(ensureEnemy({}, 'Nobody'), null, 'no fight, no roster');
+});
+
+test('a place change that names nothing says so instead of vanishing; a fighter with no square stands near the party', () => {
+    const map = { w: 6, h: 6, rows: Array(6).fill('......'), theme: 'forest', props: [] };
+    const place = { name: 'x', floors: [{ id: 'F0', name: 'x', level: 0, map }], rooms: {}, doors: {}, traps: {}, items: {}, guards: {}, stairs: [], exits: [], buildings: {}, state: { positions: {}, explored: {}, floor: 'F0' } };
+    const log = applyPlaceChanges(place, { doors: { D9: 'open' }, traps: { T4: 'found' }, items: { I2: 'taken' }, rooms: { G7: { lit: true } }, guards: { 'Gaunt Raider': 'alert' } });
+    const warned = log.filter(l => l.startsWith('⚠️'));
+    assert.equal(warned.length, 5, log.join(' | '));
+    assert.ok(warned.some(l => /doors\.D9/.test(l)) && warned.some(l => /traps\.T4/.test(l)) && warned.some(l => /items\.I2/.test(l)) && warned.some(l => /rooms\.G7/.test(l)) && warned.some(l => /guards\.Gaunt Raider/.test(l)));
+    const positions = placeNear(map, { Amber: toCoord(2, 2) }, ['Gaunt Raider'], { x: 2, y: 2 }, 3);
+    assert.ok(positions['Gaunt Raider'], 'placed');
+    assert.ok(/replace": true/.test(DM_RULES) && /WHAT DIDN'T TAKE/.test(DM_RULES) && /from the player's own hits/.test(DM_RULES));
 });

@@ -1254,6 +1254,9 @@ export function combatFromAttacks(c, t) {
 export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [], quiet = false } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
+    // What the DM asked for that the code had to drop (a name nobody has, an id that isn't there): the
+    // player sees it, and the DM is told next turn, instead of a claim the tracker doesn't show.
+    const problems = [];
     // Maps off: anything about maps in the DM's answer is ignored (the story stays in the chat).
     if (!mapsOn()) {
         Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {}, escort: null, dashing: [], free_move: [] });
@@ -1326,6 +1329,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         for (const who of Object.keys(t.state_changes?.hp || {})) await enemyHere(c, who, status);
         for (const r of t.npc_rolls || []) if (r.kind === 'attack') { await enemyHere(c, r.who, status); if (r.target) await enemyHere(c, r.target, status); }
     }
+    for (const who of Object.keys(t.state_changes?.hp || {})) if (!matchName(who, [...Object.keys(world.party), ...Object.keys(world.combat?.enemies ?? {})])) problems.push(`state_changes.hp for "${who}" was dropped: nobody by that name is tracked (the party: ${Object.keys(world.party).join(', ')}${world.combat ? `; in the fight: ${Object.keys(world.combat.enemies).join(', ') || 'nobody yet'}` : '; no fight is on, so nobody else has HP: start_combat first'})`);
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     fallenInFight(c);
@@ -1406,6 +1410,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (world.combat?.map) {
         const friends = fightParty(c);
         const foes = Object.keys(world.combat.enemies || {});
+        // A fighter the DM never put on the board (swooped in, named for the first time) stands near the party, not nowhere.
+        const lead = parseCoord(world.combat.positions?.[meta.persona.name], world.combat.map);
+        const nowhere = foes.filter(n => !world.combat.positions?.[n] && !(t.positions || {})[n] && !(world.combat.enemies[n].hp <= 0));
+        if (nowhere.length && lead) { world.combat.positions = placeNear(world.combat.map, world.combat.positions, nowhere, lead, 3); status.note(`${nowhere.join(', ')} had no square: placed near the party`); mapChanged = true; }
         // The party moves at most their speed each round (twice that when dashing), around walls.
         const moves = { ...(t.positions || {}) };
         for (const name of friends) {
@@ -1534,7 +1542,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         refreshMap();
     } else if (t.scene_map && typeof t.scene_map === 'object') {
         // On a built map the place IS the scene: a drawn room would kick the party onto a little grid out of nowhere.
-        if (currentPlace(c)) status.note('Scene map ignored: the party is on a built map');
+        if (currentPlace(c)) { status.note('Scene map ignored: the party is on a built map'); problems.push('scene_map was dropped: the party is on a built map, which IS the scene (never send a scene_map there)'); }
         else {
             world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap({ ...t.scene_map, theme: t.scene_map.theme || themeFor(world.setting, world.location) }), positions: {} };
             mapChanged = true;
@@ -1549,6 +1557,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (t.place_changes) {
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
+            problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
         }
         // The player gave in to a guard: walked to their cell, door locked (the code checks their words).
         if (t.escort && !world.combat) {
@@ -1816,6 +1825,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // Already there (the DM named it again): nobody moves, the map stays as it is.
         const here = currentPlace(c);
         const already = here && (here.key === entry?.key || here.place.parent?.key === entry?.key);
+        if (!entry) problems.push(`enter_place "${t.enter_place}" was dropped: no such place in the ATLAS (build it with build_place, or name one that is listed)`);
         if (entry && !already) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
     }
 
@@ -1876,18 +1886,34 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (pr.damage) status.note(`Damage dice from the sheet: ${pr.damage}`);
         }
         if (pr.kind === 'initiative') pr.dc = null;
+        // An attack is against the target's real AC: the fight's roster or their sheet, not a number from memory.
+        if (pr.kind === 'attack') {
+            pr.target = playerTarget(c, pr);
+            const foe = world.combat?.enemies?.[pr.target];
+            const sheetAc = pr.target && !foe ? statsForName(pr.target, meta)?.ac : null;
+            const ac = foe && Number.isFinite(Number(foe.ac)) ? Number(foe.ac) : Number.isFinite(Number(sheetAc)) ? Number(sheetAc) : null;
+            if (ac !== null && pr.dc !== ac) { if (pr.dc !== null) problems.push(`player_roll.dc ${pr.dc} for the attack on ${pr.target} was replaced by their AC ${ac} (the roster's; it never changes between rolls)`); pr.dc = ac; }
+        }
         await postRollRequest(c, pr);
     }
     saveMeta();
     // A new map: asks first for big ones, plays the building animation, then opens it.
     if (t.build_place) {
         try {
+            if (atlasEntry(t.build_place.name, c) && !t.build_place.replace) problems.push(`build_place "${t.build_place.name}" built nothing: that map already exists (the party was sent back to it). To build it again, send it with "replace": true.`);
             await requestBuild(t.build_place, { status, signal });
         } catch (error) {
             status.note(`Map not built: ${error.message}`);
             toastr.error(String(error?.message || error), 'Dungeon Master');
         }
     }
+    // Loud failure: what was dropped is shown to the player now and to the DM next turn.
+    meta.turnProblems = problems;
+    if (problems.length) {
+        status.note(`Dropped: ${problems.join(' · ')}`);
+        await postNote(`⚠️ The DM asked for something the code couldn't do: ${problems.join(' · ')}`);
+    }
+    saveMeta();
 }
 
 /** Opening scene after the wizard built the campaign. */
