@@ -1416,6 +1416,17 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (!/prone|fallen|on the ground|unconscious|dead/.test(have) && /\b(?:you(?:'re| are)? (?:face ?down|flat on your back|on the ground|sprawl(?:ed|ing)?|knocked (?:down|flat|off your feet)|thrown (?:down|to the ground)|down in the (?:dirt|mud|grass|snow))|(?:tackles?|trips?|knocks?|throws?|slams?|shoves?|drives?|puts?) you (?:down|to the ground|flat|off your feet|into the (?:dirt|mud|ground))|knee in your back|face ?down in the (?:dirt|mud|grass|snow)|you (?:hit|go) (?:the ground|down hard))\b/i.test(text)) adds.push('prone');
         if (!/cuff|manacle|shackl|irons/.test(have) && /\b(?:cuffs? (?:click|snap|close|lock|bite|go) [^.]{0,30}?(?:your|around your) wrists?|(?:your|his|her) wrists? (?:are |is )?(?:cuffed|in irons|in manacles)|cuffs? you\b|cuffed your|(?:puts?|snaps?|locks?|clamps?) (?:the )?(?:cuffs|manacles|irons) (?:on|around) (?:you|your wrists?)|you(?:'re| are) (?:cuffed|in irons|in manacles))\b/i.test(text)) adds.push('cuffed');
         if (!/restrain|tied|bound|rope/.test(have) && /\b(?:ties? (?:you(?:r hands| up)|your wrists)|binds? your (?:hands|wrists)|rope (?:around|round) your wrists|you(?:'re| are) (?:tied up|bound hand and foot|trussed))\b/i.test(text)) adds.push('restrained (rope)');
+        // Held down: a knee on your back, someone sitting on you, pinning you. Who, when the words say.
+        const pinWords = /\b(?:knee (?:in|on|between|against|into) your (?:back|spine|shoulder|shoulders|shoulder blades|neck)|pins? you (?:down|flat|to the ground)?|holds? you (?:down|flat|still)|holding you (?:down|flat)|sits? on (?:you|your back)|sitting on (?:you|your back)|weight (?:on|across|settles on) your back|kneel(?:s|ing)? on (?:you|your back))\b/i;
+        if (!/pinned|grappled|held down/.test(have) && pinWords.test(text)) {
+            const holder = meta.party.map(p => p.name).find(n => new RegExp(`\\b${n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text)) ?? Object.values(currentPlace(c)?.place.guards || {}).map(g => g.name).find(n => new RegExp(`\\b${n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text));
+            adds.push(holder ? `pinned (held down by ${holder})` : 'pinned (held down)');
+        }
+        const pinned = conditionsOf(world, player).find(x => /pinned/i.test(x));
+        if (pinned && /\b(?:(?:gets?|climbs?|rolls?|eases?|lifts?|takes?) (?:off|up off|her weight off|his weight off|the knee off) (?:of )?(?:you|your back)|lets? you (?:up|go)|releases? you|stands? (?:up )?off (?:of )?you|off your back now)\b/i.test(text)) {
+            applyStateChanges(world, { conditions_remove: { [player]: [pinned] } }, meta.party.map(p => p.name), { turn: meta.turn });
+            status.note(`${player}: no longer pinned (from the story)`);
+        }
         if (adds.length) {
             applyStateChanges(world, { conditions_add: { [player]: adds } }, meta.party.map(p => p.name), { turn: meta.turn });
             syncDownFromConditions(c);
@@ -2096,6 +2107,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
         if (pr.kind === 'initiative') pr.dc = null;
         // An attack is against the target's real AC: the fight's roster or their sheet, not a number from memory.
+        // Getting up, slipping free, working a lock: pinned or cuffed hands make it a roll at disadvantage, and getting up from under someone is DC 15 at least.
+        {
+            const conds = conditionsOf(world, meta.persona.name).join(' ').toLowerCase();
+            const words = `${pr.reason || ''} ${pr.skill || ''}`.toLowerCase();
+            const getUp = /\b(?:get(?:s|ting)? up|to (?:his|her|their|your) feet|off the ground|stand(?:s|ing)? up|struggle(?:s)? up|push(?:es|ing)? up)\b/.test(words);
+            const wriggle = /\b(?:slip|slips|slipping|wriggle|squirm|work(?:s|ing)? (?:at|the) (?:lock|cuffs)|pick(?:s|ing)? the (?:cuffs|lock)|break free|get free|struggle free)\b/.test(words);
+            if (pr.kind !== 'attack' && pr.kind !== 'damage' && (getUp || wriggle) && /pinned|grappled|held down|cuff|shackl|manacle/.test(conds) && pr.advantage !== 'disadvantage') { pr.advantage = 'disadvantage'; status.note(`${/pinned|grappled|held down/.test(conds) ? 'Held down' : 'Cuffed'}: the ${pr.skill || 'roll'} is at disadvantage`); }
+            if (getUp && /pinned|grappled|held down/.test(conds) && (pr.dc === null || pr.dc < 15)) { pr.dc = 15; status.note('Getting up from under someone: DC 15'); }
+        }
         if (pr.kind === 'attack') {
             pr.target = playerTarget(c, pr);
             const foe = world.combat?.enemies?.[pr.target];

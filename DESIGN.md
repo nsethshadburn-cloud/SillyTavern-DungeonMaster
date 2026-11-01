@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.56.4 (pinned)
+A knee on the player's back was narrated and never a condition, so the get-up roll was a plain Acrobatics check. The story now adds "pinned (held down by X)" (and removes it when X gets off), and the code puts any get-up, slip-free or lock-working roll at disadvantage while pinned or cuffed, with getting up from under someone at DC 15.
+
 ### v0.56.3 (whose roll)
 "Getting up... with Judy's weight on your back" was rolled for Judy: the companion-roll reader took any possessive as the companion's roll. `rollBelongsTo` in `core/triage.js` now needs a roll word after the possessive ("Judy's DEX save"), "for Judy", or "Judy must...", and a reason that speaks to the player (you, your) is the player's whatever it names.
 
