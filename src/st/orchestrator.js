@@ -1732,10 +1732,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 }
                 const member = partyNames.find(n => nameKey(n) === nameKey(name));
                 if (member) {
-                    // Outside a fight the party moves itself (the map, or the sync walking them): the DM
-                    // only moves someone who can't move on their own (carried, dragged).
-                    if (!lockedReason(c, member) && !captured.has(member)) { missed.push(`${name} → ${coord} (they move themselves; only someone restrained, or just captured with access "prisoner"/"none", can be moved)`); continue; }
                     const pt = parseCoord(coord, map);
+                    // Outside a fight the party moves itself (the map, or the sync walking them). The DM still sets
+                    // the scene at the opening, puts a companion beside the player (kneeling on them, at their side),
+                    // nudges one a square or two, or moves someone who can't move on their own (carried, dragged).
+                    const gap = (a, b) => (a && b && a.floor === floorId ? Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) : 99);
+                    const lead0 = place.state.positions[meta.persona.name], own = place.state.positions[member];
+                    const staging = reasons.includes('opening') || (pt && ((member !== meta.persona.name && gap(lead0, pt) <= 1) || gap(own, pt) <= 2));
+                    if (!staging && !lockedReason(c, member) && !captured.has(member)) { missed.push(`${name} → ${coord} (they move themselves; the DM may put a companion beside the player or a square or two along, and move only someone restrained or just captured with access "prisoner"/"none")`); continue; }
                     const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
                     if (spot) {
                         place.state.positions[member] = { floor: floorId, ...spot };
@@ -1752,7 +1756,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 const info = { description: npc ? [npc.role, npc.description].filter(Boolean).join('. ') : '', hostile: npc?.attitude === 'hostile', gender: npc?.gender };
                 if (!placePerson(place, npc?.name ?? name, coord, { floor: floorId, info, arrive: !personByName(place, npc?.name ?? name) })) missed.push(`${name} → ${coord}`);
             }
-            if (missed.length) { status.note(`Couldn't place on the map: ${missed.join(', ')}`); problems.push(`positions not applied: ${missed.join('; ')}`); }
+            if (missed.length) { status.note(`Couldn't place on the map: ${missed.join(', ')}`); dmOnly.push(`positions not applied: ${missed.join('; ')}`); }
         }
         look(c, key, place);
         savePlace(key, c);
