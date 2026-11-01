@@ -609,6 +609,18 @@ function drawTokens(ctx, c, b, tile, now, restore) {
     const player = c.meta.persona.name;
     const friends = new Set([player, ...c.meta.party.map(pt => pt.name)]);
     const figures = settings().mapFigures !== false;
+    // Somebody's prisoner: the keeper's reach, drawn as a ring, so the line is seen before it's crossed.
+    const custody = b.place?.state?.custody?.[player];
+    const keeperAt = custody && b.positions[custody.by] ? parseCoord(b.positions[custody.by], map) : null;
+    if (keeperAt && !restore) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 170, 60, 0.6)';
+        ctx.setLineDash([Math.max(3, tile * 0.3), Math.max(2, tile * 0.2)]);
+        ctx.lineWidth = Math.max(1.5, tile * 0.08);
+        const r = custody.radius + 0.5;
+        ctx.strokeRect(MARGIN + (keeperAt.x - custody.radius) * tile + 1, (map.h - 1 - keeperAt.y - custody.radius) * tile + 1, (2 * r) * tile - 2, (2 * r) * tile - 2);
+        ctx.restore();
+    }
     // A horse is drawn first and its rider on top of it, a little higher.
     // A rider sits up on the horse only while the horse is there under them.
     const mountsAll = b.place?.state?.mounts || {};
@@ -885,6 +897,7 @@ function showPerson(ev, c, b, who) {
         place?.state.mounts?.[who] ? `riding ${place.state.mounts[who]}` : '',
         Object.entries(place?.state.mounts || {}).find(([, h]) => h === who) ? `ridden by ${Object.entries(place.state.mounts).find(([, h]) => h === who)[0]}` : '',
         g?.ac ? `AC ${g.ac}` : '',
+        (c.docs.world.inventory?.[who] || []).length ? `carries ${c.docs.world.inventory[who].join(', ')}` : '',
         place?.guards[who]?.description || '',
     ].filter(Boolean);
     const horse = place?.state.mounts?.[who];

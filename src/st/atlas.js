@@ -20,7 +20,7 @@ import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } 
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
 import { generateWagon } from '../core/wagon.js';
-import { BODY_MS, OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, GUARD_SIGHT, hostileNotice, checkTriggers, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
+import { BODY_MS, OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, GUARD_SIGHT, hostileNotice, checkTriggers, ageNotice, noticeTraps, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
 import { outBy } from '../core/notice.js';
 import { resolveTarget, whereWords, thingName } from '../core/targets.js';
@@ -254,7 +254,8 @@ function peopleWith(c, place, name, pos, rm) {
     const custody = place.state.custody || {};
     const out = [];
     for (const [n, p] of Object.entries(place.state.positions)) {
-        if (n === name || !sees(p) || (isAway(c.docs.world, n) && !place.state.held?.[n])) continue;
+        if (n === name || (isAway(c.docs.world, n) && !place.state.held?.[n])) continue;
+        if (!sees(p)) { if (p && p.floor === pos.floor && dist(p) <= 6) out.push(`${n} (${dist(p)} squares ${dir(p)}, but out of your sight from here: dark, or something in the way)`); continue; }
         const bits = [`${dist(p)} squares ${dir(p)}`];
         if (place.state.held?.[n]) bits.push('held here');
         if (custody[n]?.by === name) bits.push(`YOUR PRISONER: keep them within ${custody[n].radius} squares`);
@@ -705,13 +706,14 @@ export async function pickLock(doorId, redraw = () => { }) {
         // Done in plain view of someone who belongs here: they saw it.
         const seenBy = watchersSeeing(c, place, door.floor, player);
         if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched ${player} pick the lock of ${door.id} (${doorRooms(place, door)}) and open it. Decide what they do about it (a guard: challenge, alarm, or going after them; anyone else: shout, run, or look the other way), brief them if they speak, and set an intent if they go after someone.`);
+        else { const { companionSaw } = await import('./orchestrator.js'); await companionSaw(c, `picked the lock of ${what === 'the lock' ? (door.name || 'a door') : what} and opened it`); }
         return;
     }
     const { count, alarm } = notePickFailure(door, player, natural);
     sfx('lockpick', { ok: false, snap: natural === 1 });
     savePlace(key, c);
     await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✘${natural === 1 ? ' · the pick snaps with a loud scrape.' : ` · it won't give (${count} tr${count > 1 ? 'ies' : 'y'}).`}`, { roll: { who: player, what: skill, natural, total, success: false } });
-    if (!alarm) return;
+    if (!alarm) { const { companionSaw } = await import('./orchestrator.js'); await companionSaw(c, `tried to pick ${what === 'the lock' ? (door.name || 'a lock') : what} and failed${natural === 1 ? ', snapping the pick' : ''}`); return; }
     // Enough noise and time: does anyone notice? The DM decides (Haiku), told who could hear.
     const listeners = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === door.floor && Math.max(Math.abs(g.x - door.x), Math.abs(g.y - door.y)) <= EARSHOT)
         .map(g => `${g.name} (${Math.max(Math.abs(g.x - door.x), Math.abs(g.y - door.y))} squares away)`);
@@ -1637,6 +1639,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         return setWaiting(n, true, { why: d.why });
     }));
     const trapped = [];
+    const pottered = new Set();
     const gap = p => Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y));
     /** Each follower takes a step (two when far behind) on their own way to the player; nearest first. */
     const advance = () => {
@@ -1651,7 +1654,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             // No way to get any closer (shut in, cut off): they stop trying for this walk.
             if (!steps.length && gap(p) > keep + 2) active.delete(n);
             // Near enough: now and then a step of their own (a look at something, a stretch), never further off than they keep.
-            if (!steps.length && keep > 1 && gap(p) <= keep && Math.random() < 0.3) { const s = potterStep(place, floorId, p, lead, keep, taken); if (s) steps = [s]; }
+            if (!steps.length && keep > 1 && gap(p) <= keep && !pottered.has(n) && Math.random() < 0.3) { const s = potterStep(place, floorId, p, lead, keep, taken); if (s) { steps = [s]; pottered.add(n); } }
             for (const [x, y] of steps) {
                 const d = doorAt(place, floorId, x, y);
                 if (d && d.state === 'closed') setDoorState(place, d, 'open');
@@ -1662,6 +1665,9 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
                 // Their own way, their own traps.
                 const sprung = stepOn(place, n, floorId, x, y);
                 if (sprung) { active.delete(n); trapped.push(sprung); break; }
+                // Their own eyes: a hidden trap right beside their step, if their passive Perception beats it (found once, never again).
+                const spotted = noticeTraps(place, floorId, n, x, y, passivePerceptionOf(c, n), names[0]);
+                if (spotted) { trapped.push(spotted); break; }
             }
         }
         return moved;
@@ -1702,7 +1708,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const kept = await custodyCheck(c, cur, keeperStart);
             if (kept) { event = kept; break; }
             // Hostiles who can see the party, on any land: the DM decides what they do (once per distance band).
-            const hostile = hostileNotice(place, floorId, quarry);
+            const hostile = hostileNotice(place, floorId, quarry, { stealth: stealthThisTurn(c), player: names[0] });
             if (hostile.length) { event = hostile.join(' '); break; }
             const fired = checkTriggers(place, floorId, quarry);
             if (fired.length) { event = fired.join(' '); break; }
@@ -1850,7 +1856,7 @@ export function watchTurn(c = campaign()) {
     if (!cur || c.docs.world.combat) return '';
     const { events } = watchParty(c, cur, partyActive(c));
     const floorId = cur.place.state.positions[c.meta.persona.name]?.floor ?? cur.place.state.floor;
-    events.push(...hostileNotice(cur.place, floorId, partyActive(c)), ...checkTriggers(cur.place, floorId, partyActive(c)));
+    events.push(...hostileNotice(cur.place, floorId, partyActive(c), { stealth: stealthThisTurn(c), player: c.meta.persona.name }), ...checkTriggers(cur.place, floorId, partyActive(c)));
     if (events.length) savePlace(cur.key, c);
     return events.join(' ');
 }
@@ -1866,6 +1872,7 @@ export function tickPlace(c = campaign(), { still = [] } = {}) {
     const stillSet = new Set(still);
     tickGuards(place, Math.random, 0.75, PATROL_STEPS, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
     syncMounts(place);
+    ageNotice(place, floorId, partyActive(c));
     const vis = look(c, key, place);
     clearBodies(place);
     const now = visibleGuards(place, floorId, vis);
@@ -2191,16 +2198,19 @@ function keepDistance(c, place, name, player) {
     return stance === 'close' ? 1 : stance === 'follow' ? 2 : 3;
 }
 
-/** A step of their own for a companion near enough to the player: an open square beside them that keeps them within `keep`. */
+const INTEREST = new Set(['campfire', 'bonfire', 'log', 'chest', 'crate', 'barrel', 'sack', 'body', 'bones', 'skull', 'altar', 'statue', 'well', 'fountain', 'sign', 'signpost', 'grave', 'tombstone', 'tent', 'bookshelf', 'desk', 'table', 'workbench', 'anvil', 'cauldron', 'cage', 'kennel', 'carcass', 'wagon', 'jailwagon', 'boulder', 'flowers', 'mushroom', 'brazier', 'shrine']);
+
+/** A step of their own for a companion near enough to the player: toward something worth a look (a fire, a chest, a body) that keeps them within `keep`; nothing with a hostile in their sight. */
 function potterStep(place, floorId, p, lead, keep, taken) {
-    const opts = [];
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
-        const x = p.x + dx, y = p.y + dy;
-        if (Math.max(Math.abs(x - lead.x), Math.abs(y - lead.y)) > keep || Math.max(Math.abs(x - lead.x), Math.abs(y - lead.y)) < 1) continue;
-        if (!walkable(place, floorId, x, y) || taken.has(`${x},${y}`) || doorAt(place, floorId, x, y) || stairsAt(place, floorId, x, y) || exitAt(place, floorId, x, y)) continue;
-        opts.push([x, y]);
-    }
-    return opts.length ? opts[Math.floor(Math.random() * opts.length)] : null;
+    const map = floorById(place, floorId).map;
+    const far = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+    const vis = computeVisible(place, floorId, [{ x: p.x, y: p.y }], { radius: GUARD_SIGHT });
+    if (Object.values(place.guards).some(g => (g.hostile === true || g.intent === 'attack') && g.state !== 'dead' && g.state !== 'gone' && g.floor === floorId && vis[g.y * map.w + g.x])) return null;
+    const spots = (map.props || []).filter(pr => !pr.hidden && INTEREST.has(pr.type) && far(pr, lead) <= keep + 1 && far(pr, p) >= 1 && far(pr, p) <= 4);
+    if (!spots.length) return null;
+    const goal = spots.sort((a, b) => far(a, p) - far(b, p))[0];
+    const path = findPath(place, floorId, p, goal, { knownOnly: false, blocked: taken, isGoal: (x, y) => far({ x, y }, goal) <= 1 && far({ x, y }, lead) <= keep && far({ x, y }, lead) >= 1 && !doorAt(place, floorId, x, y) && !stairsAt(place, floorId, x, y) && !exitAt(place, floorId, x, y) });
+    return path?.length ? path[0] : null;
 }
 
 /** Where the player's keeper stands as a walk begins (null when nobody holds them). */
@@ -2209,7 +2219,10 @@ function custodyStart(c, place, player) {
     if (!rec) return null;
     const kp = place.state.positions[rec.by] ?? personByName(place, rec.by);
     if (!kp || kp.state === 'gone' || kp.state === 'dead') return null;
-    return { by: rec.by, x: kp.x, y: kp.y, floor: kp.floor };
+    const companion = c.meta.party.some(p => p.name === rec.by);
+    // A keeper walking along is escorting: the prisoner moving with them is no escape.
+    const following = companion && !place.state.waiting?.[rec.by] && !lockedReason(c, rec.by);
+    return { by: rec.by, x: kp.x, y: kp.y, floor: kp.floor, companion, following };
 }
 
 /**
@@ -2229,6 +2242,8 @@ async function custodyCheck(c, cur, start) {
     if (!kp || kp.floor !== lead.floor || start.floor !== lead.floor) return '';
     const keeperOut = place.state.pose?.[rec.by]?.pose === 'sleep' || outBy(conditionsOf(c.docs.world, rec.by)) || Boolean(place.guards[rec.by]?.down);
     if (keeperOut) return '';
+    // Walking along with a keeper who is coming too is an escort, not an escape (unless the player said they run).
+    if (start.following && rec.bolt !== c.meta.turn) return '';
     const far = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     const fromStart = far(lead, start), gap = far(lead, kp);
     if (fromStart <= rec.radius && gap <= rec.radius) return '';
@@ -2243,26 +2258,12 @@ async function custodyCheck(c, cur, start) {
     delete rec.slipped;
     const cuffs = restraintOf(conditionsOf(c.docs.world, player)).look;
     const bound = cuffs === 'cuffs' ? ', cuffed' : cuffs === 'rope' ? ', tied' : '';
+    // A keeper of the place (a jailer): the guard chase does the rest (he follows, grabs when he reaches them, takes them back).
+    if (!start.companion) { const g = personByName(place, rec.by); if (g) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: rec.attempts ?? 0 }; g.state = 'alert'; } savePlace(key, c); return `${player} (${rec.by}'s prisoner${bound}) is making off: ${gap} squares from ${rec.by}, who sees it and goes after them (the code runs the chase: ${rec.by} grabs when they reach them, with rolls, and takes them back). Narrate ${rec.by}'s reaction, brief ${rec.by} if they speak; don't resolve the chase.`; }
     // The keeper is a companion: she comes along again if she was staying, and sticks to the player from now on.
-    if (c.meta.party.some(p => p.name === rec.by)) { if (place.state.waiting?.[rec.by]) await setWaiting(rec.by, false, { quiet: true }); c.meta.stance ??= {}; c.meta.stance[rec.by] = 'close'; saveMeta(); }
-    if (gap <= 1 && rec.lastGrabTurn !== c.meta.turn) {
-        // Within reach: the grab. The keeper's Athletics (from their sheet) against the player's Acrobatics.
-        rec.attempts = (rec.attempts ?? 0) + 1;
-        rec.lastGrabTurn = c.meta.turn;
-        const stats = statsForName(rec.by, c.meta);
-        const mod = stats ? lookupModifier(stats, { kind: 'check', skill: 'Athletics', ability: 'STR' }).mod : 2;
-        const theirs = roll(`1d20${mod >= 0 ? '+' : ''}${mod}`);
-        const pr = { kind: 'check', skill: 'Acrobatics', ability: 'DEX', die: 20, dc: theirs.total, advantage: cuffs ? 'disadvantage' : 'none', reason: `${rec.by} grabs for you as you make off (Athletics ${theirs.total}). Slip free!`, damage: '', half: false, bonus: null, spot: null, custody: { keeper: rec.by, attempt: rec.attempts } };
-        c.meta.pendingRoll = pr;
-        const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
-        await postDiceCard(`🎲 **${rec.by}** grabs for **${player}** as they make off: Athletics d20 ${theirs.detail} = **${theirs.total}**.\n**${player}**, roll a **d20** for **Acrobatics (DEX)**${cuffs ? ' at **disadvantage** (two dice, the lower counts)' : ''} to slip free and type the number you rolled${auto}.`, { request: pr });
-        pr.chatIndex = ST.chat.length;
-        saveMeta();
-        savePlace(key, c);
-        const { refreshMap } = await import('../ui/map.js');
-        refreshMap();
-        return `${player} (${rec.by}'s prisoner${bound}) tried to walk off; ${rec.by} saw it and grabs for them (grab ${rec.attempts}; the player is rolling to slip free: don't resolve it; narrate ${rec.by}'s lunge and a line from ${rec.by} if they speak, then stop).`;
-    }
+    if (place.state.waiting?.[rec.by]) await setWaiting(rec.by, false, { quiet: true });
+    c.meta.stance ??= {}; c.meta.stance[rec.by] = 'close'; saveMeta();
+    if (gap <= 1 && rec.lastGrabTurn !== c.meta.turn) return custodyGrab(c, cur, rec, cuffs);
     savePlace(key, c);
     return `${player} (${rec.by}'s prisoner${bound}) is making off: ${gap} squares from ${rec.by} now, and ${rec.by} can see it. ${rec.by} goes after them (the code keeps ${rec.by} on their heels and rolls the grab when ${rec.by} reaches them; narrate ${rec.by}'s reaction and brief ${rec.by} if they speak: a shout, a warning, an order to stop). Don't resolve the chase yourself.`;
 }
@@ -2292,4 +2293,74 @@ export async function settleCustody(c, pr, success) {
     savePlace(key, c);
     if (tries >= 3) return `${player} slipped free of ${keeper} a third time: ${keeper} can't hold them by hand. Decide what ${keeper} does now (keeps after them on foot, calls out, gives up, draws a weapon: then start_combat) and brief ${keeper}.`;
     return `${player} slipped free of ${keeper}'s grab (${tries} of 3); ${keeper} keeps after them. Narrate it in a line, brief ${keeper} if they speak, and stop: the chase goes on by the code.`;
+}
+
+/** One party member's passive Perception, from their sheet (10 when there is none). */
+function passivePerceptionOf(c, name) {
+    const stats = statsForName(name, c.meta);
+    return 10 + (stats ? lookupModifier(stats, { kind: 'check', skill: 'Perception', ability: 'WIS' }).mod : 0);
+}
+
+/** The Stealth roll the player made this turn, if any: what hostiles' passive Perception is measured against. */
+function stealthThisTurn(c) {
+    const r = c.meta.lastRoll;
+    return r && r.turn === c.meta.turn && /stealth/i.test(r.skill || '') ? { total: r.total, natural: r.natural, who: c.meta.persona.name } : null;
+}
+
+/** The keeper within reach grabs: the keeper's Athletics from their sheet against the player's roll to slip free (a dice card asks for it). */
+async function custodyGrab(c, cur, rec, cuffs) {
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    rec.attempts = (rec.attempts ?? 0) + 1;
+    rec.lastGrabTurn = c.meta.turn;
+    const stats = statsForName(rec.by, c.meta);
+    const mod = stats ? lookupModifier(stats, { kind: 'check', skill: 'Athletics', ability: 'STR' }).mod : 2;
+    const theirs = roll(`1d20${mod >= 0 ? '+' : ''}${mod}`);
+    const pr = { kind: 'check', skill: 'Acrobatics', ability: 'DEX', die: 20, dc: theirs.total, advantage: cuffs ? 'disadvantage' : 'none', reason: `${rec.by} grabs for you as you make off (Athletics ${theirs.total}). Slip free!`, damage: '', half: false, bonus: null, spot: null, custody: { keeper: rec.by, attempt: rec.attempts } };
+    c.meta.pendingRoll = pr;
+    const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
+    await postDiceCard(`🎲 **${rec.by}** grabs for **${player}** as they make off: Athletics d20 ${theirs.detail} = **${theirs.total}**.\n**${player}**, roll a **d20** for **Acrobatics (DEX)**${cuffs ? ' at **disadvantage** (two dice, the lower counts)' : ''} to slip free and type the number you rolled${auto}.`, { request: pr });
+    pr.chatIndex = ST.chat.length;
+    saveMeta();
+    savePlace(key, c);
+    const { refreshMap } = await import('../ui/map.js');
+    refreshMap();
+    const bound = cuffs === 'cuffs' ? ', cuffed' : cuffs === 'rope' ? ', tied' : '';
+    return `${player} (${rec.by}'s prisoner${bound}) tried to get away; ${rec.by} saw it and grabs for them (grab ${rec.attempts}; the player is rolling to slip free: don't resolve it; narrate ${rec.by}'s lunge and a line from ${rec.by} if they speak, then stop).`;
+}
+
+const BOLT_WORDS = /\b(bolts?|runs? (?:for it|off|away)|running (?:for it|off|away)|ran (?:for it|off|away)|breaks? (?:free|away|loose|for it)|broke (?:free|away|loose)|makes? a (?:run|break|dash) for|dash(?:es)? (?:off|away|for)|flee[sd]?|fleeing|sprints? (?:off|away|for)|takes? off|slips? away|escapes?|gets? away|legs? it|makes? a break)\b/i;
+
+/**
+ * The player's own words say they run from their keeper ("Amber bolts for the trees"): the chase
+ * starts now, by code. A keeper beside them grabs at once (rolls); one further off comes after them.
+ * Returns the event for the DM, or ''.
+ */
+export async function custodyBolt(c, text) {
+    const cur = currentPlace(c);
+    if (!cur || !text || c.docs.world.combat || c.meta.pendingRoll) return '';
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const rec = place.state.custody?.[player];
+    if (!rec || !BOLT_WORDS.test(text)) return '';
+    const first = rec.by.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // "We run for the road" with the keeper is not running from them.
+    if (new RegExp(`\\b(?:with|and|beside|alongside|behind|after)\\s+(?:${first}|${rec.by.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'i').test(text) || /\bwe\b[^.!?]{0,20}\b(run|bolt|dash|flee|sprint)/i.test(text)) return '';
+    const lead = place.state.positions[player];
+    const kp = place.state.positions[rec.by] ?? personByName(place, rec.by);
+    if (!lead || !kp || kp.floor !== lead.floor) return '';
+    const keeperOut = place.state.pose?.[rec.by]?.pose === 'sleep' || outBy(conditionsOf(c.docs.world, rec.by)) || Boolean(place.guards[rec.by]?.down);
+    if (keeperOut) { rec.slipped = true; savePlace(key, c); return `${player} (${rec.by}'s prisoner) is making a break while ${rec.by} is out of it: ${rec.by} notices nothing yet. Narrate the break; the map lets them go.`; }
+    rec.bolt = c.meta.turn;
+    rec.chase = true;
+    delete rec.slipped;
+    const cuffs = restraintOf(conditionsOf(c.docs.world, player)).look;
+    const gap = Math.max(Math.abs(lead.x - kp.x), Math.abs(lead.y - kp.y));
+    const companion = c.meta.party.some(p => p.name === rec.by);
+    if (!companion) { const g = personByName(place, rec.by); if (g) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: rec.attempts ?? 0 }; g.state = 'alert'; } savePlace(key, c); return `${player} says they run from ${rec.by}: the code runs the chase (${rec.by} follows and grabs when they reach them, with rolls). Narrate the break and ${rec.by}'s reaction; don't resolve it.`; }
+    if (place.state.waiting?.[rec.by]) await setWaiting(rec.by, false, { quiet: true });
+    c.meta.stance ??= {}; c.meta.stance[rec.by] = 'close'; saveMeta();
+    if (gap <= 1 && rec.lastGrabTurn !== c.meta.turn) return custodyGrab(c, cur, rec, cuffs);
+    savePlace(key, c);
+    return `${player} says they run from ${rec.by} (${gap} squares off): ${rec.by} goes after them; the code rolls the grab when ${rec.by} reaches them. Narrate the break and brief ${rec.by}; don't resolve the chase.`;
 }

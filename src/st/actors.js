@@ -1,4 +1,5 @@
 import { isBeast } from '../core/sprites.js';
+import { statsForName } from './sheets.js';
 // Actors: party members speak through SillyTavern's normal group generation (your selected
 // prompts, formats and samplers). The plugin adds ONE note per reply, built from editable
 // templates (Settings → "What the bot is told"), and hides the DM's narration from the bot:
@@ -72,7 +73,7 @@ function stateVars(c, speaker, { npc = false } = {}) {
         : [];
     return {
         scenecard: renderSceneCard(w.sceneCard, partyConditions(w)),
-        people: renderPeople(c.docs.npcs, { exclude: speaker, ...mapPeople(c) }),
+        people: renderPeople(c.docs.npcs, { exclude: speaker, ...mapPeople(c) }) + carriesLine(c, speaker),
         // NPCs don't get the party's timeline: it can hold things only the party knows.
         timeline: npc ? '' : renderTimeline(c.meta.timeline, { day: w.day, time: w.time }, { skipLatest: Boolean(c.meta.happened) }),
         rules: (c.meta.tableRules || []).join(' '),
@@ -446,4 +447,13 @@ async function speakNpcMember(npc, brief, { signal, length = 'normal' } = {}) {
     const chid = await ensureNpcMember(npc);
     await speakMember(npc.name, chid, brief, { signal, length: length === 'long' ? 'normal' : 'short', npc });
     touchNpc(npc);
+}
+
+/** What a companion carries and wields, from the books and their sheet: a line for their note. */
+function carriesLine(c, speaker) {
+    if (!speaker || !c.meta.party.some(p => p.name === speaker)) return '';
+    const items = (c.docs.world.inventory?.[speaker] || []).map(String);
+    const weapons = (statsForName(speaker, c.meta)?.attacks || []).filter(a => a?.name).map(a => String(a.name));
+    const bits = [weapons.length ? `wields ${weapons.join(', ')}` : '', items.length ? `carries ${items.join(', ')}` : ''].filter(Boolean);
+    return bits.length ? `\n- ${speaker} ${bits.join('; ')}` : '';
 }

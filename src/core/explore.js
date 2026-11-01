@@ -389,14 +389,16 @@ export function stepOn(place, name, floorId, x, y, { player = false } = {}) {
     const dc = `DC ${trap.dc}${trap.save ? ` ${trap.save} save` : ''}. ${trap.effect}.`;
     const dmg = `kind "save"${trap.save ? ` (${trap.save})` : ''}, dc ${trap.dc}, with the trap's damage dice in "damage" (and "half": true if a success still takes half) so the code applies it`;
     const roll = (player ? `Ask for the save (player_roll, ${dmg})` : `Roll ${name}'s save (npc_rolls, ${dmg})`) + `. ${name} is CAUGHT in it (the map shows it and they can't move): a successful save or check (whichever you ask for) frees them by itself; on a failure you decide what happens next and set place_changes.free ["${name}"] when they get loose. Never narrate them free without one or the other`;
+    const heard = makeNoise(place, floorId, x, y, { what: `a ${trap.kind} going off`, loud: /alarm|bell|gong|chime/i.test(trap.kind) ? 3 : 1 });
+    const noise = heard.length ? ` The noise was heard by ${heard.join(', ')} (now alert).` : '';
     if (trap.state === 'hidden') {
         trap.state = 'sprung';
         const map = floorById(place, floorId).map;
         const prop = map.props.find(p => p.trap === trap.id);
         if (prop) { prop.hidden = false; map.version = (map.version || 0) + 1; }
-        return `${name} stepped on a hidden ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate it.`;
+        return `${name} stepped on a hidden ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate it.${noise}`;
     }
-    if (trap.state === 'found') return `${name} stepped onto the ${trap.kind} (${trap.id}) in ${room} that the party already knew about, and it goes off: ${dc} ${roll} for the save and narrate it; mark it "sprung" (or "disarmed" if it breaks) in place_changes.`;
+    if (trap.state === 'found') return `${name} stepped onto the ${trap.kind} (${trap.id}) in ${room} that the party already knew about, and it goes off: ${dc} ${roll} for the save and narrate it; mark it "sprung" (or "disarmed" if it breaks) in place_changes.${noise}`;
     return `${name} walked into the open ${trap.kind} (${trap.id}) in ${room}: ${dc} ${roll} and narrate the fall.`;
 }
 
@@ -597,7 +599,7 @@ function findByIdOrName(list, key) {
  *           rooms: {G4: {lit: true}}, reveal: ["G7"]}
  * floor: the party's floor (squares like "ab14" are on it)
  */
-export function applyPlaceChanges(place, changes, { floor = place.state?.floor, turn = null } = {}) {
+export function applyPlaceChanges(place, changes, { floor = place.state?.floor, turn = null, stealth = null } = {}) {
     const log = [];
     const c = changes && typeof changes === 'object' ? changes : {};
     for (const [id, raw] of Object.entries(c.doors || {})) {
@@ -609,6 +611,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         if (want === 'found' && door.state !== 'hidden') continue;
         setDoorState(place, door, state);
         log.push(`${door.id} ${want}`);
+        if (state === 'broken') { const heard = makeNoise(place, door.floor, door.x, door.y, { what: `${door.name || 'a door'} (${door.id}) breaking`, loud: 2, stealth, turn }); if (heard.length) log.push(`heard by ${heard.join(', ')}`); }
     }
     for (const [id, raw] of Object.entries(c.traps || {})) {
         const trap = findByIdOrName(place.traps, id);
@@ -676,6 +679,8 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         else if (/^(hunting|chasing|attacking|attack)$/i.test(v)) { if (g) { wake(); g.state = 'alert'; setIntent(g, 'attack'); } }
         else if (/^(fleeing|flee|running|runs away)$/i.test(v)) { if (g) { wake(); setIntent(g, 'flee'); } }
         else if (/^(following|follow)$/i.test(v)) { if (g) { wake(); setIntent(g, 'follow'); } }
+        else if (/^(stalk|stalking|shadowing)$/i.test(v)) { if (g) { wake(); g.hostile = true; g.state = 'alert'; setIntent(g, 'stalk'); } }
+        else if (/^(hold|holding|stands? (?:his|her|their|its) ground|guarding)$/i.test(v)) { if (g) { wake(); g.state = 'alert'; setIntent(g, 'hold'); } }
         else if (/^(calm|patrol|patrolling|stay|staying)$/i.test(v)) { if (g) { g.state = 'patrol'; setIntent(g, /^stay/i.test(v) ? 'stay' : ''); } }
         else {
             // A square or a room: move them there (someone new appears there).
@@ -747,7 +752,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         if (!found) { log.push(`⚠️ props.${id}: no prop with that id`); continue; }
         const v = raw && typeof raw === 'object' ? raw : { state: String(raw) };
         const st = String(v.state || '').toLowerCase();
-        if (/^(broken|smashed|destroyed|debris)$/.test(st)) { const name = found.prop.label || PROPS[found.prop.type]?.name || id; smashProp(place, id); log.push(`${name} smashed`); continue; }
+        if (/^(broken|smashed|destroyed|debris)$/.test(st)) { const name = found.prop.label || PROPS[found.prop.type]?.name || id; smashProp(place, id); log.push(`${name} smashed`); const heard = makeNoise(place, found.floor, found.prop.x, found.prop.y, { what: `${name} being smashed`, loud: 1, stealth, turn }); if (heard.length) log.push(`heard by ${heard.join(', ')}`); continue; }
         if (/^(removed|gone|taken)$/.test(st)) { const map = floorById(place, found.floor).map; map.props = map.props.filter(p => p !== found.prop); bump(place, found.floor); log.push(`${id} removed`); continue; }
         const to = v.move ?? v.to ?? (/^[nsew]$/.test(st) ? st : null);
         // A wagon's team: the horses that pull it, kept in front of it when it moves.
@@ -945,7 +950,7 @@ export function dismountsInText(place, text) {
     const out = [];
     for (const rider of Object.keys(mounts)) {
         const first = rider.split(' ')[0];
-        const who = `(?:${rider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${first.length > 3 ? `|${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` : ''}|she|he|they)`;
+        const who = `(?:${rider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${first.length > 3 ? `|${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` : ''})`;
         const re = new RegExp(`\\b${who}\\b[^.!?\\n]{0,40}?\\b(?:dismounts?|slid(?:es?|ing) (?:off|down|from)|climb(?:s|ed|ing)? (?:down|off)|(?:gets?|got|getting) (?:off|down)|swings? (?:down|off)|swung (?:down|off)|drops? (?:down|off)|hops? (?:off|down)|jumps? (?:off|down)|steps? (?:off|down)|out of the saddle)\\b`, 'i');
         if (re.test(text)) { delete mounts[rider]; out.push(rider); }
     }
@@ -1341,7 +1346,7 @@ export function inTheFight(place, playerName, name) {
 }
 
 /** What people on the map can be set on doing, besides standing about or walking their rounds. */
-export const INTENTS = ['attack', 'follow', 'flee', 'stay', 'wander'];
+export const INTENTS = ['attack', 'follow', 'flee', 'stay', 'wander', 'stalk', 'hold'];
 
 /** How far (squares) talking or a loud noise carries on one floor; beyond it the party can't hear someone. */
 export const EARSHOT = 10;
@@ -1360,8 +1365,10 @@ export function markNoticed(place, seer, seen, noticed) {
 }
 
 /** Set what someone is set on doing (and who at); "" or junk clears it. */
+const INTENT_WORDS = { hunting: 'attack', hunt: 'attack', chasing: 'attack', attacking: 'attack', following: 'follow', fleeing: 'flee', running: 'flee', stalking: 'stalk', shadowing: 'stalk', holding: 'hold', guarding: 'hold', waiting: 'hold', wandering: 'wander', staying: 'stay' };
 export function setIntent(g, intent, target = '') {
-    const want = String(intent ?? '').toLowerCase().trim();
+    const raw = String(intent ?? '').toLowerCase().trim();
+    const want = INTENT_WORDS[raw] ?? raw;
     if (want === '' || !INTENTS.includes(want)) { if (intent !== undefined && want === '') { delete g.intent; delete g.target; } return; }
     g.intent = want;
     if (want === 'attack') {
@@ -1406,7 +1413,7 @@ export function moveHunters(place, floorId, partyNames, steps = 1, { skip = null
             g.room = roomAt(place, floorId, g.x, g.y)?.id ?? g.room;
             continue;
         }
-        if (!['attack', 'follow', 'flee'].includes(g.intent)) continue;
+        if (!['attack', 'follow', 'flee', 'stalk'].includes(g.intent)) continue;
         // Only after someone they've noticed: a guard who looked and missed you doesn't come for you.
         const known = g.intent === 'flee' ? party : party.filter(n => !(g.unaware ?? []).some(u => nameKey(u) === nameKey(n)));
         if (!known.length) continue;
@@ -1414,7 +1421,24 @@ export function moveHunters(place, floorId, partyNames, steps = 1, { skip = null
         if (g.target && !named && party.some(n => nameKey(n) === nameKey(g.target))) continue;
         const quarry = named ?? [...known].sort((a, b) => dist(g, place.state.positions[a]) - dist(g, place.state.positions[b]))[0];
         const q = place.state.positions[quarry];
-        if (g.intent === 'flee') {
+        if (g.intent === 'stalk') {
+            // Shadows the party: keeps four to six squares off, out of their sight where it can, a step at a time.
+            const d = dist(g, q);
+            const map = floorById(place, floorId).map;
+            const seenBy = computeVisible(place, floorId, party.map(n => place.state.positions[n]), { radius: GUARD_SIGHT });
+            const taken = busy(g.name);
+            let best = null, bestScore = -Infinity;
+            for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+                const nx = g.x + dx, ny = g.y + dy;
+                if ((dx || dy) && (!walkable(place, floorId, nx, ny) || taken.has(`${nx},${ny}`) || stairsAt(place, floorId, nx, ny))) continue;
+                const nd = dist({ x: nx, y: ny }, q);
+                // The distance band comes first (open ground has no cover to prefer); out of the party's sight breaks ties.
+                const score = (nd >= 4 && nd <= 6 ? 10 : -Math.abs(nd < 4 ? 4 - nd : nd - 6) * 6) + (seenBy[ny * map.w + nx] ? 0 : 3) + (dx || dy ? 0 : 0.5);
+                if (score > bestScore) { bestScore = score; best = { x: nx, y: ny }; }
+            }
+            if (best && (best.x !== g.x || best.y !== g.y)) step(best.x, best.y);
+            if (d <= 1 && !g.engaged) { g.engaged = true; struck.push({ name: g.name, target: quarry }); }
+        } else if (g.intent === 'flee') {
             for (let i = 0; i < steps; i++) {
                 const taken = busy(g.name);
                 const away = (x, y) => Math.min(...party.map(n => dist({ x, y }, place.state.positions[n])));
@@ -1586,7 +1610,7 @@ export function placeSummary(place) {
     const guards = Object.values(place.guards);
     if (guards.length) {
         lines.push('', '## People on the map');
-        for (const g of guards) lines.push(`- ${g.name}${g.hostile !== false ? ' (hostile)' : ''}: ${g.description}${g.patrol.length > 1 ? ` Patrols ${g.patrol.join('→')}.` : ` Stays in ${g.room ?? 'a corridor'}.`}`);
+        for (const g of guards) lines.push(`- ${g.name}${g.hostile !== false ? ' (hostile)' : ''}: ${g.description}${g.patrol.length > 1 ? ` Patrols ${g.patrol.join('→')}.` : ` Stays in ${g.room ?? 'a corridor'}.`}${g.heard ? ` HEARD ${g.heard.what} at ${g.heard.at}${Number.isFinite(g.heard.turn) ? ` (turn ${g.heard.turn})` : ''}: alert, decide what they do about it.` : ''}`);
     }
     return lines.join('\n');
 }
@@ -1715,7 +1739,8 @@ export function checkTriggers(place, floorId, partyNames) {
     const out = [];
     for (const t of live.slice()) {
         const at = resolveNear(place, t.floor ?? floorId, t.near);
-        if (!at || at.floor !== floorId) continue;
+        if (!at) { place.state.triggers = place.state.triggers.filter(x => x !== t); continue; }
+        if (at.floor !== floorId) continue;
         const who = partyNames.filter(n => { const p = place.state.positions[n]; return p && p.floor === floorId && Math.max(Math.abs(p.x - at.x), Math.abs(p.y - at.y)) <= t.radius; });
         if (!who.length) continue;
         place.state.triggers = place.state.triggers.filter(x => x !== t);
@@ -1731,20 +1756,82 @@ const NOTICE_BANDS = [[2, 'right on top of them'], [5, 'close'], [GUARD_SIGHT, '
  * comes into sight, closer, and right up to them: three calls at most for each. Someone already
  * hunting, asleep, down or dead is skipped. Returns the lines for the DM.
  */
-export function hostileNotice(place, floorId, partyNames) {
+export function hostileNotice(place, floorId, partyNames, { stealth = null, player = '' } = {}) {
     const out = [];
     const map = floorById(place, floorId).map;
     for (const g of Object.values(place.guards)) {
         if (g.floor !== floorId || isOut(g) || g.state === 'gone' || g.state === 'dead' || g.down) continue;
         if (!(g.hostile === true || g.intent === 'attack')) continue;
         if (g.intent === 'attack' && g.target) continue;
-        const seen = guardSees(place, floorId, g, partyNames);
+        // Hidden behind something, sneaking past this one's passive Perception, or someone a spot roll said they missed: not seen.
+        const passive = 10 + (Number(g.perception) || 0) + (g.state === 'alert' ? 2 : 0);
+        const sneaks = n => stealth && (stealth.natural === 20 || (Number.isFinite(stealth.total) && stealth.total >= passive)) && (!stealth.who || nameKey(stealth.who) === nameKey(n));
+        const seen = guardSees(place, floorId, g, partyNames.filter(n => !hiddenNow(place, n) && !sneaks(n) && !(g.unaware ?? []).some(u => nameKey(u) === nameKey(n))));
         if (!seen.length) continue;
         const dist = Math.min(...seen.map(n => { const p = place.state.positions[n]; return Math.max(Math.abs(p.x - g.x), Math.abs(p.y - g.y)); }));
         const band = NOTICE_BANDS.findIndex(([r]) => dist <= r);
         if (band < 0 || (Number.isInteger(g.noticeBand) && band >= g.noticeBand)) continue;
         g.noticeBand = band;
-        out.push(`${g.name} (${g.description || 'hostile'}, HOSTILE) can see ${seen.join(' and ')}: ${dist} square${dist === 1 ? '' : 's'} away, ${NOTICE_BANDS[band][1]}${g.state === 'alert' ? ', already alert' : ''}. Decide what ${g.name} does now (attack: place_changes.guards {"${g.name}": "hunting"}, the code runs the chase and calls you when they reach someone; hold and threaten; stalk; flee), brief them if they speak, and set the same for any others with them.`);
+        g.unseen = 0;
+        // Who on the party's side can see it back: when only a companion can, she is the one to call it out.
+        const seers = partyNames.filter(n => { const p = place.state.positions[n]; return p && p.floor === floorId && computeVisible(place, floorId, [{ x: p.x, y: p.y }], { radius: GUARD_SIGHT })[g.y * map.w + g.x]; });
+        const onlyOthers = player && !seers.includes(player) && seers.length ? ` Only ${seers.join(' and ')} can see ${g.name} from where they stand (${player} can't): brief ${seers[0]} to call it out to ${player} in a line.` : '';
+        out.push(`${g.name} (${g.description || 'hostile'}, HOSTILE) can see ${seen.join(' and ')}: ${dist} square${dist === 1 ? '' : 's'} away, ${NOTICE_BANDS[band][1]}${g.state === 'alert' ? ', already alert' : ''}. Decide what ${g.name} does now (attack: place_changes.guards {"${g.name}": "hunting"}, the code runs the chase and calls you when they reach someone; "hold": stands its ground and threatens; "stalking": shadows the party out of reach; flee), brief them if they speak, and set the same for any others with them.${onlyOthers}`);
     }
     return out;
+}
+
+/**
+ * A noise at a square: a door breaking, a thing smashed, a trap going off. Whoever of the place is
+ * within earshot (further for a loud one), awake and not down, hears it and is alert, and remembers
+ * what and where (the DM sees it in the place view). A Stealth roll made for the deed keeps it from
+ * anyone whose passive Perception it beats; a natural 20 keeps it from everyone. Returns who heard.
+ */
+export function makeNoise(place, floorId, x, y, { what = 'a noise', loud = 1, stealth = null, turn = null } = {}) {
+    const reach = EARSHOT * Math.max(1, Math.min(3, loud));
+    const heard = [];
+    if (stealth && stealth.natural === 20) return heard;
+    for (const g of Object.values(place.guards)) {
+        if (g.floor !== floorId || g.state === 'gone' || g.state === 'dead' || g.down || isOut(g)) continue;
+        const d = Math.max(Math.abs(g.x - x), Math.abs(g.y - y));
+        if (d > reach) continue;
+        const passive = 10 + (Number(g.perception) || 0) + (g.state === 'alert' ? 2 : 0) + (d <= 2 ? 5 : 0);
+        if (stealth && Number.isFinite(stealth.total) && stealth.total >= passive) continue;
+        g.state = 'alert';
+        g.heard = { what, at: coord(x, y), turn };
+        heard.push(`${g.name} (${d} squares off)`);
+    }
+    return heard;
+}
+
+/**
+ * A hostile the party has stayed out of sight of for a few turns forgets how close they came: the
+ * next approach is news again. Called each turn.
+ */
+export function ageNotice(place, floorId, partyNames) {
+    for (const g of Object.values(place.guards)) {
+        if (!Number.isInteger(g.noticeBand) || g.floor !== floorId) continue;
+        if (guardSees(place, floorId, g, partyNames).length) { g.unseen = 0; continue; }
+        g.unseen = (g.unseen ?? 0) + 1;
+        if (g.unseen >= 3) { delete g.noticeBand; delete g.unseen; }
+    }
+}
+
+/**
+ * A companion's passive Perception against hidden traps right beside where they just stepped: a
+ * trap it beats is found (shown on the map) before anyone treads on it. Returns the event for the
+ * DM, or '' (a trap is found once, so this never repeats).
+ */
+export function noticeTraps(place, floorId, name, x, y, passive, player = '') {
+    for (const t of Object.values(place.traps)) {
+        if (t.floor !== floorId || t.state !== 'hidden' || Math.max(Math.abs(t.x - x), Math.abs(t.y - y)) > 1) continue;
+        const dc = Number(t.find ?? t.findDc ?? t.dc) || 12;
+        if (passive < dc) continue;
+        t.state = 'found';
+        const map = floorById(place, floorId).map;
+        const prop = map.props.find(p => p.trap === t.id);
+        if (prop) { prop.hidden = false; map.version = (map.version || 0) + 1; }
+        return `${name} spots a hidden ${t.kind} (${t.id}) at ${coord(t.x, t.y)} before anyone steps on it (passive Perception ${passive} against DC ${dc}; the code has marked it found on the map). Brief ${name} to warn ${player || 'the party'} in a line; nothing else happens.`;
+    }
+    return '';
 }

@@ -156,7 +156,7 @@ const REASON_TEXT = {
  *  handUp = this model may hand the turn to the main DM model
  * @returns {Promise<{layers:string[], user:string}>}
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, companionTask = null, placeEvent = '', target = null }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, companionTask = null, companionChoices = null, placeEvent = '', target = null }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
@@ -249,6 +249,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     if (playerMessage) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
     if (companionTask) sections.push('', `COMPANION TASK: the player told ${companionTask.name} to ${companionTask.what || 'do something'}${companionTask.went ? ` (they're now at ${companionTask.went} on the map)` : ''}.`);
     if (target) sections.push('', `TARGET: ${target.actor} acts on ${target.line}, ${target.where}${target.reached ? `; ${target.actor} is standing right beside it now` : ''}. It's that one exactly (picked on the map), not another ${target.name}: any place_changes for it use ${target.kind === 'person' ? 'that name' : `the id ${target.id}`}.`);
+    if (companionChoices && Object.keys(companionChoices).length) sections.push('', `COMPANION CHOICES this round (each companion decided their own turn; run each exactly as given, with npc_rolls for an attack on that target with that weapon, and narrate it in a line; don't choose for them): ${Object.entries(companionChoices).map(([n, ch]) => `${n}: ${ch.action}${ch.target ? ` ${ch.target}` : ''}${ch.weapon ? ` with ${ch.weapon}${ch.damage ? ` (${ch.damage})` : ''}` : ''}${ch.item ? ` (${ch.item})` : ''}${ch.where ? ` (${ch.where})` : ''}${ch.why ? `; ${ch.why}` : ''}`).join(' | ')}.`);
     if (companionAction) sections.push('', `COMPANION ATTEMPT TO RULE ON: ${companionAction.name} tries to ${companionAction.what || 'do something risky'}. Their reply: ${trimToTokens(companionAction.text, 500)}`);
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));

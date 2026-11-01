@@ -3,7 +3,7 @@
 // Pure module (no SillyTavern imports).
 
 import { parsePlayerRoll } from './dice.js';
-import { extractJson } from './text.js';
+import { extractJson, nameKey } from './text.js';
 
 export const CATEGORIES = ['banter', 'action', 'risky_action', 'scene_move', 'combat_action', 'question'];
 
@@ -232,3 +232,43 @@ export function nameFromWords(text) {
     return words.map((w, i) => (i > 0 && /^(by|of|on|in|at|with|and|under|near|the|to|a|an)$/i.test(w) ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
 }
 
+/**
+ * A companion's own turn in a fight, decided by the local model from what the code knows: the foes
+ * and how far and hurt they are, their own weapons and items, their HP, who needs help.
+ */
+export function companionCombatPrompt({ name, hp, hpMax, conditions = [], foes = [], allies = [], weapons = [], items = [], player = 'the player', last = '' }) {
+    const system = 'You decide one character\'s action in a D&D fight, as that character would. Reply with ONE line of JSON and nothing else.';
+    const user = [
+        `${name}: HP ${hp}/${hpMax}${conditions.length ? `, ${conditions.join(', ')}` : ''}.`,
+        `Enemies: ${foes.map(f => `${f.name} (HP ${f.hp}/${f.hpMax}${f.ac ? `, AC ${f.ac}` : ''}, ${f.dist} square${f.dist === 1 ? '' : 's'} away${f.dist <= 1 ? ', in reach' : ''})`).join('; ') || 'none in sight'}.`,
+        `Allies: ${allies.map(a => `${a.name} (HP ${a.hp}/${a.hpMax}, ${a.dist} squares away${a.down ? ', DOWN' : ''})`).join('; ') || 'none'}.`,
+        `${name}'s weapons: ${weapons.map(w => `${w.name} (${w.damage}${w.range ? `, range ${w.range}` : ''})`).join('; ') || 'unarmed (1 bludgeoning)'}.`,
+        `${name} carries: ${items.join(', ') || 'nothing useful'}.`,
+        last ? `Last round: ${last}` : '',
+        `What does ${name} do this turn? Pick ONE: "attack" (a named enemy, with a named weapon; melee needs them in reach, else a ranged weapon or move closer first), "move" (toward an enemy or away: "closer" or "away"), "help" (a downed or badly hurt ally: steady them, pull them back), "dodge" (hard pressed, no good attack), "hide", "use" (a named item: a potion, a tool), "hold" (wait and watch). Be sensible: a hurt ally matters, a dying one more; don't swing a dagger at someone 6 squares away.`,
+        `JSON: {"action": "attack|move|help|dodge|hide|use|hold", "target": "enemy or ally name or empty", "weapon": "weapon name or empty", "item": "item name or empty", "where": "closer|away|empty", "why": "a few words"}`,
+    ].filter(Boolean).join('\n');
+    return { system, user };
+}
+
+export function parseCompanionCombat(text, { foes = [], allies = [], weapons = [], items = [] } = {}) {
+    const d = extractJson(text) || {};
+    const action = ['attack', 'move', 'help', 'dodge', 'hide', 'use', 'hold'].includes(String(d.action || '').toLowerCase()) ? String(d.action).toLowerCase() : 'attack';
+    const pick = (want, list) => { const k = nameKey(String(want || '')); return k ? list.find(x => nameKey(x) === k) ?? list.find(x => nameKey(x).includes(k) || k.includes(nameKey(x))) ?? '' : ''; };
+    const foeNames = foes.map(f => f.name), allyNames = allies.map(a => a.name), weaponNames = weapons.map(w => w.name), itemNames = items;
+    let target = action === 'help' ? pick(d.target, allyNames) : pick(d.target, foeNames);
+    let weapon = pick(d.weapon, weaponNames);
+    const item = pick(d.item, itemNames);
+    if (action === 'attack') {
+        if (!target) target = foes.slice().sort((a, b) => a.dist - b.dist)[0]?.name ?? '';
+        const f = foes.find(x => x.name === target);
+        // A melee weapon at range is no use: the ranged one if there is one, else close in.
+        if (f && f.dist > 1) { const ranged = weapons.find(w => w.range); if (ranged && (!weapon || !weapons.find(w => w.name === weapon)?.range)) weapon = ranged.name; }
+        if (!weapon) weapon = weaponNames[0] ?? '';
+        if (!target) return { action: 'hold', target: '', weapon: '', item: '', where: '', why: 'no enemy in sight' };
+    }
+    if (action === 'help' && !target) target = allies.find(a => a.down)?.name ?? allies.slice().sort((a, b) => a.hp / a.hpMax - b.hp / b.hpMax)[0]?.name ?? '';
+    if (action === 'use' && !item) return { action: 'hold', target: '', weapon: '', item: '', where: '', why: 'nothing to use' };
+    const where = ['closer', 'away'].includes(String(d.where || '').toLowerCase()) ? String(d.where).toLowerCase() : '';
+    return { action, target, weapon, item, where, why: String(d.why || '').slice(0, 80) };
+}

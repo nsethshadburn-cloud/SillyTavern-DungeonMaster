@@ -21,13 +21,13 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
@@ -308,6 +308,8 @@ async function turnBody(c, opts, status, signal) {
     if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted && !peekMapAction()) {
         const climbed = await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
         if (climbed) { events.push(climbed); status.note('Climbed into the wagon'); }
+        const bolt = await custodyBolt(c, playerText).catch(error => { console.warn('[Dungeon Master] custody chase failed', error); return ''; });
+        if (bolt) { events.push(bolt); status.note('The chase is on'); }
     }
     if (triage.thing && actsOnThing && !peekMapAction() && !autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
         const actor = triage.task?.who || meta.persona.name;
@@ -422,8 +424,10 @@ async function turnBody(c, opts, status, signal) {
         const step = status.step(`DM is thinking (${modelLabel(model)}) · ${reasons.join(', ')}`);
         let result;
         try {
+            const companionChoices = opts.force === 'end_turn' ? await decideCompanionTurns(c, status).catch(error => { console.warn('[Dungeon Master] companion choices failed', error); return null; }) : null;
             result = await withDmThinking('The Dungeon Master is thinking', () => askDm({
                 reasons,
+                companionChoices,
                 playerMessage: playerText,
                 rollResolution,
                 events,
@@ -1118,7 +1122,7 @@ async function resolvePlayerRoll(c, parsed, status) {
     if (pr.kind === 'attack') playAnim(meta.persona.name, 'attack');
     c.docs.rolls_log.push({ at: new Date().toISOString(), who: meta.persona.name, what: pr.skill, kind: pr.kind, natural, mod, total, dc: pr.dc, success: judged.success });
     saveDoc('rolls_log');
-    meta.lastRoll = { kind: pr.kind, turn: meta.turn };
+    meta.lastRoll = { kind: pr.kind, turn: meta.turn, skill: pr.skill, total, natural };
     let afterInit = '';
     if (pr.kind === 'initiative' && c.docs.world.combat) {
         addToInitiative(c.docs.world, meta.persona.name, total);
@@ -1408,7 +1412,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (hereC && !world.combat && !t.place_changes?.custody && !hereC.place.state.custody?.[player] && restraintOf(conditionsOf(world, player)).bound) {
             const text = `${t.narration || ''} ${(t.directions || []).map(d => d.brief || '').join(' ')} ${t.scene_card ? JSON.stringify(t.scene_card) : ''}`;
             const lead = hereC.place.state.positions[player];
-            const keeper = meta.party.map(p => p.name).find(n => { const p = hereC.place.state.positions[n]; const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n) && new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(cuff|handcuff|manacle|shackl|ties|tied|tying|bind|binds|bound|rope|arrest|restrain|prisoner|custody)`, 'i').test(text); });
+            // With an enemy at hand the cuffs are theirs, not a companion's: the DM says who holds the player.
+            const enemyNear = lead && Object.values(hereC.place.guards).some(g => (g.hostile === true || g.intent === 'attack') && g.state !== 'dead' && g.state !== 'gone' && !g.down && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT);
+            const keeper = enemyNear ? null : meta.party.map(p => p.name).find(n => { const p = hereC.place.state.positions[n]; const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n) && new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(cuff|handcuff|manacle|shackl|ties|tied|tying|bind|binds|bound|rope|arrest|restrain|prisoner|custody)`, 'i').test(text); });
             if (keeper) { hereC.place.state.custody ??= {}; hereC.place.state.custody[player] = { by: keeper, radius: 2, attempts: 0 }; status.note(`${player} is ${keeper}'s prisoner (kept within 2 squares)`); savePlace(hereC.key, c); }
         }
     }
@@ -1657,14 +1663,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 for (const [n, v] of Object.entries(t.place_changes.guards || {})) if (!personByName(place, n) && personByName(host, n)) { (out.guards ??= {})[n] = v; delete t.place_changes.guards[n]; }
                 for (const [n, v] of Object.entries(t.place_changes.ride || {})) if (!personByName(place, n) && !place.state.positions[n] && (personByName(host, n) || host.state.positions[n])) { (out.ride ??= {})[n] = v; delete t.place_changes.ride[n]; }
                 if (Object.keys(out).length) {
-                    const hl = applyPlaceChanges(host, out, { floor: host.state.floor, turn: meta.turn });
+                    const hl = applyPlaceChanges(host, out, { floor: host.state.floor, turn: meta.turn, stealth: stealthOf(meta) });
                     if (hl.length) status.note(`Outside: ${hl.join(', ')}`);
                     problems.push(...hl.filter(l => l.startsWith('⚠️')).map(l => `place_changes (outside) ${l.slice(2).trim()}`));
                     syncMounts(host);
                     savePlace(place.parent.key, c);
                 }
             }
-            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn });
+            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: stealthOf(meta) });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
             problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
             syncMounts(place);
@@ -1862,6 +1868,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // Companion/NPC/enemy rolls: code-rolled, shown openly WITH what happened.
     const outcomesBySpeaker = {};
     const reactions = [];
+    // The companions' own choices this round: a roll the DM gave them goes on the target they chose (with their weapon's dice); an attack the DM forgot is made for them.
+    const choices = world.combat && meta.combatChoices?.turn === meta.turn ? meta.combatChoices.choices : null;
+    if (choices) {
+        for (const [n, ch] of Object.entries(choices)) {
+            if (ch.action !== 'attack' || !ch.target || world.combat.enemies[ch.target]?.hp <= 0 || world.party[n]?.hp <= 0) continue;
+            const mine = t.npc_rolls.filter(r => r.kind === 'attack' && matchName(r.who, [n]));
+            for (const r of mine) { if (r.target && !matchName(r.target, [ch.target])) status.note(`${n}'s attack goes on ${ch.target} (their choice), not ${r.target}`); r.target = ch.target; if (ch.damage) r.damage = ch.damage; }
+            if (!mine.length) { t.npc_rolls.push({ who: n, what: `attacks ${ch.target}${ch.weapon ? ` with ${ch.weapon}` : ''}`, notation: `1d20${ch.toHit >= 0 ? '+' : ''}${ch.toHit}`, dc: null, kind: 'attack', target: ch.target, damage: ch.damage || '', half: false, on_success: '', on_fail: '', spot: null }); status.note(`${n}'s attack on ${ch.target} (their choice) added: the DM left it out`); }
+        }
+    }
     for (const r of t.npc_rolls) {
         if (signal.aborted) throw new Error('aborted');
         const result = roll(r.notation);
@@ -2128,3 +2144,94 @@ export function syncPartyHp() {
 }
 
 export { dmType };
+
+/** The Stealth roll the player made this turn, for noise and for hostiles' eyes. */
+function stealthOf(meta) {
+    const r = meta.lastRoll;
+    return r && r.turn === meta.turn && /stealth/i.test(r.skill || '') ? { total: r.total, natural: r.natural, who: meta.persona.name } : null;
+}
+
+/**
+ * Each companion in the fight decides their own turn (the local model), from what the code knows:
+ * the foes and how far and hurt they are, their own weapons and items, who needs help. The DM runs
+ * the round with those choices in front of it, and the code puts their rolls on the targets they chose.
+ */
+async function decideCompanionTurns(c, status) {
+    const s = settings();
+    const world = c.docs.world, meta = c.meta, cb = world.combat;
+    if (!cb || !s.useHelper) return null;
+    const names = meta.party.map(p => p.name).filter(n => !isAway(world, n) && cb.order.some(o => o.name === n) && !(world.party[n]?.hp <= 0));
+    if (!names.length) return null;
+    const posOf = n => { const sq = cb.positions?.[n]; return sq && cb.map ? parseCoord(sq, cb.map) : null; };
+    const out = {};
+    for (const n of names) {
+        const me = posOf(n);
+        const far = o => (me && o ? Math.max(Math.abs(me.x - o.x), Math.abs(me.y - o.y)) : 2);
+        const foes = Object.entries(cb.enemies || {}).filter(([, e]) => !(e.hp <= 0) && !e.dead).map(([fn, e]) => ({ name: fn, hp: e.hp, hpMax: e.hp_max ?? e.hp, ac: e.ac, dist: far(posOf(fn)) }));
+        const allies = [meta.persona.name, ...names.filter(x => x !== n)].map(a => ({ name: a, hp: world.party[a]?.hp ?? 0, hpMax: world.party[a]?.hp_max ?? 0, dist: far(posOf(a)), down: world.party[a]?.hp <= 0 }));
+        const stats = statsForName(n, meta);
+        const weapons = (stats?.attacks || []).filter(a => a?.name).map(a => ({ name: String(a.name), damage: String(a.damage || '1d4'), range: a.range || (/bow|sling|crossbow|dart|javelin|thrown|throw|spear/i.test(String(a.name)) ? 'ranged' : '') }));
+        const items = (world.inventory?.[n] || []).map(String);
+        const step = status.step(`${n} decides`);
+        const { system, user } = companionCombatPrompt({ name: n, hp: world.party[n]?.hp ?? 0, hpMax: world.party[n]?.hp_max ?? 0, conditions: conditionsOf(world, n), foes, allies, weapons, items, player: meta.persona.name });
+        const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 120, profileId: s.helperProfileId });
+        const pick = parseCompanionCombat(raw, { foes, allies, weapons, items });
+        const w = weapons.find(x => x.name === pick.weapon);
+        out[n] = { ...pick, damage: w?.damage || '', toHit: stats ? lookupModifier(stats, { kind: 'attack', skill: pick.weapon || '', ability: '' }).mod : 0 };
+        step.done(`${pick.action}${pick.target ? ` ${pick.target}` : ''}${pick.weapon ? ` with ${pick.weapon}` : ''}${pick.why ? ` (${pick.why})` : ''}`);
+    }
+    meta.combatChoices = { turn: meta.turn, choices: out };
+    saveMeta();
+    return out;
+}
+
+/**
+ * A companion who watched the player do something on the map (pick a lock, hide, smash a thing)
+ * may say a word about it: one companion who can see them, half the time, never twice within three
+ * turns, a short line or nothing. The local model decides; no DM call.
+ */
+export async function companionSaw(c, what) {
+    const s = settings();
+    const cur = currentPlace(c);
+    if (running || !cur || !s.useHelper || c.docs.world.combat || !what) return;
+    const meta = c.meta, player = meta.persona.name;
+    if (Number.isFinite(meta.sawTurn) && meta.turn - meta.sawTurn < 3) return;
+    if (random01() > 0.5) return;
+    const { place } = cur;
+    const lead = place.state.positions[player];
+    if (!lead) return;
+    const map = floorById(place, lead.floor).map;
+    const watchers = meta.party.map(p => p.name).filter(n => {
+        const p = place.state.positions[n];
+        if (!p || p.floor !== lead.floor || isAway(c.docs.world, n) || lockedReason(c, n) || place.state.pose?.[n]?.pose === 'sleep') return false;
+        return computeVisible(place, p.floor, [{ x: p.x, y: p.y }], { radius: 8 })[lead.y * map.w + lead.x];
+    });
+    if (!watchers.length) return;
+    const name = watchers[Math.floor(random01() * watchers.length)];
+    const member = meta.party.find(p => p.name === name);
+    meta.sawTurn = meta.turn;
+    saveMeta();
+    setRunning(true);
+    const status = beginTurn(`${name} saw that`);
+    try {
+        const decide = [
+            `${name}: ${trimToTokens(member?.summary || '', 200)}`,
+            meta.standing ? `Right now: ${meta.standing}` : '',
+            `Moment: ${player} just ${what}, right in front of ${name}.`,
+            `Would ${name}, being who they are, say anything about it right now? Usually not; only if it matters to them (it's against what they stand for, it's dangerous, it's funny, it helps). Reply JSON: {"speak": true or false, "what": "a few words"}`,
+        ].filter(Boolean).join('\n');
+        const pick = extractJson(await callLocal({ system: 'You decide one thing about a character in a roleplay. Reply with JSON only.', messages: [{ role: 'user', content: decide }], maxTokens: 60, profileId: s.helperProfileId })) || {};
+        if (pick.speak === true || pick.speak === 'true') {
+            const step = status.step(`${name} speaks`);
+            await makeSpeak(name, `${player} just ${what}, right in front of you. One short line, in character, about that and nothing else. You want to say: ${String(pick.what || '').slice(0, 100)}.`, { signal: new AbortController().signal, length: 'short' });
+            step.done();
+        } else status.note(`${name} says nothing`);
+        status.finish('');
+    } catch (error) {
+        console.warn('[Dungeon Master] companion reaction failed', error);
+        status.finish('');
+    } finally {
+        setRunning(false);
+        runQueuedTurn();
+    }
+}
