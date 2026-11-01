@@ -91,9 +91,10 @@ test('a party member is never one of the place\'s people, and the dead never com
 });
 
 test('the bookkeeper keeps to the party and to plain states: no unconscious, caged or dead from a turn of phrase', () => {
-    const changes = { conditions_add: { Amber: ['poisoned', 'unconscious'], 'Turnkey 2': ['unconscious'], 'Judy Hopps': ['grappled'] }, conditions_remove: { 'Judy Hopps': ['caged'], Amber: ['prone'] }, items_add: { Amber: ['rope'] }, items_remove: {} };
+    // Prone is the DM's or the code's since v0.56 (getting up is a roll): the bookkeeper leaves it alone like the rest.
+    const changes = { conditions_add: { Amber: ['poisoned', 'unconscious'], 'Turnkey 2': ['unconscious'], 'Judy Hopps': ['grappled'] }, conditions_remove: { 'Judy Hopps': ['caged'], Amber: ['prone', 'frightened'] }, items_add: { Amber: ['rope'] }, items_remove: {} };
     const t = tidyBookkeeping(changes, { party: ['Amber', 'Judy Hopps'] });
-    assert.deepEqual(t, { conditions_add: { Amber: ['poisoned'], 'Judy Hopps': ['grappled'] }, conditions_remove: { Amber: ['prone'] }, items_add: { Amber: ['rope'] } });
+    assert.deepEqual(t, { conditions_add: { Amber: ['poisoned'], 'Judy Hopps': ['grappled'] }, conditions_remove: { Amber: ['frightened'] }, items_add: { Amber: ['rope'] } });
     assert.equal(tidyBookkeeping({ conditions_add: { 'Turnkey 2': ['unconscious'] }, conditions_remove: {}, items_add: {}, items_remove: {} }, { party: ['Amber'] }), null);
 });
 

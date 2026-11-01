@@ -8,10 +8,11 @@ import { applyStateChanges, conditionsOf, createWorldState } from '../src/core/w
 import { buildSprite, normalizeLook } from '../src/core/sprites.js';
 
 test('rope, grabs and cages lock movement; cuffs bind the hands only; shackles stop walking', () => {
-    for (const c of ['restrained', 'Restrained (rope)', 'tied up', 'grappled', 'caged', 'shackled', 'unconscious', 'paralyzed']) {
+    // Prone locks too (v0.56): on the ground until they get up, which is a roll.
+    for (const c of ['restrained', 'Restrained (rope)', 'tied up', 'grappled', 'caged', 'shackled', 'unconscious', 'paralyzed', 'prone']) {
         assert.equal(restraintOf([c]).locked, true, c);
     }
-    for (const c of ['cuffed', 'manacled', 'poisoned', 'frightened', 'prone']) {
+    for (const c of ['cuffed', 'manacled', 'poisoned', 'frightened']) {
         assert.equal(restraintOf([c]).locked, false, c);
     }
     assert.equal(restraintOf(['tied up']).bound, 'rope');

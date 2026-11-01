@@ -115,3 +115,20 @@ test('a Stealth roll quiets only what the player did where they stand, not a doo
     assert.deepEqual(makeNoise(place, 'F0', 3, 3, { what: 'a lock forced', stealth }), [], 'quiet at their own square');
     assert.equal(makeNoise(place, 'F0', 9, 3, { what: 'a door breaking', stealth }).length, 1, 'heard six squares away from them');
 });
+
+test('prone is a restraint: on the ground until they get up, drawn lying down, cuffs or not', async () => {
+    const { restraintOf, escapeOptions, lockedLine } = await import('../src/core/restraints.js');
+    const down = restraintOf(['prone']);
+    assert.ok(down.locked && down.prone && down.reason === 'on the ground' && !down.hurt);
+    assert.deepEqual(escapeOptions('Amber', down).map(o => o[0]), ['Get up']);
+    assert.ok(/on the ground and has to get up first/.test(lockedLine('Amber', down)));
+    const both = restraintOf(['cuffed', 'prone']);
+    assert.equal(both.look, 'cuffs'); assert.ok(both.prone && both.locked);
+    assert.deepEqual(escapeOptions('Amber', both).map(o => o[0]), ['Get up', 'Slip the cuffs', 'Pick the cuffs']);
+    assert.ok(/hands cuffed/.test(lockedLine('Amber', both)));
+    const cuffsOnly = restraintOf(['cuffed']);
+    assert.ok(!cuffsOnly.locked && !cuffsOnly.prone, 'cuffed alone still walks');
+    const { tidyBookkeeping } = await import('../src/core/bookkeeper.js');
+    const tidy = tidyBookkeeping({ conditions_add: { Amber: ['prone', 'poisoned'] }, conditions_remove: { Amber: ['prone'] } }, { party: ['Amber'] });
+    assert.deepEqual(tidy.conditions_add?.Amber ?? [], ['poisoned'], 'the bookkeeper never sets or clears prone');
+});

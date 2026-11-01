@@ -1405,6 +1405,22 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     fallenInFight(c);
     syncDownFromConditions(c);
+    // What the story did to the player is a condition whether or not the DM sent it: knocked down is prone, cuffed is cuffed, tied is tied (the code owns the facts; the DM is told).
+    {
+        const player = meta.persona.name;
+        const text = `${t.narration || ''} ${t.scene_card ? JSON.stringify(t.scene_card.people?.[player] ?? '') : ''}`;
+        const have = conditionsOf(world, player).join(' ').toLowerCase();
+        const adds = [];
+        if (!/prone|fallen|on the ground|unconscious|dead/.test(have) && /\b(?:you(?:'re| are)? (?:face ?down|flat on your back|on the ground|sprawl(?:ed|ing)?|knocked (?:down|flat|off your feet)|thrown (?:down|to the ground)|down in the (?:dirt|mud|grass|snow))|(?:tackles?|trips?|knocks?|throws?|slams?|shoves?|drives?|puts?) you (?:down|to the ground|flat|off your feet|into the (?:dirt|mud|ground))|knee in your back|face ?down in the (?:dirt|mud|grass|snow)|you (?:hit|go) (?:the ground|down hard))\b/i.test(text)) adds.push('prone');
+        if (!/cuff|manacle|shackl|irons/.test(have) && /\b(?:cuffs? (?:click|snap|close|lock|bite|go) [^.]{0,30}?(?:your|around your) wrists?|(?:your|his|her) wrists? (?:are |is )?(?:cuffed|in irons|in manacles)|cuffs? you\b|cuffed your|(?:puts?|snaps?|locks?|clamps?) (?:the )?(?:cuffs|manacles|irons) (?:on|around) (?:you|your wrists?)|you(?:'re| are) (?:cuffed|in irons|in manacles))\b/i.test(text)) adds.push('cuffed');
+        if (!/restrain|tied|bound|rope/.test(have) && /\b(?:ties? (?:you(?:r hands| up)|your wrists)|binds? your (?:hands|wrists)|rope (?:around|round) your wrists|you(?:'re| are) (?:tied up|bound hand and foot|trussed))\b/i.test(text)) adds.push('restrained (rope)');
+        if (adds.length) {
+            applyStateChanges(world, { conditions_add: { [player]: adds } }, meta.party.map(p => p.name), { turn: meta.turn });
+            syncDownFromConditions(c);
+            status.note(`${player}: ${adds.join(', ')} (from the story)`);
+            problems.push(`your story ${adds.includes('prone') ? 'put the player on the ground' : ''}${adds.includes('prone') && adds.length > 1 ? ' and ' : ''}${adds.filter(a => a !== 'prone').length ? `put ${adds.filter(a => a !== 'prone').join(' and ')} on the player` : ''} with no state_changes: the code added ${adds.map(a => `"${a}"`).join(', ')}. Send conditions_add yourself when your narration does it; remove them only when the story frees them (getting up off the ground is a roll when cuffed or held).`);
+        }
+    }
     // A companion who cuffs or ties the player in the story has them in custody: the map keeps them close (the DM can say otherwise with place_changes.custody).
     {
         const hereC = currentPlace(c);
@@ -1798,6 +1814,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // The DM has had what was done on the map: the next turn starts a fresh record.
     meta.mapLog = [];
     if (t.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: t.happened });
+    // Table rules come only from the player's own out-of-character words: the premise and the plot are the DM's private plan, and companions read the rules.
+    if (t.table_rules_add.length) {
+        const said = lastPlayerMessage();
+        const oocNow = reasons.includes('ooc') || /^\s*(?:\*?\(\s*ooc\s*\)\*?|\(\(|ooc\s*[:\-]|@?dm\s*[,:\-]|\/rule\b)/i.test(said);
+        if (!oocNow) { problems.push(`table_rules_add dropped (${t.table_rules_add.length}): table rules are only what the player settled out of character, in their own OOC words. Your plot, the premise's secrets and what is going to happen stay in your own plan; companions and NPCs read the rules, so a rule would give the story away.`); t.table_rules_add = []; }
+    }
     if (t.table_rules_add.length || t.table_rules_remove.length) {
         meta.tableRules = applyTableRules(meta.tableRules, t.table_rules_add, t.table_rules_remove);
         status.note('Table rules updated');
@@ -2120,6 +2142,19 @@ export async function runOpening(openingIn) {
             if (!String(opening?.narration || '').trim()) opening = { ...(opening || {}), narration: 'The adventure begins. Say what you do, or ask the DM to set the scene.' };
         }
         await applyDmTurn(c, opening, status, new AbortController().signal, { reasons: ['opening'] });
+        // The adventure starts on a map: when the opening didn't build one, the code does, from where the story begins.
+        if (mapsOn() && !currentPlace(c) && !c.docs.world.combat) {
+            const loc = String(c.docs.world.location || opening?.scene?.location || '').trim() || String(meta.standing || '').split(/[,.]/)[0].trim();
+            if (loc) {
+                try {
+                    const kind = kindFromWords(loc) || '';
+                    const outdoors = isWildKind(kind, loc) || /\b(road|trail|path|woods?|forest|trees|hills?|moor|downs|field|meadow|clearing|river|stream|lake|shore|beach|bridge|crossroads|camp|village|town|hamlet|ruins?|cliff|valley|pass|plain|marsh|swamp)\b/i.test(`${loc} ${meta.standing || ''}`);
+                    status.note(`Building the first map: ${loc}`);
+                    if (outdoors) await buildFromRequest({ text: `${loc}. ${meta.standing || ''}`.trim(), kind, size: 'small' }, { status });
+                    else await requestBuild({ name: loc, kind: kind || 'house', size: 'small', why: meta.standing || String(opening?.narration || '').slice(0, 200), start: 'where the party is right now' }, { status, confirm: false });
+                } catch (error) { status.note(`First map not built: ${error.message}`); }
+            }
+        }
         status.finish('The adventure begins');
     } catch (error) {
         console.error(error);

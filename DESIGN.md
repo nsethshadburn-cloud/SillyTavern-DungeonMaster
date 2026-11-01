@@ -324,6 +324,13 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.56 (prone, the premise leak, the first map)
+A new campaign's first two messages showed four things: the player was narrated face down and cuffed with no condition set; nothing made getting up cost anything; Judy's first line knew about the tribe who think Amber is their god (the DM had written the premise into TABLE RULES, which every companion reads); and no map until the player asked.
+- **Prone** (`PRONE` in `core/restraints.js`): a restraint of its own: `locked`, reason "on the ground", the figure drawn lying (`anim 'lie'`, cuffs on it only from a cuffed condition), Get up first in the tap menu (Acrobatics or Athletics, DC 10, 15 cuffed or held; the map action tells the DM), the bookkeeper never sets or clears it (`NOT_THE_BOOKKEEPERS`).
+- **The story's facts become conditions** (`applyDmTurn`): narration that knocks the player down, cuffs them or ties them adds prone, cuffed or restrained (rope) by code when the DM sent nothing, with a note to the player and a WHAT DIDN'T TAKE line to the DM; custody follows from the cuffs as before.
+- **Table rules only from the player**: `table_rules_add` is dropped unless the player's latest message is out of character (`((…))`, OOC:, @dm), with a problem telling the DM the premise is its private plan. The rule text says the same.
+- **The first map** (`runOpening`): when the opening didn't build one, the code builds the starting place from the location (land, a camp, a town by code; a house through the usual brief).
+
 ### v0.55 (the last gaps; four bugs)
 - **Items from the map** (`takeItem`, `dropItem`, `giveItem` in `st/atlas.js`): a place item that's there and not hidden is drawn as a pouch on its square (`drawTokens`) and is a tap target (`thingAt` kind `item`; also Take on a prop it lies on): walk up, it's taken (the place marks it, the pack gets it through `applyStateChanges`), a 🎒 card, the map log, witnesses. Drop puts a new place item at the player's square; Give moves it to a companion beside them and she may say a word. What's inside a container still comes through the DM's Search answer (`items found/taken`).
 - **Doors by hand** (`setDoorFromMap`): an unlocked door (not an arch, a trapdoor or a building's door) is a tap target: Open it / Close it, on the record.

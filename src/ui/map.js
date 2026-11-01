@@ -664,6 +664,7 @@ function drawTokens(ctx, c, b, tile, now, restore) {
             const down = b.place?.guards?.[name]?.down;
             const out = (hp && hp.hp_max && hp.hp <= 0) || /unconscious|knocked out|dead/.test(conds) || b.place?.guards?.[name]?.state === 'dead' || down === 'unconscious';
             if (out) anim = 'down';
+            else if (held.prone && !rest) anim = 'lie';
             else if (rest) anim = rest.pose;
             else if (down === 'asleep' || /asleep|sleeping/.test(conds)) anim = 'sleep';
             else if (m.anim && now < m.animUntil) { anim = m.anim; elapsed = now - m.animStart; }
@@ -1122,7 +1123,7 @@ function showEscapeMenu(ev, c) {
     const options = escapeOptions(player, r);
     if (!options.length) return false;
     showMenu(ev, player, lockedLine(player, r).replace(/\s*Tap .*$/, ''), options.map(([label, icon, text]) => [label, icon, () => {
-        setMapAction(`${player} tries to get free: ${text} Ask for that roll (DC by how they're held: rope 12, cuffs or a cage lock 15). On a success remove the restraint with state_changes.conditions_remove and say they're loose; on a failure they stay held.`);
+        setMapAction(`${player} tries to get free: ${text} Ask for that roll (DC by how they're held: rope 12, cuffs or a cage lock 15; getting up off the ground: Acrobatics or Athletics, DC 10, or 15 with hands cuffed or someone holding them down). On a success remove the restraint with state_changes.conditions_remove ("prone" for getting up) and say they're up or loose; on a failure they stay as they are.`);
         sendAsPlayer(text);
         closeMenu();
     }]));
