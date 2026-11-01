@@ -614,9 +614,9 @@ function drawTokens(ctx, c, b, tile, now, restore) {
     const keeperAt = custody && b.positions[custody.by] ? parseCoord(b.positions[custody.by], map) : null;
     if (keeperAt && !restore) {
         ctx.save();
-        ctx.strokeStyle = 'rgba(255, 170, 60, 0.6)';
-        ctx.setLineDash([Math.max(3, tile * 0.3), Math.max(2, tile * 0.2)]);
-        ctx.lineWidth = Math.max(1.5, tile * 0.08);
+        ctx.strokeStyle = 'rgba(255, 190, 90, 0.22)';
+        ctx.setLineDash([Math.max(2, tile * 0.18), Math.max(3, tile * 0.3)]);
+        ctx.lineWidth = Math.max(1, tile * 0.04);
         const r = custody.radius + 0.5;
         ctx.strokeRect(MARGIN + (keeperAt.x - custody.radius) * tile + 1, (map.h - 1 - keeperAt.y - custody.radius) * tile + 1, (2 * r) * tile - 2, (2 * r) * tile - 2);
         ctx.restore();

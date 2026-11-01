@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.57 (animals)
+A raven on the map was drawn as a man. `BEASTS` in `core/sprites.js` grew birds (a rig of their own: a round body on two thin legs, tail feathers, a wing that flaps, a beak; `tall` herons, `round` owls, a rooster's `comb`) and farm and forest animals (pig, cow, deer, stag, goat, sheep, a wild fox, a barn cat), with new rig features: `slender`, `fluffy`, `curly` tails, `horns` (cow, goat, antlers), `beard`. `presetFor` knows their words (fox-folk and cat-folk stay folk; an animal fox needs "wild", "red", "forest"). Anything else that the words call an animal (`ANIMAL_WORDS`, not `NOT_AN_ANIMAL`) gets a rig from Claude once (`ensureAnimalFigures` in `st/figures.js`, `ANIMAL_INSTRUCTIONS`, `normalizeRig`), kept with the figures, drawn as `beast: 'custom'`, and marked `sprite: 'animal'` so every rule treats it as a beast (no lines). The land is built with one or two animals in it (`FAUNA` by set in `wildsFromBrief`, role `animal`, never hostile). Also: a prisoner who can't move (prone, tied, held) is never escaping (`custodyStart`, `custodyBolt`), and the keeper's ring is faint.
+
 ### v0.56.4 (pinned)
 A knee on the player's back was narrated and never a condition, so the get-up roll was a plain Acrobatics check. The story now adds "pinned (held down by X)" (and removes it when X gets off), and the code puts any get-up, slip-free or lock-working roll at disadvantage while pinned or cuffed, with getting up from under someone at DC 15.
 

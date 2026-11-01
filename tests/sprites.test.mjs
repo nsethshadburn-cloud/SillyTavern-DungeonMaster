@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildSprite, normalizeLook, libraryLook, lookForNpc, presetFor, sexFromText, LIBRARY, SPECIES, SIZE, ANIM_TIMING, SPRITE_INSTRUCTIONS } from '../src/core/sprites.js';
+import { buildSprite, normalizeLook, libraryLook, lookForNpc, presetFor, sexFromText, LIBRARY, SPECIES, SIZE, ANIM_TIMING, SPRITE_INSTRUCTIONS, normalizeRig, isBeast, ANIMAL_WORDS, NOT_AN_ANIMAL } from '../src/core/sprites.js';
 
 const pixels = frame => frame.reduce((n, c) => n + (c ? 1 : 0), 0);
 
@@ -93,4 +93,34 @@ test('men and women are easy to tell apart; the DM, the words or the library dec
     assert.ok(peasants.includes(true) && peasants.includes(false), 'crowds are mixed');
     assert.equal(libraryLook('human_child', 0).young, true, 'children keep the soft face');
     assert.match(SPRITE_INSTRUCTIONS, /facialHair/);
+});
+
+test('animals: the library knows birds and farm and forest beasts; the words pick them; they are beasts', () => {
+    for (const [text, key] of [['a raven on the log', 'raven'], ['Crow 2', 'crow'], ['a barn owl', 'owl'], ['a hawk circling', 'hawk'], ['a fat hen', 'chicken'], ['two geese', 'duck'], ['a grey heron', 'heron'], ['Pig 1, a sow', 'pig'], ['an ox in the traces', 'cow'], ['a stag in the clearing', 'stag'], ['a doe and her fawn', 'deer'], ['a billy goat', 'goat'], ['a lamb', 'sheep'], ['a red fox slinking by', 'fox_beast'], ['a barn cat', 'cat_beast']]) {
+        assert.equal(presetFor(text), key, text);
+        assert.ok(isBeast({ name: text }), `${text} is a beast`);
+    }
+    // folk stay folk
+    assert.equal(presetFor('Nick, a fox-folk con artist'), 'foxfolk');
+    assert.equal(presetFor('Judy Hopps, a Harengon (rabbit-folk) guard'), 'rabbitfolk');
+    assert.ok(!isBeast({ name: 'Nick Wilde', description: 'a fox-folk con artist' }));
+    // the words that mark an animal the library doesn't have
+    assert.ok(ANIMAL_WORDS.test('a green parrot') && ANIMAL_WORDS.test('Monkey 1') && !ANIMAL_WORDS.test('a city guard'));
+    assert.ok(NOT_AN_ANIMAL.test('a bird-folk merchant') && !NOT_AN_ANIMAL.test('a parrot on a perch'));
+});
+
+test("a rig Claude fills in draws like any beast, and junk in it falls back to something sensible", () => {
+    const rig = normalizeRig({ bird: 'true', size: 'small', round: true, fur: '#2a8a3a' });
+    assert.ok(rig.bird && rig.small && rig.round && rig.furs[0] === '#2a8a3a');
+    const parrot = normalizeLook({ beast: 'custom', rig: { bird: true, size: 'small', fur: '#2a8a3a' }, fur: '#2a8a3a' });
+    assert.equal(parrot.beast, 'custom');
+    for (const look of [parrot, normalizeLook({ rig: { size: 'bulky', ears: 'floppy', tail: 'curly', snout: 2, fur: '#e8a8a0' } }), normalizeLook({ rig: { size: 'big', slender: true, horns: 'antlers', fur: '#7a5a3a' } }), normalizeLook({ rig: { bird: true, tall: true, fur: '#8a9aa8' } }), normalizeLook({ rig: { nonsense: 1 } })]) {
+        const s = buildSprite(look);
+        assert.equal(s.anims.walk.length, 4);
+        for (const frames of Object.values(s.anims)) for (const f of frames) assert.ok(f.length > 0);
+    }
+    assert.equal(normalizeRig({ size: 'huge', ears: 'wings', horns: 'none', snout: 9 }).snout, 3);
+    assert.ok(!('horns' in normalizeRig({ horns: 'none' })));
+    assert.ok(isBeast({ name: 'Parrot', sprite: 'animal' }), 'a drawn animal is a beast by its sprite');
+    assert.equal(libraryLook('animal').beast, 'hound', 'the marker with no rig stands in as a hound');
 });

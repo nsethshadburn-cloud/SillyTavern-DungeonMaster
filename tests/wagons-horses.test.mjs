@@ -27,7 +27,7 @@ test('a small camp in the woods is a clearing with a campfire and a tent, nobody
     const props = place.floors[0].map.props.map(p => p.type);
     assert.ok(props.includes('campfire') && props.includes('tent'), `campfire and tent: ${props.join(',')}`);
     assert.ok(!props.includes('spikes') && !props.includes('skullpole') && !props.includes('watchtower'), 'nothing hostile');
-    assert.equal(Object.keys(place.guards).length, 0, 'no guards');
+    assert.equal(Object.values(place.guards).filter(g => g.hostile).length, 0, 'no guards (an animal or two is fine)');
     assert.ok(!Object.keys(place.buildings).length, 'no buildings');
     assert.ok(Object.keys(place.rooms).length <= 3, `a clearing or two: ${Object.keys(place.rooms).length}`);
 });

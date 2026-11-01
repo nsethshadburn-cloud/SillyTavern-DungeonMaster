@@ -10,7 +10,7 @@ import { callClaude } from './llm.js';
 import { statsForName } from './sheets.js';
 import { guessGender } from './voices.js';
 import { currentPlace } from './atlas.js';
-import { normalizeLook, lookForNpc, presetFor, libraryLook, sexFromText, SPRITE_INSTRUCTIONS, LIBRARY } from '../core/sprites.js';
+import { normalizeLook, lookForNpc, presetFor, libraryLook, sexFromText, SPRITE_INSTRUCTIONS, LIBRARY, ANIMAL_WORDS, NOT_AN_ANIMAL, ANIMAL_INSTRUCTIONS } from '../core/sprites.js';
 import { extractJson, trimToTokens, nameKey } from '../core/text.js';
 
 const keyFor = (kind, avatar) => `${kind === 'persona' ? 'p' : 'c'}:${avatar}`;
@@ -29,6 +29,8 @@ function settled(look, name, text) {
 /** The look for anyone on the map, by name. */
 export function figureFor(name) {
     const c = campaign();
+    const animal = animalFigure(name);
+    if (animal) return animal;
     if (!c) return libraryLook(presetFor(name));
     if (name === c.meta.persona.name) return settled(stored('persona', c.meta.persona.avatar), name, c.meta.persona.description) ?? libraryLook(presetFor(c.meta.persona.description || name), 0, sexFromText(c.meta.persona.description) || guessGender(name));
     const member = c.meta.party.find(p => p.name === name);
@@ -157,3 +159,69 @@ export async function redoFigure(name, custom = null) {
 }
 
 export { LIBRARY };
+
+// ---------- animals the library doesn't have ----------
+
+const animalKey = name => `animal:${nameKey(String(name || '').replace(/\s*\d+$/, ''))}`;
+const pendingAnimals = new Set();
+
+/** The rig Claude drew for this animal (by its name, numbers dropped: "Raven 2" is a raven), or null. */
+export function animalFigure(name) {
+    const look = settings().figures?.[animalKey(name)];
+    return look && look.beast === 'custom' ? look : null;
+}
+
+/** Is this someone the library can't draw and the words call an animal? */
+function wantsAnimalFigure(p) {
+    if (!p?.name || animalFigure(p.name)) return false;
+    const text = `${p.name} ${p.role || ''} ${p.description || ''}`;
+    const key = LIBRARY[String(p.sprite || '')] ? String(p.sprite) : presetFor(text);
+    if (key && LIBRARY[key]?.beast && key !== 'animal') return false;
+    if (key && !LIBRARY[key]?.beast) return false;
+    return ANIMAL_WORDS.test(`${p.sprite || ''} ${text}`) && !NOT_AN_ANIMAL.test(text);
+}
+
+/**
+ * Animals on the map or among the NPCs that the library has no figure for (a parrot, a monkey, a
+ * crocodile): Claude fills in a rig for each, once, kept with the figures; from then on they're drawn
+ * with it and count as beasts (no lines). Runs in the background.
+ */
+export function ensureAnimalFigures(c, people) {
+    if (!c || settings().mapFigures === false) return busy;
+    const todo = (people || []).filter(p => wantsAnimalFigure(p) && !pendingAnimals.has(animalKey(p.name)));
+    if (!todo.length) return busy;
+    for (const p of todo) pendingAnimals.add(animalKey(p.name));
+    busy = busy.then(async () => {
+        let drew = false;
+        for (const p of todo) {
+            try {
+                if (!animalFigure(p.name)) {
+                    const user = [`Animal: ${p.name.replace(/\s*\d+$/, '')}`, p.description ? `Description: ${trimToTokens(String(p.description), 200)}` : '', p.sprite && !LIBRARY[p.sprite] ? `The game master called its figure "${p.sprite}".` : '', 'Fill in the rig.'].filter(Boolean).join('\n');
+                    const reply = await callClaude({ system: ANIMAL_INSTRUCTIONS, user, task: 'sprite', label: `animal figure for ${p.name}`, maxTokens: 400, effort: 'low' });
+                    const json = extractJson(reply.text);
+                    if (!json) throw new Error(`no rig for ${p.name}`);
+                    const look = normalizeLook({ beast: 'custom', rig: json, fur: json.fur });
+                    const s = settings();
+                    s.figures ??= {};
+                    s.figures[animalKey(p.name)] = look;
+                    ST.saveSettingsDebounced();
+                    drew = true;
+                }
+                // From now on it's a beast to every rule (no lines, no replies), by its sprite.
+                p.sprite = 'animal';
+            } catch (error) {
+                console.warn('[Dungeon Master] animal figure failed', p.name, error);
+            } finally {
+                pendingAnimals.delete(animalKey(p.name));
+            }
+        }
+        if (drew) {
+            const { saveDoc } = await import('./campaign.js');
+            const { savePlace } = await import('./atlas.js');
+            try { saveDoc('npcs'); const cur = currentPlace(c); if (cur) savePlace(cur.key, c); } catch { /* saved on the next turn anyway */ }
+            const { refreshMap } = await import('../ui/map.js');
+            refreshMap();
+        }
+    });
+    return busy;
+}

@@ -37,7 +37,29 @@ export const BEASTS = {
     bear: { ears: 'round', tail: 'stub', snout: 2, bulky: true, furs: ['#5a3a20', '#3b2a20', '#e8e2d6', '#7a5a3a'] },
     boar: { ears: 'pointed', tail: 'thin', snout: 2, tusks: true, bulky: true, furs: ['#5a4030', '#3b3030', '#6a5a4a'] },
     big_cat: { ears: 'round', tail: 'long', snout: 2, furs: ['#d0a050', '#3b3b3b', '#e8e2d6', '#c48a3a'] },
+    // Birds: a round body on two thin legs, a beak, a wing that flaps.
+    raven: { bird: true, furs: ['#1c1c22', '#2a2a33'] },
+    crow: { bird: true, furs: ['#1c1c22', '#26262c'] },
+    owl: { bird: true, round: true, furs: ['#7a5a3a', '#a89a7a', '#5a5a5a'] },
+    hawk: { bird: true, furs: ['#7a5a3a', '#5a4030', '#8a7a6a'] },
+    chicken: { bird: true, comb: true, furs: ['#e8e2d6', '#a87a4a', '#3b3030'] },
+    duck: { bird: true, furs: ['#5a6a3a', '#e8e2d6', '#7a5a3a'] },
+    heron: { bird: true, tall: true, furs: ['#8a9aa8', '#e8e2d6'] },
+    // Farm and forest animals.
+    pig: { ears: 'floppy', tail: 'curly', snout: 2, bulky: true, furs: ['#e8a8a0', '#c48a7a', '#3b3030', '#8a6a5a'] },
+    cow: { ears: 'round', tail: 'long', snout: 2, big: true, bulky: true, horns: 'cow', furs: ['#3b3330', '#e8e2d6', '#7a4a2a', '#a87a4a'] },
+    deer: { ears: 'pointed', tail: 'stub', snout: 3, big: true, slender: true, furs: ['#a87a4a', '#7a5a3a', '#c4a070'] },
+    stag: { ears: 'pointed', tail: 'stub', snout: 3, big: true, slender: true, horns: 'antlers', furs: ['#7a5a3a', '#a87a4a'] },
+    goat: { ears: 'floppy', tail: 'stub', snout: 2, horns: 'goat', beard: true, furs: ['#8a8a8a', '#e8e2d6', '#3b3330', '#a87a4a'] },
+    sheep: { ears: 'round', tail: 'stub', snout: 2, fluffy: true, furs: ['#e8e2d6', '#3b3330', '#c4b8a0'] },
+    fox_beast: { ears: 'pointed', tail: 'bushy', snout: 3, furs: ['#d0682a', '#c4552a', '#9a9a9a'] },
+    cat_beast: { ears: 'pointed', tail: 'long', snout: 1, small: true, furs: ['#d08a3a', '#3b3b3b', '#e8e2d6', '#8a7a6a'] },
 };
+
+/** Animal words, for telling an animal from a person when the library has no figure for it (Claude draws one). */
+export const ANIMAL_WORDS = /\b(?:birds?|ravens?|crows?|rooks?|magpies?|jackdaws?|owls?|hawks?|falcons?|eagles?|kites?|vultures?|buzzards?|chickens?|hens?|roosters?|cockerels?|pheasants?|grouse|ducks?|geese|goose|swans?|gulls?|seagulls?|herons?|cranes?|storks?|egrets?|sparrows?|finch(?:es)?|robins?|pigeons?|doves?|parrots?|macaws?|peacocks?|turkeys?|pigs?|hogs?|sows?|piglets?|swine|cows?|bulls?|calf|calves|cattle|steers?|heifers?|bison|buffalo|yaks?|deer|does?|fawns?|hinds?|stags?|bucks?|elk|moose|reindeer|antelopes?|gazelles?|goats?|ibex|sheep|ewes?|rams?|lambs?|monkeys?|apes?|baboons?|lemurs?|lizards?|snakes?|serpents?|vipers?|adders?|frogs?|toads?|turtles?|tortoises?|crabs?|fish|trout|salmon|pike|eels?|bats?|badgers?|otters?|beavers?|squirrels?|weasels?|ferrets?|stoats?|hedgehogs?|moles?|voles?|camels?|llamas?|alpacas?|donkeys?|mules?|wild fox(?:es)?|red fox(?:es)?|forest fox(?:es)?|barn cats?|farm cats?|stray cats?|wildcats?|lynx|bobcats?|hyenas?|jackals?|coyotes?|crocodiles?|alligators?|elephants?|rhinos?|hippos?|giraffes?|zebras?|kangaroos?|koalas?|sloths?|raccoons?|possums?|skunks?|porcupines?|armadillos?|slugs?|snails?|beetles?|wasps?|bees?|hornets?|moths?|butterfl(?:y|ies)|scorpions?|centipedes?|worms?|toads?|newts?|salamanders?)\b/i;
+/** Words that make it a person after all (rabbit-folk, a fox merchant), not an animal. */
+export const NOT_AN_ANIMAL = /\b(?:folk|-?man|-?men|woman|women|person|people|harengon|tabaxi|guard|officer|merchant|thief|rogue|knight|soldier|wears|wearing|armou?r|cloak|tunic|robe|sword|dagger|speaks|says|talks)\b/i;
 
 export const OUTFITS = ['tunic', 'vest', 'robe', 'dress', 'leather', 'armor', 'rags', 'none'];
 export const HEADWEAR = ['none', 'hood', 'helmet', 'hat', 'crown', 'bandana'];
@@ -98,6 +120,10 @@ export const LIBRARY = {
     ghost: { species: 'ghost', outfit: 'robe', head: 'none', weapon: 'none', outfitColors: ['#cfe3f0', '#d8f0e8'] },
     wolf: { beast: 'wolf' }, hound: { beast: 'hound' }, rat: { beast: 'rat' }, giant_spider: { beast: 'spider' },
     horse: { beast: 'horse' }, bear: { beast: 'bear' }, boar: { beast: 'boar' }, big_cat: { beast: 'big_cat' },
+    raven: { beast: 'raven' }, crow: { beast: 'crow' }, owl: { beast: 'owl' }, hawk: { beast: 'hawk' }, chicken: { beast: 'chicken' }, duck: { beast: 'duck' }, heron: { beast: 'heron' },
+    pig: { beast: 'pig' }, cow: { beast: 'cow' }, deer: { beast: 'deer' }, stag: { beast: 'stag' }, goat: { beast: 'goat' }, sheep: { beast: 'sheep' }, fox_beast: { beast: 'fox_beast' }, cat_beast: { beast: 'cat_beast' },
+    // An animal Claude drew (its rig is stored with the figure); without one, a hound stands in.
+    animal: { beast: 'custom' },
 };
 
 /** Pick a library figure from what an NPC or enemy is called and described as. */
@@ -105,7 +131,10 @@ export function presetFor(text) {
     const t = String(text || '').toLowerCase();
     const w = list => new RegExp(`\\b(${list})\\b`);
     const rules = [
-        [/\b(giant )?spiders?\b/, 'giant_spider'], [/\b(rat|rats)\b/, 'rat'], [/\b(horse|pony|steed|mare|stallion|gelding|mule|donkey|ox|oxen|draft animal)\b/, 'horse'], [/\bbear\b/, 'bear'], [/\bboar\b/, 'boar'],
+        [/\b(ravens?)\b/, 'raven'], [/\b(crows?|rooks?|magpies?|jackdaws?)\b/, 'crow'], [/\b(owls?)\b/, 'owl'], [/\b(hawks?|falcons?|eagles?|kites?|buzzards?|vultures?)\b/, 'hawk'], [/\b(chickens?|hens?|roosters?|cockerels?|pheasants?|grouse)\b/, 'chicken'], [/\b(ducks?|goose|geese|swans?|gulls?|seagulls?)\b/, 'duck'], [/\b(herons?|cranes?|storks?|egrets?)\b/, 'heron'],
+        [/\b(pigs?|hogs?|sows?|piglets?|swine)\b/, 'pig'], [/\b(cows?|bulls?|calf|calves|cattle|steers?|heifers?|bison|buffalo|yaks?|ox|oxen)\b/, 'cow'], [/\b(stags?|bucks?|elk|moose|reindeer)\b/, 'stag'], [/\b(deer|does?|fawns?|hinds?|antelopes?|gazelles?)\b/, 'deer'], [/\b(goats?|ibex)\b/, 'goat'], [/\b(sheep|ewes?|rams?|lambs?)\b/, 'sheep'],
+        [/\b(wild|red|forest|grey|gray) fox(?:es)?\b/, 'fox_beast'], [/\b(barn|farm|stray|wild|alley) cats?\b|\bwildcats?\b/, 'cat_beast'],
+        [/\b(giant )?spiders?\b/, 'giant_spider'], [/\b(rat|rats)\b/, 'rat'], [/\b(horse|pony|steed|mare|stallion|gelding|mule|donkey|draft animal)\b/, 'horse'], [/\bbear\b/, 'bear'], [/\bboar\b/, 'boar'],
         [/\b(hound|mastiff|dog|cur)\b/, 'hound'], [/\b(lion|panther|tiger|big cat|leopard)\b/, 'big_cat'],
         [/\b(wolf|wolves|warg)\b(?!.*folk)/, /folk|man\b|woman\b/.test(t) ? 'wolffolk' : 'wolf'],
         [w('skeletons?|skeletal'), 'skeleton'], [w('zombies?|ghouls?|corpses?|undead|walking dead'), 'zombie'], [w('ghosts?|spirits?|specters?|spectres?|phantoms?|wraiths?|apparitions?|ghostly'), 'ghost'],
@@ -157,8 +186,8 @@ export function libraryLook(key, variant = 0, sex = '') {
     const base = LIBRARY[key] ?? LIBRARY.human_peasant;
     const n = Math.abs(Math.round(Number(variant) || 0));
     if (base.beast) {
-        const b = BEASTS[base.beast];
-        return { beast: base.beast, fur: b.furs[n % b.furs.length] };
+        const b = BEASTS[base.beast] ?? BEASTS.hound;
+        return { beast: BEASTS[base.beast] ? base.beast : 'hound', fur: b.furs[n % b.furs.length] };
     }
     const sp = SPECIES[base.species] ?? SPECIES.human;
     const female = sex === 'female' || (sex !== 'male' && (base.female === true || (base.female === 'some' && n % 2 === 1)));
@@ -204,6 +233,7 @@ const pickIn = (v, list, fallback) => (list.includes(String(v || '').toLowerCase
 /** Validate a look (from Claude or the library). Never throws. */
 export function normalizeLook(raw) {
     const d = raw && typeof raw === 'object' ? raw : {};
+    if (d.beast === 'custom' || (d.rig && typeof d.rig === 'object')) { const rig = normalizeRig(d.rig ?? d); return { beast: 'custom', rig, fur: hex(d.fur) ?? rig.furs[0] }; }
     if (d.beast && BEASTS[d.beast]) return { beast: d.beast, fur: hex(d.fur) ?? BEASTS[d.beast].furs[0] };
     const species = SPECIES[String(d.species || '').toLowerCase()] ? String(d.species).toLowerCase() : 'human';
     const sp = SPECIES[species];
@@ -545,9 +575,10 @@ const BEAST_POSES = {
 };
 
 function beast(look, pose) {
-    const b = BEASTS[look.beast];
+    const b = (look.beast === 'custom' ? look.rig : BEASTS[look.beast]) ?? BEASTS.hound;
     const px = new Px();
     const lean = pose.lean ?? 0, bob = pose.bob ?? 0;
+    if (b.bird) return bird(px, b, pose, lean, bob);
     if (b.spider) {
         // A round abdomen at the back, a smaller head-body at the front, and eight jointed legs
         // (the far four behind the body, the near four in front), stepping in turns.
@@ -573,16 +604,18 @@ function beast(look, pose) {
         if (pose.open) { px.set(cx + 8, by + 3, WH); px.set(cx + 8, by + 4, WH); }
         return px.outline();
     }
-    const big = b.big, bulky = b.bulky, small = b.small;
-    const groundY = 22, legH = big ? 8 : small ? 3 : 5;
-    const bodyTop = groundY - legH - (bulky ? 7 : small ? 4 : 5) + bob, bodyH = bulky ? 7 : small ? 4 : 5;
-    const bx = (small ? 7 : bulky ? 3 : 4) + lean, bw = small ? 9 : bulky ? 14 : 12;
+    const big = b.big, bulky = b.bulky, small = b.small, slender = b.slender;
+    const groundY = 22, legH = big ? (slender ? 9 : 8) : small ? 3 : 5;
+    const bodyH = bulky ? 7 : small ? 4 : slender ? 4 : 5;
+    const bodyTop = groundY - legH - bodyH + bob;
+    const bx = (small ? 7 : bulky ? 3 : slender ? 5 : 4) + lean, bw = small ? 9 : bulky ? 14 : slender ? 10 : 12;
     // Tail.
     const tx = bx, ty = bodyTop + 1;
     if (b.tail === 'bushy') for (let i = 0; i < 4; i++) px.rect(tx - 1 - i, ty - Math.floor(i / 2), 2, 2, i === 3 ? SKL : SK);
     else if (b.tail === 'long') px.line(tx, ty + 1, tx - 4, ty + (look.beast === 'horse' ? 6 : 4), look.beast === 'rat' ? PINK : HRD, look.beast === 'horse' ? 2 : 1);
     else if (b.tail === 'thin') px.line(tx, ty, tx - 3, ty + 2, SKD);
     else if (b.tail === 'stub') px.rect(tx - 1, ty, 1, 2, SKD);
+    else if (b.tail === 'curly') { px.set(tx - 1, ty, SKD); px.set(tx - 2, ty - 1, SKD); px.set(tx - 1, ty - 2, SKD); }
     // Far legs, body, near legs.
     const leg = (x, off, c) => { px.line(x, bodyTop + bodyH - 1, x + off, groundY, c, 2); px.rect(x + off, groundY, 2, 1, c === SK ? SKD : O === c ? O : SKD); };
     leg(bx + 1, (pose.b ?? 0) / 2, SKD); leg(bx + bw - 5, (pose.a ?? 0) / 2, SKD);
@@ -592,6 +625,8 @@ function beast(look, pose) {
     // Rounded ends.
     for (const [x, y] of [[bx, bodyTop], [bx + bw - 1, bodyTop], [bx, bodyTop + bodyH - 1], [bx + bw - 1, bodyTop + bodyH - 1]]) px.clear(x, y);
     if (b.mane) px.rect(bx + bw - 4, bodyTop - 1, 4, 2, HRD);
+    // A fleece: bumps along the back and belly.
+    if (b.fluffy) for (let x = bx; x < bx + bw; x += 2) { px.set(x, bodyTop - 1, SKL); px.set(x + 1, bodyTop + bodyH, SKL); }
     leg(bx + 3, (pose.a ?? 0) / 2, SK); leg(bx + bw - 3, (pose.b ?? 0) / 2, SK);
     // Head: up on a neck for a horse, low and forward for the rest.
     const hx = bx + bw - 2, hy = big ? bodyTop - 6 : bodyTop - 2;
@@ -608,8 +643,60 @@ function beast(look, pose) {
     if (b.ears === 'pointed') { px.set(hx + 1, hy - 1, SK); px.set(hx + 1, hy - 2, SKD); px.set(hx + 2, hy - 1, SKD); }
     if (b.ears === 'round') { px.rect(hx, hy - 1, 2, 1, SK); px.set(hx, hy - 2, SK); }
     if (b.ears === 'floppy') { px.rect(hx, hy, 2, 3, SKD); }
+    // Horns and antlers.
+    if (b.horns === 'cow') { px.line(hx, hy - 1, hx - 2, hy - 3, HORN); px.line(hx + 4, hy - 1, hx + 6, hy - 3, HORN); }
+    if (b.horns === 'goat') { px.line(hx + 1, hy - 1, hx - 1, hy - 4, HORN); px.set(hx + 2, hy - 1, HORN); }
+    if (b.horns === 'antlers') { px.line(hx + 1, hy - 1, hx - 1, hy - 5, HORN); px.line(hx - 1, hy - 3, hx - 3, hy - 5, HORN); px.line(hx + 3, hy - 1, hx + 4, hy - 5, HORN); px.line(hx + 4, hy - 3, hx + 6, hy - 4, HORN); }
+    if (b.beard) px.rect(hx + 4, hy + 4, 1, 2, SKL);
     return px.outline();
 }
+
+/** The bird rig (facing right): a round body on two thin legs, tail feathers, a wing that flaps, a head with a beak. */
+function bird(px, b, pose, lean, bob) {
+    const groundY = 22;
+    const tall = Boolean(b.tall), big = Boolean(b.big || b.bulky);
+    const bw = big ? 9 : 7, bh = big ? 6 : 5;
+    const legH = tall ? 7 : big ? 4 : 3;
+    const bx = 8 + lean, bodyTop = groundY - legH - bh + bob;
+    const stepA = Math.round((pose.a ?? 0) / 2), stepB = Math.round((pose.b ?? 0) / 2);
+    // Tail feathers, then the legs behind the body.
+    px.line(bx, bodyTop + 2, bx - 3, bodyTop + (tall ? 1 : 4), SKD, 2);
+    const lx1 = bx + 2, lx2 = bx + bw - 3;
+    px.line(lx1, bodyTop + bh - 1, lx1 + stepA, groundY, GOLD); px.rect(lx1 - 1 + stepA, groundY, 3, 1, GOLD);
+    px.line(lx2, bodyTop + bh - 1, lx2 + stepB, groundY, GOLD); px.rect(lx2 - 1 + stepB, groundY, 3, 1, GOLD);
+    // The body, an egg; the belly a shade lighter.
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) { const dx = (x - (bw - 1) / 2) / (bw / 2), dy = (y - (bh - 1) / 2) / (bh / 2); if (dx * dx + dy * dy <= 1.05) px.set(bx + x, bodyTop + y, y >= bh - 2 ? SKL : SK); }
+    // The wing, folded along the side; it lifts on a step and in an attack.
+    const flap = pose.a ? -1 : pose.b ? 1 : pose.open ? -2 : 0;
+    px.rect(bx + 1, bodyTop + 1 + flap, Math.max(3, bw - 4), 2, SKD);
+    // Neck and head.
+    const hx = bx + bw - 2, hy = bodyTop - (tall ? 6 : 3);
+    if (tall) px.line(bx + bw - 2, bodyTop, hx + 1, hy + 2, SK, 2);
+    if (b.round) { px.rect(hx - 1, hy - 1, 6, 4, SK); px.set(hx - 1, hy - 2, SKD); px.set(hx + 4, hy - 2, SKD); }
+    else { px.rect(hx, hy, 4, 3, SK); px.rect(hx, hy, 4, 1, SKD); }
+    px.rect(hx + 4, hy + 1, tall ? 3 : 2, 1, GOLD);
+    if (pose.open) px.set(hx + 4, hy + 2, GOLD);
+    px.set(hx + 2, hy + 1, pose.blink ? BLK : EYE);
+    if (b.comb) { px.set(hx + 1, hy - 1, BLD); px.set(hx + 2, hy - 1, BLD); px.set(hx + 4, hy + 2, BLD); }
+    return px.outline();
+}
+
+/** The rig Claude fills in for an animal the library doesn't have. Never throws. */
+export function normalizeRig(raw) {
+    const d = raw && typeof raw === 'object' ? raw : {};
+    const yes = v => v === true || v === 'true';
+    const size = pickIn(d.size, ['small', 'normal', 'big', 'bulky'], 'normal');
+    const rig = {
+        bird: yes(d.bird), ears: pickIn(d.ears, ['pointed', 'round', 'floppy', 'none'], 'pointed'), tail: pickIn(d.tail, ['bushy', 'long', 'thin', 'stub', 'curly', 'none'], 'thin'),
+        snout: Math.max(0, Math.min(3, Math.round(Number(d.snout)) || 2)), horns: pickIn(d.horns, ['none', 'cow', 'goat', 'antlers'], 'none'),
+        mane: yes(d.mane), tusks: yes(d.tusks), fluffy: yes(d.fluffy), beard: yes(d.beard), comb: yes(d.comb), slender: yes(d.slender), tall: yes(d.tall), round: yes(d.round),
+        small: size === 'small', big: size === 'big' || size === 'bulky', bulky: size === 'bulky', furs: [hex(d.fur) ?? '#7a5a3a'],
+    };
+    if (rig.horns === 'none') delete rig.horns;
+    return rig;
+}
+
+export const ANIMAL_INSTRUCTIONS = 'You design a tiny pixel-art map figure for an ANIMAL in a tabletop game by filling in a rig. Reply with ONE JSON object and nothing else: {"bird": true|false, "size": "small|normal|big|bulky", "ears": "pointed|round|floppy|none", "tail": "bushy|long|thin|stub|curly|none", "snout": 0-3, "horns": "none|cow|goat|antlers", "mane": bool, "tusks": bool, "fluffy": bool, "beard": bool, "comb": bool, "slender": bool, "tall": bool, "round": bool, "fur": "#hex, the main color"}. A bird uses bird, size, tall (long legs and neck: a heron, a crane), round (an owl), comb (a rooster), fur. A four-legged animal uses the rest: a pig is bulky with a curly tail and floppy ears; a deer is big and slender with pointed ears and a stub tail; a goat has goat horns and a beard; a sheep is fluffy; a monkey is small with a long tail and round ears; a lizard, a snake or a crocodile is small or normal with no ears, a long tail and snout 3; a bat is a small bird with round ears; a turtle is small with no tail and snout 1. Pick the closest shape and a true color; never refuse and never explain.';
 
 // ---------- the whole sprite ----------
 
@@ -759,6 +846,7 @@ Pick the closest species: rabbit-folk (harengon) = rabbit, cat-folk (tabaxi) = c
 /** An animal (a horse, a hound, a bear): a figure from the beast library. Animals have no lines; the DM narrates them. */
 export function isBeast(npc) {
     if (!npc) return false;
+    if (npc.sprite === 'animal') return true;
     const key = LIBRARY[String(npc.sprite || '')] ? String(npc.sprite) : presetFor(`${npc.name || ''} ${npc.role || ''} ${npc.description || ''}`);
     return Boolean(key && LIBRARY[key]?.beast) && !/\b(folk|-?man|woman|person|people)\b/i.test(`${npc.name || ''} ${npc.description || ''}`);
 }

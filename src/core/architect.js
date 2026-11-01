@@ -1384,6 +1384,7 @@ const SPOTS = {
     campsite: ['The Campsite'],
     open: ['Standing Stones', 'Grassy Rise', 'Dry Wash', 'Lone Oak', 'Sheepfold Ruin', 'Old Cairn', 'Hollow Way', 'Wind-bent Thorn', 'Shepherd\'s Hut', 'Boggy Dip', 'The Lookout', 'Rabbit Warren', 'Cart Track'],
 };
+const FAUNA = { forest: ['Deer', 'Stag', 'Red Fox', 'Raven', 'Owl'], campsite: ['Deer', 'Raven', 'Owl', 'Crow'], other: ['Deer', 'Crow', 'Red Fox', 'Hawk'], open: ['Crow', 'Goat', 'Sheep', 'Hawk'], swamp: ['Heron', 'Crow', 'Duck', 'Frog'], jungle: ['Parrot', 'Monkey', 'Lizard'], camp: [] };
 const WILD_CREATURES = { campsite: [], jungle: ['Jungle Cat', 'Giant Snake', 'Ape', 'Poison Frog Swarm', 'Bandit'], forest: ['Wolf', 'Bandit', 'Bear', 'Boar', 'Goblin'], swamp: ['Crocodile', 'Bog Zombie', 'Giant Toad', 'Lizardfolk', 'Bandit'], camp: ['Bandit', 'Sentry', 'Mercenary'], other: ['Wolf', 'Bandit', 'Boar'], open: ['Wolf', 'Bandit', 'Wild Dog', 'Boar'] };
 
 /** A wild place's plan from a brief: its spots (clearings), how trails join them, what lives there. */
@@ -1410,6 +1411,8 @@ export function wildsFromBrief(briefIn, seed = 1) {
     // A campsite is the party's own: nobody guards it (the brief's count is for a band's camp; people arrive through the story).
     const nG = campsite ? 0 : brief.guards ?? int(r, 0, brief.size === 'big' ? 5 : 3);
     for (let i = 0; i < nG; i++) { const w = bandWord(brief.creatures) || pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
+    // The land has its animals: a deer, a fox, a raven, nobody's enemy; they wander and never speak.
+    for (const w of shuffle(r, FAUNA[set] ?? []).slice(0, campsite ? 1 : int(r, 1, 2))) { const rm = pick(r, rooms.slice(1)); if (!rm) break; guards.push({ name: w, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: false, role: 'animal', sprite: w.toLowerCase().replace(/\s+/g, '_') }); }
     const nT = brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 0, 2);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });
     return {

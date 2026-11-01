@@ -28,7 +28,7 @@ test('finding 13: a campsite is a small map with its fire and tent, starting at 
     for (const seed of [1, 2, 3, 7, 11]) {
         const plan = wildsFromBrief(normalizeBrief({ name: "Amber's forest camp", kind: 'camp', size: 'big', summary: 'Amber and Judy set up a temporary camp: one small fire and one tent. A stream nearby.', start: 'by the fire', guards: 4 }), seed);
         assert.notEqual(plan.start, 'W1', 'starts at the campsite, not the trail in');
-        assert.equal(plan.guards.length, 0, 'a campsite has no guards, whatever the brief counted');
+        assert.equal(plan.guards.filter(g => g.hostile).length, 0, 'a campsite has no guards, whatever the brief counted');
         const place = generateWilds(normalizePlan(plan), seed);
         const props = place.floors[0].map.props.map(p => p.type);
         assert.ok(props.includes('campfire') && props.includes('tent'), `seed ${seed}: campfire and tent: ${props.join(',')}`);
@@ -110,4 +110,12 @@ test('a brown mare is brown, a dun gelding dun; a horse is a beast', () => {
     assert.equal(furFromWords('Snowfoot a white pony'), '#e8e2d6');
     assert.equal(lookForNpc('Brown Mare', 'a bay mare in the traces').fur, '#7a4a2a');
     assert.ok(isBeast({ name: 'Dun Gelding', description: 'a dun gelding' }));
+});
+
+test('the land has its animals: nobody\'s enemy, beasts by their words', async () => {
+    const { isBeast } = await import('../src/core/sprites.js');
+    const plan = wildsFromBrief(normalizeBrief({ name: 'Dark Wood', kind: 'forest', size: 'small', summary: 'Deep woods.', start: 'outside' }), 3);
+    const fauna = plan.guards.filter(g => g.role === 'animal');
+    assert.ok(fauna.length >= 1 && fauna.length <= 2, `one or two: ${fauna.length}`);
+    for (const a of fauna) { assert.equal(a.hostile, false); assert.ok(isBeast(a), `${a.name} is a beast`); }
 });

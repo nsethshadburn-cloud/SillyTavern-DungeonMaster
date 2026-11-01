@@ -3,6 +3,7 @@
 // 4) DM (Claude) only if needed  5) actors reply  6) bookkeeping.
 
 import { ST } from './st.js';
+import { ensureAnimalFigures } from './figures.js';
 import { settings, currentSpend, modelFor, mapsOn } from './settings.js';
 import { campaign, saveMeta, saveDoc } from './campaign.js';
 import { callLocal, callClaude, BudgetError } from './llm.js';
@@ -2142,6 +2143,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // The panel shows the clock, HP and hints as they are now.
     refreshMap();
     // Loud failure: what was dropped is shown to the player now and to the DM next turn.
+    // Animals the library can't draw (a parrot, a monkey) get a figure from Claude, in the background.
+    ensureAnimalFigures(c, [...(c.docs.npcs || []), ...Object.values(currentPlace(c)?.place.guards || {})]).catch(() => { });
     meta.turnProblems = [...problems, ...dmOnly];
     if (problems.length) {
         status.note(`Dropped: ${problems.join(' · ')}`);

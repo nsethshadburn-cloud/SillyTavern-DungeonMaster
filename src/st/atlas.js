@@ -1282,7 +1282,9 @@ export async function buildFromRequest(mr, { status = null } = {}) {
     const name = (sameKind ? top.name : '') || (kindFromWords(location) === kind ? location : '') || nameFromWords(mr.text) || location || 'The Wilds';
     const size = mr.size || (top?.size === 'big' ? 'big' : 'small');
     status?.note(`Building the map you asked for (${kind}${size === 'big' ? ', big' : ''})`);
-    return requestBuild({ name, size, kind, why: `the player asked for this map, in their own words: "${mr.text.slice(0, 200)}"`, start: 'where the party is right now', replace: true }, { status, confirm: false });
+    const built = await requestBuild({ name, size, kind, why: `the player asked for this map, in their own words: "${mr.text.slice(0, 200)}"`, start: 'where the party is right now', replace: true }, { status, confirm: false });
+    if (built) { const { ensureAnimalFigures } = await import('./figures.js'); ensureAnimalFigures(c, Object.values(built.guards || {})).catch(() => { }); }
+    return built;
 }
 
 function escape(s) {
@@ -2250,7 +2252,8 @@ function potterStep(place, floorId, p, lead, keep, taken) {
 /** Where the player's keeper stands as a walk begins (null when nobody holds them). */
 function custodyStart(c, place, player) {
     const rec = place.state.custody?.[player];
-    if (!rec) return null;
+    // On the ground, tied, held: they aren't going anywhere, so nothing they do is an escape (the keeper drags, orders or threatens; the DM's call).
+    if (!rec || lockedReason(c, player)) return null;
     const kp = place.state.positions[rec.by] ?? personByName(place, rec.by);
     if (!kp || kp.state === 'gone' || kp.state === 'dead') return null;
     const companion = c.meta.party.some(p => p.name === rec.by);
@@ -2386,6 +2389,7 @@ export async function custodyBolt(c, text) {
     const player = c.meta.persona.name;
     const rec = place.state.custody?.[player];
     if (!rec || !BOLT_WORDS.test(text)) return '';
+    if (lockedReason(c, player)) return '';
     const first = rec.by.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // "We run for the road" with the keeper is not running from them.
     if (new RegExp(`\\b(?:with|and|beside|alongside|behind|after)\\s+(?:${first}|${rec.by.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'i').test(text) || /\bwe\b[^.!?]{0,20}\b(run|bolt|dash|flee|sprint)/i.test(text)) return '';
