@@ -1407,7 +1407,8 @@ export function wildsFromBrief(briefIn, seed = 1) {
     for (let i = 1; i < rooms.length; i++) links.push({ a: pick(r, rooms.slice(Math.max(0, i - 2), i)).id, b: rooms[i].id, via: 'door' });
     if (rooms.length > 4) links.push({ a: rooms[1].id, b: rooms[rooms.length - 1].id, via: 'door' });
     const guards = [];
-    const nG = brief.guards ?? (campsite ? 0 : int(r, 0, brief.size === 'big' ? 5 : 3));
+    // A campsite is the party's own: nobody guards it (the brief's count is for a band's camp; people arrive through the story).
+    const nG = campsite ? 0 : brief.guards ?? int(r, 0, brief.size === 'big' ? 5 : 3);
     for (let i = 0; i < nG; i++) { const w = bandWord(brief.creatures) || pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
     const nT = brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 0, 2);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });

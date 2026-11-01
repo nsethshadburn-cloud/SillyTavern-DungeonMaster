@@ -1302,6 +1302,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // What the DM asked for that the code had to drop (a name nobody has, an id that isn't there): the
     // player sees it, and the DM is told next turn, instead of a claim the tracker doesn't show.
     const problems = [];
+    // Things the DM is told next turn without a warning to the player (the code already did the right thing).
+    const dmOnly = [];
     // A roll the DM asked the player to make for a companion ("Judy's DEX save"): the code rolls it for
     // the companion, in the open, like any npc roll. The player rolls only their own.
     if (t.player_roll && (t.player_roll.kind === 'save' || t.player_roll.kind === 'check')) {
@@ -1418,7 +1420,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             applyStateChanges(world, { conditions_add: { [player]: adds } }, meta.party.map(p => p.name), { turn: meta.turn });
             syncDownFromConditions(c);
             status.note(`${player}: ${adds.join(', ')} (from the story)`);
-            problems.push(`your story ${adds.includes('prone') ? 'put the player on the ground' : ''}${adds.includes('prone') && adds.length > 1 ? ' and ' : ''}${adds.filter(a => a !== 'prone').length ? `put ${adds.filter(a => a !== 'prone').join(' and ')} on the player` : ''} with no state_changes: the code added ${adds.map(a => `"${a}"`).join(', ')}. Send conditions_add yourself when your narration does it; remove them only when the story frees them (getting up off the ground is a roll when cuffed or held).`);
+            await postNote(`📜 ${player}: ${adds.join(', ')} (from the story).`);
+            dmOnly.push(`your story ${adds.includes('prone') ? 'put the player on the ground' : ''}${adds.includes('prone') && adds.length > 1 ? ' and ' : ''}${adds.filter(a => a !== 'prone').length ? `put ${adds.filter(a => a !== 'prone').join(' and ')} on the player` : ''} with no state_changes: the code added ${adds.map(a => `"${a}"`).join(', ')}. Send conditions_add yourself when your narration does it; remove them only when the story frees them (getting up off the ground is a roll when cuffed or held).`);
         }
     }
     // A companion who cuffs or ties the player in the story has them in custody: the map keeps them close (the DM can say otherwise with place_changes.custody).
@@ -2115,7 +2118,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // The panel shows the clock, HP and hints as they are now.
     refreshMap();
     // Loud failure: what was dropped is shown to the player now and to the DM next turn.
-    meta.turnProblems = problems;
+    meta.turnProblems = [...problems, ...dmOnly];
     if (problems.length) {
         status.note(`Dropped: ${problems.join(' · ')}`);
         await postNote(`⚠️ The DM asked for something the code couldn't do: ${problems.join(' · ')}`);
@@ -2144,14 +2147,14 @@ export async function runOpening(openingIn) {
         await applyDmTurn(c, opening, status, new AbortController().signal, { reasons: ['opening'] });
         // The adventure starts on a map: when the opening didn't build one, the code does, from where the story begins.
         if (mapsOn() && !currentPlace(c) && !c.docs.world.combat) {
-            const loc = String(c.docs.world.location || opening?.scene?.location || '').trim() || String(meta.standing || '').split(/[,.]/)[0].trim();
+            const loc = String(c.docs.world.location || opening?.scene?.location || '').trim() || String(c.meta.standing || '').split(/[,.]/)[0].trim();
             if (loc) {
                 try {
                     const kind = kindFromWords(loc) || '';
-                    const outdoors = isWildKind(kind, loc) || /\b(road|trail|path|woods?|forest|trees|hills?|moor|downs|field|meadow|clearing|river|stream|lake|shore|beach|bridge|crossroads|camp|village|town|hamlet|ruins?|cliff|valley|pass|plain|marsh|swamp)\b/i.test(`${loc} ${meta.standing || ''}`);
+                    const outdoors = isWildKind(kind, loc) || /\b(road|trail|path|woods?|forest|trees|hills?|moor|downs|field|meadow|clearing|river|stream|lake|shore|beach|bridge|crossroads|camp|village|town|hamlet|ruins?|cliff|valley|pass|plain|marsh|swamp)\b/i.test(`${loc} ${c.meta.standing || ''}`);
                     status.note(`Building the first map: ${loc}`);
-                    if (outdoors) await buildFromRequest({ text: `${loc}. ${meta.standing || ''}`.trim(), kind, size: 'small' }, { status });
-                    else await requestBuild({ name: loc, kind: kind || 'house', size: 'small', why: meta.standing || String(opening?.narration || '').slice(0, 200), start: 'where the party is right now' }, { status, confirm: false });
+                    if (outdoors) await buildFromRequest({ text: `${loc}. ${c.meta.standing || ''}`.trim(), kind, size: 'small' }, { status });
+                    else await requestBuild({ name: loc, kind: kind || 'house', size: 'small', why: c.meta.standing || String(opening?.narration || '').slice(0, 200), start: 'where the party is right now' }, { status, confirm: false });
                 } catch (error) { status.note(`First map not built: ${error.message}`); }
             }
         }

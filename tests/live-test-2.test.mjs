@@ -18,13 +18,17 @@ test("finding 1: a camp the party set up is theirs whatever it's called", () => 
     assert.ok(!isCamp('camp', 'Hollow Oak Camp Amber and Judy have set up a temporary camp for the night'));
     assert.ok(!isCamp('camp', 'Hollow Oak Camp one small fire and one tent in the woods'));
     assert.ok(isCamp('camp', 'Greywether Hollow Camp a gang of raiders keeps captives in cages'));
+    // the player's own camp with the player under arrest at it is still their camp; a band's camp with a prisoner is a fort
+    assert.ok(!isCamp('camp', "Amber's Forest Camp the player asked for this map: Judy has arrested Amber, her prisoner, cuffed at his own camp; they sleep here and walk to the prison at dawn"));
+    assert.ok(isCamp('camp', "Amber's Forest Camp now held by a band of raiders with Amber their prisoner"));
     for (const s of ['set up a temporary camp', 'they made camp under the oaks', 'one small fire', 'a two-person camp']) assert.ok(OWN_CAMP.test(s), s);
 });
 
 test('finding 13: a campsite is a small map with its fire and tent, starting at the fire', () => {
     for (const seed of [1, 2, 3, 7, 11]) {
-        const plan = wildsFromBrief(normalizeBrief({ name: "Amber's forest camp", kind: 'camp', size: 'big', summary: 'Amber and Judy set up a temporary camp: one small fire and one tent. A stream nearby.', start: 'by the fire' }), seed);
+        const plan = wildsFromBrief(normalizeBrief({ name: "Amber's forest camp", kind: 'camp', size: 'big', summary: 'Amber and Judy set up a temporary camp: one small fire and one tent. A stream nearby.', start: 'by the fire', guards: 4 }), seed);
         assert.notEqual(plan.start, 'W1', 'starts at the campsite, not the trail in');
+        assert.equal(plan.guards.length, 0, 'a campsite has no guards, whatever the brief counted');
         const place = generateWilds(normalizePlan(plan), seed);
         const props = place.floors[0].map.props.map(p => p.type);
         assert.ok(props.includes('campfire') && props.includes('tent'), `seed ${seed}: campfire and tent: ${props.join(',')}`);

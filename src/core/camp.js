@@ -48,10 +48,14 @@ const PEACEFUL_WORDS = /caravan|pilgrim|travell?er|merchant|refugee|hunters?'|hu
  * outpost always; a fort, a stockade or a stronghold when it's held by bandits, raiders or the
  * like (a lord's castle or keep stays a building, with rooms inside).
  */
+/** A band that holds a camp: these words make a camp a fort; "prisoner" or "cuffed" alone don't (the party's own camp with the player under arrest is still their camp). */
+export const BAND_WORDS_RE = /bandit|raider|marauder|brigand|cannibal|reaver|outlaw|warband|horde|cutthroat|pirate|slaver|goblin|orc|raiding|war ?camp|hideout|lair|mercenar|cult|tribe|clan|gang|stockade|camp guards?|sentries|lookouts?|palisade/i;
+
 export function isCamp(kind = '', name = '') {
     const k = String(kind || '').toLowerCase(), n = String(name || '').toLowerCase();
-    // Somebody's own camp, or a peaceful one, is land with a tent and a fire on it, not a fort.
-    if (!HOSTILE_WORDS.test(`${k} ${n}`) && (OWN_CAMP.test(`${k} ${n}`) || PEACEFUL_WORDS.test(`${k} ${n}`))) return false;
+    // Somebody's own camp is land with a tent and a fire on it, not a fort, unless a band holds it; so is a peaceful one.
+    if (OWN_CAMP.test(`${k} ${n}`) && !BAND_WORDS_RE.test(`${k} ${n}`)) return false;
+    if (!HOSTILE_WORDS.test(`${k} ${n}`) && PEACEFUL_WORDS.test(`${k} ${n}`)) return false;
     if (/\b(camp|encampment|war ?camp|warcamp|hideout|palisade|outpost)\b/.test(k)) return true;
     if (/\b(fort|fortress|stockade|stronghold)\b/.test(k)) return HOSTILE_WORDS.test(`${k} ${n}`);
     if (!k || /^(place|site|location|area|wilds?)$/.test(k)) return /\b(camp|encampment|hideout|outpost)\b/.test(n) || (/\b(fort|stockade|stronghold)\b/.test(n) && HOSTILE_WORDS.test(n));
