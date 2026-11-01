@@ -324,6 +324,14 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.55 (the last gaps; four bugs)
+- **Items from the map** (`takeItem`, `dropItem`, `giveItem` in `st/atlas.js`): a place item that's there and not hidden is drawn as a pouch on its square (`drawTokens`) and is a tap target (`thingAt` kind `item`; also Take on a prop it lies on): walk up, it's taken (the place marks it, the pack gets it through `applyStateChanges`), a 🎒 card, the map log, witnesses. Drop puts a new place item at the player's square; Give moves it to a companion beside them and she may say a word. What's inside a container still comes through the DM's Search answer (`items found/taken`).
+- **Doors by hand** (`setDoorFromMap`): an unlocked door (not an arch, a trapdoor or a building's door) is a tap target: Open it / Close it, on the record.
+- **People from the map** (`showPerson`): a companion gets Talk to (the words go in the box), Wait here, Come along, Stick with me (sent as the player's own line so she answers and the companion-action reader sets her stance from her answer, as designed); someone of the place gets Talk to and Attack (a map action that tells the DM to start_combat).
+- **DM-led escorts**: when the story has the keeper lead, march, escort or drag the prisoner, the custody record gets a three-turn escort window: no challenge for walking with them.
+- **The clock**: an out-of-character message no longer costs ten minutes; a turn the map forced mid-walk costs one.
+- Bugs: a companion's chosen attack is added by the code only when the DM didn't act for her at all that round (no brief, no narration naming her); the player's Stealth roll quiets only noises at their own square (`makeNoise` with `stealth.at`); a companion who spoke in the last three messages doesn't get a second line about what she saw; a potion a companion chooses to use is drunk by the code (2d4+2, greater 4d4+4, superior 8d4+8), the HP applied, the item removed, a 🧪 card and the record.
+
 ### v0.54 (the map and the chat in step)
 The owner's standing complaint: things done on the map (running, picking locks, shoving, climbing in) didn't carry into the chat, so the player got away with them. An audit of every map action:
 - Already in the chat: forcing a door, disarming or tripping a trap, prying or breaking a window, searching, smashing, a heavy shove, hiding, sleeping (all sent as the player's own message); climbing out of a window (a DM call); a lock picked in front of someone of the place (a DM call) or botched loudly (a DM call).

@@ -12,7 +12,7 @@ import { mapRequest } from '../core/triage.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, buildFromRequest, enterVehicle, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey, noteMapAction } from '../st/atlas.js';
+import { currentPlace, buildFromRequest, enterVehicle, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey, noteMapAction, itemsAt, takeItem, dropItem, giveItem, setDoorFromMap } from '../st/atlas.js';
 import { moveBudget, conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions, lockedLine } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
@@ -621,6 +621,17 @@ function drawTokens(ctx, c, b, tile, now, restore) {
         ctx.strokeRect(MARGIN + (keeperAt.x - custody.radius) * tile + 1, (map.h - 1 - keeperAt.y - custody.radius) * tile + 1, (2 * r) * tile - 2, (2 * r) * tile - 2);
         ctx.restore();
     }
+    // Things lying in view (a key on the floor, a dropped sack): a small pouch on the square, once the square is explored.
+    if (b.place && !restore) {
+        for (const it of Object.values(b.place.items || {})) {
+            if (it.floor !== b.floor.id || it.state !== 'here' || it.hidden || (b.fog && !isExplored(b.place, b.floor.id, it.x, it.y))) continue;
+            const px = MARGIN + it.x * tile, py = (map.h - 1 - it.y) * tile;
+            ctx.save();
+            ctx.fillStyle = 'rgba(240, 200, 80, 0.95)'; ctx.strokeStyle = 'rgba(60, 40, 10, 0.9)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(px + tile * 0.74, py + tile * 0.74, Math.max(2.5, tile * 0.13), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            ctx.restore();
+        }
+    }
     // A horse is drawn first and its rider on top of it, a little higher.
     // A rider sits up on the horse only while the horse is there under them.
     const mountsAll = b.place?.state?.mounts || {};
@@ -901,7 +912,38 @@ function showPerson(ev, c, b, who) {
         place?.guards[who]?.description || '',
     ].filter(Boolean);
     const horse = place?.state.mounts?.[who];
-    showMenu(ev, who, lines.join(' · ') || (c.meta.party.some(p => p.name === who) || who === c.meta.persona.name ? 'fine' : ''), horse ? [[horse, 'fa-horse', () => { closeMenu(); showPerson(ev, c, b, horse); }]] : []);
+    const player = c.meta.persona.name;
+    const isPlayer = who === player;
+    const companion = c.meta.party.some(p => p.name === who);
+    const npc = place?.guards[who];
+    const first = who.split(' ')[0];
+    const redraw = () => renderMap();
+    const spotOf = n => { const pt = parseCoord(b.positions[n] || '', b.map); return pt ? { x: pt.x, y: pt.y } : null; };
+    const near = async () => { const s = spotOf(who); return s ? approachSpot(s, redraw) : false; };
+    const actions = horse ? [[horse, 'fa-horse', () => { closeMenu(); showPerson(ev, c, b, horse); }]] : [];
+    if (isPlayer && place) {
+        // What they carry: put it down here, or hand it to a companion beside them.
+        const mine = c.docs.world.inventory?.[who] || [];
+        if (mine.length) {
+            actions.push(['Drop something', 'fa-arrow-down', () => showMenu(ev, 'Put down what?', '', mine.map(it => [it, 'fa-box-open', async () => { closeMenu(); await dropItem(it); renderMap(); }]))]);
+            const me = spotOf(who);
+            for (const n of c.meta.party.map(p => p.name)) {
+                const s = spotOf(n);
+                if (!me || !s || Math.max(Math.abs(s.x - me.x), Math.abs(s.y - me.y)) > 1) continue;
+                actions.push([`Give to ${n.split(' ')[0]}`, 'fa-hand-holding', () => showMenu(ev, `Give ${n.split(' ')[0]} what?`, '', mine.map(it => [it, 'fa-box-open', async () => { closeMenu(); await giveItem(it, n); renderMap(); }]))]);
+            }
+        }
+    } else if (companion) {
+        // Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
+        actions.push(['Talk to them', 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
+        actions.push(['Wait here', 'fa-hand', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.* "Wait here, ${first}. I'll be back."`); }]);
+        actions.push(['Come along', 'fa-person-walking', () => { closeMenu(); sendAsPlayer(`*${player} nods to ${who}.* "Come on, ${first}. With me."`); }]);
+        actions.push(['Stick with me', 'fa-people-arrows', () => { closeMenu(); sendAsPlayer(`*${player} looks at ${who}.* "${first}, stay close. Right by me."`); }]);
+    } else if (npc && npc.state !== 'dead' && npc.state !== 'gone') {
+        actions.push(['Talk to them', 'fa-comment', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); }]);
+        actions.push(['Attack', 'fa-khanda', async () => { if (!(await near())) return; closeMenu(); setMapAction(`${player} attacks ${who} (${npc.description || 'on the map'}) from the map, right beside them. That starts a fight: start_combat with ${who} in it and ask for initiative; their attack comes in order.`); sendAsPlayer(`*${player} attacks ${who}!*`); }]);
+    }
+    showMenu(ev, who, lines.join(' · ') || (companion || isPlayer ? 'fine' : ''), actions);
 }
 
 // ---------- the tap menu for things: furniture and windows ----------
@@ -910,10 +952,13 @@ function showPerson(ev, c, b, who) {
 function thingAt(b, sq) {
     const door = doorAt(b.place, b.floor.id, sq.x, sq.y);
     if (door && door.state === 'locked') return { kind: 'door', door, name: door.kind === 'cell' ? 'locked cell door' : 'locked door', spot: { x: door.x, y: door.y } };
+    if (door && (door.state === 'open' || door.state === 'closed') && door.kind !== 'arch' && door.kind !== 'trapdoor' && !door.enter && !door.exit) return { kind: 'door', door, name: `${door.state} door`, spot: { x: door.x, y: door.y } };
     const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
     if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
     const prop = propAt(b.map, sq.x, sq.y);
     if (prop?.type === 'trap' && !prop.hidden && prop.trap && b.place.traps?.[prop.trap]) { const t = b.place.traps[prop.trap]; return { kind: 'trap', prop, trap: t, name: `${t.kind} (${t.state})`, spot: { x: prop.x, y: prop.y } }; }
+    const lying = b.place ? itemsAt(b.place, b.floor.id, sq.x, sq.y) : [];
+    if (lying.length && (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type] && !SEATS[prop.type]))) return { kind: 'item', items: lying, name: lying.length > 1 ? `${lying[0].name} and more` : lying[0].name, spot: { x: sq.x, y: sq.y } };
     if (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type] && !SEATS[prop.type])) return null;
     return { kind: 'prop', prop, name: prop.label || PROPS[prop.type]?.name || prop.type, spot: { x: prop.x, y: prop.y, w: prop.w, h: prop.h } };
 }
@@ -927,6 +972,15 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
     const where = toCoord(thing.spot.x, thing.spot.y);
     const near = () => approachSpot(thing.spot, redraw);
     let actions;
+    if (thing.kind === 'door' && thing.door.state !== 'locked') {
+        const open = thing.door.state === 'open';
+        showMenu(ev, thing.name, '', [[open ? 'Close it' : 'Open it', open ? 'fa-door-closed' : 'fa-door-open', async () => { closeMenu(); await setDoorFromMap(thing.door.id, open ? 'closed' : 'open', redraw); done(); }]]);
+        return;
+    }
+    if (thing.kind === 'item') {
+        showMenu(ev, thing.name, thing.items.length > 1 ? `${thing.items.length} things here` : 'lying here', thing.items.map(it => [`Take the ${it.name}`, 'fa-hand', async () => { closeMenu(); await takeItem(it.id, redraw); done(); }]));
+        return;
+    }
     if (thing.kind === 'door') {
         const info = lockedDoorInfo(c, thing.door);
         actions = [
@@ -975,7 +1029,10 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
             else noteMapAction(c, `${player} ${verb === 'sit' ? 'sat down on' : 'lay down on'} the ${r.what}`);
             done();
         }];
+        // Something lying on it (a key on the table): take it from here.
+        const onIt = b.place ? Object.values(b.place.items || {}).filter(it => it.floor === b.floor.id && it.state === 'here' && !it.hidden && it.x >= p.x && it.x < p.x + (p.w || 1) && it.y >= p.y && it.y < p.y + (p.h || 1)) : [];
         actions = [
+            ...onIt.map(it => [`Take the ${it.name}`, 'fa-hand', async () => { closeMenu(); await takeItem(it.id, redraw); done(); }]),
             ...(PROPS[p.type]?.vehicle ? [['Climb in', 'fa-door-open', async () => { if (!(await near())) return; closeMenu(); await enterVehicle(p.id); }]] : []),
             ...(seat === 'sit' ? [use('sit', 'fa-chair', 'Sit down')] : []),
             ...(seat === 'lie' ? [use('lie', 'fa-bed', 'Lie down'), use('sleep', 'fa-moon', 'Sleep'), ...(p.type === 'bed' ? [use('sit', 'fa-chair', 'Sit on it')] : [])] : []),

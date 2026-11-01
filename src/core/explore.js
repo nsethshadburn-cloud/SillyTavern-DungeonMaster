@@ -1790,6 +1790,8 @@ export function hostileNotice(place, floorId, partyNames, { stealth = null, play
 export function makeNoise(place, floorId, x, y, { what = 'a noise', loud = 1, stealth = null, turn = null } = {}) {
     const reach = EARSHOT * Math.max(1, Math.min(3, loud));
     const heard = [];
+    // The player's Stealth covers what they did where they stand, not a door breaking across the map.
+    if (stealth?.at && Math.max(Math.abs(stealth.at.x - x), Math.abs(stealth.at.y - y)) > 1) stealth = null;
     if (stealth && stealth.natural === 20) return heard;
     for (const g of Object.values(place.guards)) {
         if (g.floor !== floorId || g.state === 'gone' || g.state === 'dead' || g.down || isOut(g)) continue;

@@ -16,7 +16,7 @@ import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generate
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson, syncMounts } from '../core/explore.js';
 import { isBeast } from '../core/sprites.js';
 import { applySceneCard } from '../core/state.js';
-import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
+import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate, applyStateChanges } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName, toCoord } from '../core/grid.js';
 import { generateWagon } from '../core/wagon.js';
@@ -2428,4 +2428,105 @@ async function witnessed(c, what) {
     const seenBy = watchersSeeing(c, cur.place, lead.floor, c.meta.persona.name);
     if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched ${c.meta.persona.name} ${what}. Decide what they make of it and do (object, help, shout, look the other way); brief them if they speak.`);
     else { const { companionSaw } = await import('./orchestrator.js'); await companionSaw(c, what); }
+}
+
+// ---------- things from the map: take, drop, give; doors by hand ----------
+
+function nextItemId(place) {
+    let n = 0;
+    for (const id of Object.keys(place.items || {})) { const m = /^I(\d+)$/.exec(id); if (m) n = Math.max(n, Number(m[1])); }
+    return `I${n + 1}`;
+}
+
+/** Things lying in view on a square: there, not hidden, not taken. */
+export function itemsAt(place, floorId, x, y) {
+    return Object.values(place.items || {}).filter(it => it.floor === floorId && it.x === x && it.y === y && it.state === 'here' && !it.hidden);
+}
+
+/** Pick a thing up off the map: walk up to it, it's in the player's pack, the place marks it taken; a card, the record, and anyone watching. */
+export async function takeItem(itemId, redraw = () => { }) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    const item = cur?.place.items?.[itemId];
+    if (!c || !item || item.state !== 'here' || item.hidden) return false;
+    const { isRunning } = await import('./orchestrator.js');
+    if (isRunning()) { toastr.info('The DM is busy. Try again when the turn is done.', 'Map', { timeOut: 2500 }); return false; }
+    if (stuck(c)) return false;
+    if (!(await approachSpot({ x: item.x, y: item.y }, redraw))) return false;
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    item.state = 'taken';
+    item.takenBy = player;
+    applyStateChanges(c.docs.world, { items_add: { [player]: [item.name] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
+    saveDoc('world');
+    savePlace(key, c);
+    look(c, key, place);
+    await postNote(`🎒 ${player} picks up the ${item.name}.`);
+    noteMapAction(c, `${player} picked up the ${item.name} (${item.id}) at ${toCoord(item.x, item.y)}: it's in their pack now`);
+    await witnessed(c, `picked up the ${item.name}`);
+    return true;
+}
+
+/** Put a thing from the player's pack down where they stand: a place item again, on the map. */
+export async function dropItem(name) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!c || !cur) return false;
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const lead = place.state.positions[player];
+    const mine = c.docs.world.inventory?.[player] || [];
+    const real = mine.find(x => nameKey(x) === nameKey(name));
+    if (!lead || !real) return false;
+    const id = nextItemId(place);
+    place.items[id] = { id, name: real, room: roomAt(place, lead.floor, lead.x, lead.y)?.id ?? null, floor: lead.floor, x: lead.x, y: lead.y, hidden: false, note: `dropped by ${player}`, state: 'here' };
+    applyStateChanges(c.docs.world, { items_remove: { [player]: [real] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
+    saveDoc('world');
+    savePlace(key, c);
+    await postNote(`🎒 ${player} puts down the ${real}.`);
+    noteMapAction(c, `${player} dropped the ${real} (${id}) at ${toCoord(lead.x, lead.y)}: it lies there on the map now`);
+    return true;
+}
+
+/** Hand a thing to a companion standing beside the player. */
+export async function giveItem(name, to) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    if (!c || !cur) return false;
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const mine = c.docs.world.inventory?.[player] || [];
+    const real = mine.find(x => nameKey(x) === nameKey(name));
+    const who = c.meta.party.find(p => p.name === to)?.name;
+    const a = place.state.positions[player], b = who && place.state.positions[who];
+    if (!real || !who || !a || !b || a.floor !== b.floor || Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) > 1) return false;
+    const names = c.meta.party.map(p => p.name);
+    applyStateChanges(c.docs.world, { items_remove: { [player]: [real] } }, names, { turn: c.meta.turn });
+    applyStateChanges(c.docs.world, { items_add: { [who]: [real] } }, names, { turn: c.meta.turn });
+    saveDoc('world');
+    savePlace(key, c);
+    await postNote(`🎒 ${player} hands the ${real} to ${who}.`);
+    noteMapAction(c, `${player} handed the ${real} to ${who} (${who} carries it now)`);
+    const { companionSaw } = await import('./orchestrator.js');
+    await companionSaw(c, `handed you the ${real}`);
+    return true;
+}
+
+/** Open or close an unlocked door by hand from the map: walk up to it, it's done, on the record. */
+export async function setDoorFromMap(doorId, state, redraw = () => { }) {
+    const c = campaign();
+    const cur = currentPlace(c);
+    const door = cur?.place.doors[doorId];
+    if (!c || !door || !['open', 'closed'].includes(state) || !['open', 'closed'].includes(door.state) || door.state === state) return false;
+    const { isRunning } = await import('./orchestrator.js');
+    if (isRunning()) { toastr.info('The DM is busy. Try again when the turn is done.', 'Map', { timeOut: 2500 }); return false; }
+    if (stuck(c)) return false;
+    if (!(await approachSpot({ x: door.x, y: door.y }, redraw))) return false;
+    const { key, place } = cur;
+    setDoorState(place, door, state);
+    sfx('door');
+    savePlace(key, c);
+    look(c, key, place);
+    noteMapAction(c, `${c.meta.persona.name} ${state === 'open' ? 'opened' : 'closed'} ${door.id} (${doorRooms(place, door)})`);
+    return true;
 }

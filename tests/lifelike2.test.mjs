@@ -107,3 +107,11 @@ test("a companion's turn: the local model is fed real options and its answer is 
     assert.equal(parseCompanionCombat('{"action":"use"}', { foes, allies, weapons, items: [] }).action, 'hold');
     assert.equal(parseCompanionCombat('{"action":"attack"}', { foes: [], allies, weapons, items: [] }).action, 'hold');
 });
+
+test('a Stealth roll quiets only what the player did where they stand, not a door breaking across the map', () => {
+    const place = make();
+    applyPlaceChanges(place, { guards: { Hob: { at: 'k3', description: 'a woodcutter' } } });
+    const stealth = { total: 18, natural: 15, who: 'Amber', at: { x: 3, y: 3 } };
+    assert.deepEqual(makeNoise(place, 'F0', 3, 3, { what: 'a lock forced', stealth }), [], 'quiet at their own square');
+    assert.equal(makeNoise(place, 'F0', 9, 3, { what: 'a door breaking', stealth }).length, 1, 'heard six squares away from them');
+});

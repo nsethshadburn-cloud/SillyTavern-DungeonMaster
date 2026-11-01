@@ -21,7 +21,7 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -226,9 +226,9 @@ async function turnBody(c, opts, status, signal) {
     } else if (opts.force !== 'manual' && opts.force !== 'opening') {
         meta.turn++;
         pacing.localTurnsSinceDM++;
-        // The clock ticks by turn: a few minutes of story each; a minute a round in a fight.
-        await tickClock(c, pacing.inCombat ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
         const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat });
+        // The clock ticks by turn: a few minutes of story each; a minute a round in a fight, and a minute for a turn the map forced mid-walk; nothing for a question out of character.
+        if (!rule.ooc) await tickClock(c, pacing.inCombat || opts.force === 'explore' ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
         triage = { ...triage, ...rule };
         let engaged = null;
         if (rule.needsHelper && s.useHelper) {
@@ -1663,20 +1663,25 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 for (const [n, v] of Object.entries(t.place_changes.guards || {})) if (!personByName(place, n) && personByName(host, n)) { (out.guards ??= {})[n] = v; delete t.place_changes.guards[n]; }
                 for (const [n, v] of Object.entries(t.place_changes.ride || {})) if (!personByName(place, n) && !place.state.positions[n] && (personByName(host, n) || host.state.positions[n])) { (out.ride ??= {})[n] = v; delete t.place_changes.ride[n]; }
                 if (Object.keys(out).length) {
-                    const hl = applyPlaceChanges(host, out, { floor: host.state.floor, turn: meta.turn, stealth: stealthOf(meta) });
+                    const hl = applyPlaceChanges(host, out, { floor: host.state.floor, turn: meta.turn, stealth: withAt(stealthOf(meta), host) });
                     if (hl.length) status.note(`Outside: ${hl.join(', ')}`);
                     problems.push(...hl.filter(l => l.startsWith('⚠️')).map(l => `place_changes (outside) ${l.slice(2).trim()}`));
                     syncMounts(host);
                     savePlace(place.parent.key, c);
                 }
             }
-            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: stealthOf(meta) });
+            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: withAt(stealthOf(meta), place) });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
             problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
             syncMounts(place);
         }
         // Riders the story got down from their horses without the DM sending ride "".
         for (const who of dismountsInText(place, `${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`)) status.note(`${who} dismounts (from the story)`);
+        // The keeper leading the way in the story (marching, escorting, dragging): a few turns of escort, no challenge for walking with them.
+        for (const [p, rec] of Object.entries(place.state.custody || {})) {
+            const first = rec.by.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            if (new RegExp(`\\b${first}\\b[^.!?]{0,60}\\b(?:leads?|leading|led|march(?:es|ing|ed)?|escorts?|escorting|walks? (?:him|her|them)|takes? (?:him|her|them)|drags?|hauls?|steers?|guides?|brings? (?:him|her|them))\\b`, 'i').test(`${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`)) { rec.escortUntil = meta.turn + 3; status.note(`${rec.by} leads ${p}: an escort for a few turns`); }
+        }
         // The player gave in: a guard takes them, no guard attacks them for it.
         if (!world.combat && playerGivesIn(lastPlayerMessage())) {
             for (const [n, raw] of Object.entries(t.place_changes?.guards || {})) {
@@ -1874,10 +1879,24 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const choices = world.combat && meta.combatChoices?.turn === meta.turn ? meta.combatChoices.choices : null;
     if (choices) {
         for (const [n, ch] of Object.entries(choices)) {
+            if (ch.action === 'use' && ch.item && /potion|elixir|philt|draught|salve|tonic/i.test(ch.item) && !(world.party[n]?.hp <= 0) && !meta.combatChoices.used?.[n]) {
+                const dice = /superior/i.test(ch.item) ? '8d4+8' : /greater/i.test(ch.item) ? '4d4+4' : '2d4+2';
+                const r = roll(dice);
+                if (r) {
+                    const line = changeHp(world, n, r.total, [meta.persona.name, ...meta.party.map(p => p.name)]);
+                    applyStateChanges(world, { items_remove: { [n]: [ch.item] } }, meta.party.map(p => p.name), { turn: meta.turn });
+                    (meta.combatChoices.used ??= {})[n] = true;
+                    await postDiceCard(`🧪 **${n}** drinks the ${ch.item}: **+${r.total}** HP${line ? ` (${line})` : ''}.`, { state: true });
+                    noteMapAction(c, `${n} drank the ${ch.item} (+${r.total} HP, applied by the code; the potion is gone)`);
+                }
+                continue;
+            }
             if (ch.action !== 'attack' || !ch.target || world.combat.enemies[ch.target]?.hp <= 0 || world.party[n]?.hp <= 0) continue;
             const mine = t.npc_rolls.filter(r => r.kind === 'attack' && matchName(r.who, [n]));
             for (const r of mine) { if (r.target && !matchName(r.target, [ch.target])) status.note(`${n}'s attack goes on ${ch.target} (their choice), not ${r.target}`); r.target = ch.target; if (ch.damage) r.damage = ch.damage; }
-            if (!mine.length) { t.npc_rolls.push({ who: n, what: `attacks ${ch.target}${ch.weapon ? ` with ${ch.weapon}` : ''}`, notation: `1d20${ch.toHit >= 0 ? '+' : ''}${ch.toHit}`, dc: null, kind: 'attack', target: ch.target, damage: ch.damage || '', half: false, on_success: '', on_fail: '', spot: null }); status.note(`${n}'s attack on ${ch.target} (their choice) added: the DM left it out`); }
+            // The DM acted for her some other way this round (a brief, a line of narration): no second action from the code.
+            const actedFor = t.directions.some(d => matchName(d.speaker, [n])) || new RegExp(`\\b${n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(t.narration || '');
+            if (!mine.length && !actedFor) { t.npc_rolls.push({ who: n, what: `attacks ${ch.target}${ch.weapon ? ` with ${ch.weapon}` : ''}`, notation: `1d20${ch.toHit >= 0 ? '+' : ''}${ch.toHit}`, dc: null, kind: 'attack', target: ch.target, damage: ch.damage || '', half: false, on_success: '', on_fail: '', spot: null }); status.note(`${n}'s attack on ${ch.target} (their choice) added: the DM left it out`); }
         }
     }
     for (const r of t.npc_rolls) {
@@ -2208,8 +2227,9 @@ export async function companionSaw(c, what) {
         if (!p || p.floor !== lead.floor || isAway(c.docs.world, n) || lockedReason(c, n) || place.state.pose?.[n]?.pose === 'sleep') return false;
         return computeVisible(place, p.floor, [{ x: p.x, y: p.y }], { radius: 8 })[lead.y * map.w + lead.x];
     });
-    if (!watchers.length) return;
-    const name = watchers[Math.floor(random01() * watchers.length)];
+    const quiet = watchers.filter(n => !ST.chat.slice(-3).some(m => m && !m.is_user && m.name === n));
+    if (!quiet.length) return;
+    const name = quiet[Math.floor(random01() * quiet.length)];
     const member = meta.party.find(p => p.name === name);
     meta.sawTurn = meta.turn;
     saveMeta();
@@ -2236,4 +2256,11 @@ export async function companionSaw(c, what) {
         setRunning(false);
         runQueuedTurn();
     }
+}
+
+/** The player's Stealth roll with where they stand, so it covers only what they did there. */
+function withAt(stealth, place) {
+    if (!stealth) return null;
+    const at = place?.state?.positions?.[stealth.who];
+    return at ? { ...stealth, at: { x: at.x, y: at.y } } : stealth;
 }
