@@ -18,9 +18,10 @@ import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseC
 import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts, dismountsInText, propById, freeNear } from '../core/explore.js';
 import { isBeast } from '../core/sprites.js';
 import { isWildKind } from '../core/architect.js';
+import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -1145,6 +1146,10 @@ async function resolvePlayerRoll(c, parsed, status) {
         const settled = await settleGrab(c, pr, judged.success === true);
         if (settled) saveHurt += ` ${settled}`;
     }
+    if (pr.custody) {
+        const settled = await settleCustody(c, pr, judged.success === true);
+        if (settled) saveHurt += ` ${settled}`;
+    }
     // Caught in a trap: a save or a check that works gets you loose (whichever the DM asked for).
     if ((pr.kind === 'save' || pr.kind === 'check') && judged.success === true && freeFromTrap(c, meta.persona.name)) {
         await postNote(`🪤 ${meta.persona.name} gets loose!`);
@@ -1396,6 +1401,17 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     fallenInFight(c);
     syncDownFromConditions(c);
+    // A companion who cuffs or ties the player in the story has them in custody: the map keeps them close (the DM can say otherwise with place_changes.custody).
+    {
+        const hereC = currentPlace(c);
+        const player = meta.persona.name;
+        if (hereC && !world.combat && !t.place_changes?.custody && !hereC.place.state.custody?.[player] && restraintOf(conditionsOf(world, player)).bound) {
+            const text = `${t.narration || ''} ${(t.directions || []).map(d => d.brief || '').join(' ')} ${t.scene_card ? JSON.stringify(t.scene_card) : ''}`;
+            const lead = hereC.place.state.positions[player];
+            const keeper = meta.party.map(p => p.name).find(n => { const p = hereC.place.state.positions[n]; const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n) && new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(cuff|handcuff|manacle|shackl|ties|tied|tying|bind|binds|bound|rope|arrest|restrain|prisoner|custody)`, 'i').test(text); });
+            if (keeper) { hereC.place.state.custody ??= {}; hereC.place.state.custody[player] = { by: keeper, radius: 2, attempts: 0 }; status.note(`${player} is ${keeper}'s prisoner (kept within 2 squares)`); savePlace(hereC.key, c); }
+        }
+    }
     let initiativeCard = '';
     let mapChanged = false;
     // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.

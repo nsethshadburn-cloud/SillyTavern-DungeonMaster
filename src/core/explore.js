@@ -459,13 +459,13 @@ export function adoptTrapProps(place) {
  * to them if there's room, else within two or three), not the leader's footprints. Returns up to
  * `steps` squares, or [] when they're already close or can't get closer.
  */
-export function followSteps(place, floorId, from, leader, { taken = new Set(), steps = 1, avoid = [], keys = false } = {}) {
+export function followSteps(place, floorId, from, leader, { taken = new Set(), steps = 1, avoid = [], keys = false, keep = 1 } = {}) {
     const dist = (x, y) => Math.max(Math.abs(x - leader.x), Math.abs(y - leader.y));
     const blocked = new Set([...taken, `${leader.x},${leader.y}`]);
     const careful = new Set([...blocked, ...avoid]);
-    // Room next to the player first (then within two, three when it's crowded); at each distance, a
-    // way around their known traps if there is one.
-    for (const near of [1, 2, 3]) {
+    // Within `keep` of the player first (then one and two further when it's crowded); at each distance,
+    // a way around their known traps if there is one.
+    for (const near of [keep, keep + 1, keep + 2]) {
         if (dist(from.x, from.y) <= near) return [];
         for (const set of avoid.length ? [careful, blocked] : [blocked]) {
             const isGoal = (x, y) => dist(x, y) <= near && !set.has(`${x},${y}`) && !stairsAt(place, floorId, x, y);
@@ -699,6 +699,37 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     if (Array.isArray(c.reveal) && c.reveal.length) { revealRooms(place, c.reveal.map(String)); log.push(`revealed ${c.reveal.join(', ')}`); }
     ensureIds(place);
     // Things on the map: smashed, removed, moved.
+    // Custody: someone keeps a party member as their prisoner, within a few squares (a companion who arrested
+    // the player, a jailer). The map stops the prisoner walking off: the keeper sees it, goes after them and grabs.
+    for (const [who, raw] of Object.entries(c.custody || {})) {
+        const prisoner = matchName(who, place.state.party || []) ?? who;
+        place.state.custody ??= {};
+        if (!raw) { if (place.state.custody[prisoner]) { delete place.state.custody[prisoner]; log.push(`${prisoner} is nobody's prisoner now`); } continue; }
+        const spec = raw && typeof raw === 'object' ? raw : { by: String(raw) };
+        const byName = String(spec.by || '').trim();
+        const by = matchName(byName, (place.state.party || []).filter(n => n !== prisoner)) ?? personByName(place, byName)?.name ?? null;
+        if (!by) { log.push(`⚠️ custody.${who}: nobody called "${byName}" on the map to hold them`); continue; }
+        const radius = Math.max(1, Math.min(6, Number(spec.radius) || 2));
+        place.state.custody[prisoner] = { by, radius, attempts: 0 };
+        log.push(`${prisoner} is ${by}'s prisoner (kept within ${radius} squares)`);
+    }
+    // The DM's own tripwires: "when anyone comes within 4 squares of Wolf 1, tell me". Each fires once.
+    if (c.triggers_clear === true) { place.state.triggers = []; log.push('triggers cleared'); }
+    if (Array.isArray(c.triggers)) {
+        place.state.triggers ??= [];
+        for (const t of c.triggers) {
+            if (!t || typeof t !== 'object') continue;
+            const near = String(t.near ?? t.at ?? t.who ?? t.of ?? '').trim();
+            const note = String(t.note ?? t.then ?? t.text ?? t.what ?? '').trim().slice(0, 240);
+            if (!near || !note) { log.push('⚠️ triggers: each needs "near" (a person, a prop id, a room or a square) and "note" (what to tell you)'); continue; }
+            if (!resolveNear(place, floor, near)) { log.push(`⚠️ triggers: nothing called "${near}" on this floor of the map`); continue; }
+            if (place.state.triggers.length >= 6) { log.push('⚠️ triggers: six at once is the most (clear them with "triggers_clear": true)'); break; }
+            const id = `TR${(place.state.triggerSeq = (place.state.triggerSeq ?? 0) + 1)}`;
+            const radius = Math.max(1, Math.min(8, Number(t.radius) || 3));
+            place.state.triggers.push({ id, near, note, radius, floor });
+            log.push(`trigger ${id}: anyone within ${radius} of ${near}`);
+        }
+    }
     // Riding: a horse under someone goes where they go (the party too). "" dismounts; the horse stays where it is.
     for (const [who, horse] of Object.entries(c.ride || {})) {
         const rider = place.state.positions[who] ? who : personByName(place, who)?.name;
@@ -1587,6 +1618,8 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const room = lead ? roomAt(place, floor.id, lead.x, lead.y) : null;
     const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `${OUTDOOR.has(floor.map.theme) ? 'in the open' : 'in a corridor'} at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
     if (OUTDOOR.has(floor.map.theme) && st.weather && st.weather !== 'clear') lines.push(`Weather here: ${WEATHER_WORDS[st.weather] ?? st.weather}${st.weather === 'fog' ? ` (nobody sees past ${FOG_SIGHT} squares)` : st.weather === 'storm' ? ' (sound carries half as far; tracks wash out)' : st.weather === 'snow' ? ' (tracks show; slow going)' : st.weather === 'rain' ? ' (tracks wash out; torches gutter)' : ''}.`);
+    for (const [p, rec] of Object.entries(st.custody || {})) lines.push(`CUSTODY: ${p} is ${rec.by}'s prisoner, kept within ${rec.radius} squares (the code stops ${p} walking off: ${rec.by} sees it, goes after them and grabs, with rolls; you're told each time)${rec.slipped ? `. ${p} has slipped out of ${rec.by}'s sight` : ''}. End it with place_changes custody {"${p}": ""}.`);
+    if (st.triggers?.length) lines.push(`YOUR TRIGGERS (each tells you once when any party member comes within reach): ${st.triggers.map(t => `${t.id} within ${t.radius} of ${t.near}: "${t.note}"`).join('; ')}.`);
     if (st.night) lines.push(`It is ${st.late ? 'NIGHT' : 'DARK out (evening)'}: outdoors is dark; a room is lit only with someone awake in it or a light burning; ${st.late ? 'residents are asleep and shops and homes are shut (taverns, inns, guardhouses and jails are up); ' : ''}in the dark people see two squares, lantern-bearers three around them.`);
     if (st.visited.length) lines.push(`Rooms the party has been in: ${st.visited.join(', ')}.`);
     const changed = Object.values(place.doors).filter(d => (d.kind === 'locked' && d.state !== 'locked') || (d.kind === 'secret' && d.state !== 'hidden') || d.state === 'open' || d.state === 'broken').map(d => `${d.id} ${d.state === 'closed' && d.kind === 'locked' ? 'unlocked' : d.state === 'closed' && d.kind === 'secret' ? 'found' : d.state}`);
@@ -1656,6 +1689,62 @@ export function syncMounts(place) {
         const at = place.state.positions[rider] ?? (() => { const g = personByName(place, rider); return g && g.state !== 'dead' && g.state !== 'gone' ? { floor: g.floor, x: g.x, y: g.y } : null; })();
         if (!h || h.state === 'dead' || h.state === 'gone' || !at) { delete mounts[rider]; out.push(`${rider} no longer rides ${horse}`); continue; }
         if (h.x !== at.x || h.y !== at.y || h.floor !== at.floor) { Object.assign(h, { floor: at.floor, x: at.x, y: at.y, room: roomAt(place, at.floor, at.x, at.y)?.id ?? h.room }); out.push(`${horse} under ${rider}`); }
+    }
+    return out;
+}
+
+/** Where a trigger's "near" is right now: a person (they move), a prop by id, a room (its middle) or a square. */
+export function resolveNear(place, floorId, near) {
+    const g = personByName(place, near);
+    if (g && g.state !== 'gone' && g.state !== 'dead') return { floor: g.floor, x: g.x, y: g.y };
+    const pos = place.state?.positions?.[near] ?? place.state?.positions?.[matchName(near, Object.keys(place.state?.positions || {})) ?? ''];
+    if (pos) return pos;
+    const found = propById(place, near);
+    if (found) return { floor: found.floor, x: found.prop.x, y: found.prop.y };
+    const bare = s => nameKey(String(s || '')).replace(/^the /, '');
+    const rm = findRoom(place, near) ?? Object.values(place.rooms).find(r => bare(r.name) === bare(near)) ?? Object.values(place.rooms).find(r => bare(r.name).includes(bare(near)));
+    if (rm?.rect) return { floor: rm.floor, x: rm.rect.x + Math.floor(rm.rect.w / 2), y: rm.rect.y + Math.floor(rm.rect.h / 2) };
+    const pt = parseCoord(near, floorById(place, floorId).map);
+    return pt ? { floor: floorId, x: pt.x, y: pt.y } : null;
+}
+
+/** The DM's triggers that any party member has just come within reach of: their notes, each fired once. */
+export function checkTriggers(place, floorId, partyNames) {
+    const live = place.state?.triggers;
+    if (!live?.length) return [];
+    const out = [];
+    for (const t of live.slice()) {
+        const at = resolveNear(place, t.floor ?? floorId, t.near);
+        if (!at || at.floor !== floorId) continue;
+        const who = partyNames.filter(n => { const p = place.state.positions[n]; return p && p.floor === floorId && Math.max(Math.abs(p.x - at.x), Math.abs(p.y - at.y)) <= t.radius; });
+        if (!who.length) continue;
+        place.state.triggers = place.state.triggers.filter(x => x !== t);
+        out.push(`YOUR TRIGGER ${t.id} fired: ${who.join(' and ')} ${who.length > 1 ? 'are' : 'is'} within ${t.radius} squares of ${t.near}. Your note: "${t.note}". Act on it now.`);
+    }
+    return out;
+}
+
+const NOTICE_BANDS = [[2, 'right on top of them'], [5, 'close'], [GUARD_SIGHT, 'in sight']];
+
+/**
+ * Hostiles who can see the party (on any land, allowed or not) are an event the first time the party
+ * comes into sight, closer, and right up to them: three calls at most for each. Someone already
+ * hunting, asleep, down or dead is skipped. Returns the lines for the DM.
+ */
+export function hostileNotice(place, floorId, partyNames) {
+    const out = [];
+    const map = floorById(place, floorId).map;
+    for (const g of Object.values(place.guards)) {
+        if (g.floor !== floorId || isOut(g) || g.state === 'gone' || g.state === 'dead' || g.down) continue;
+        if (!(g.hostile === true || g.intent === 'attack')) continue;
+        if (g.intent === 'attack' && g.target) continue;
+        const seen = guardSees(place, floorId, g, partyNames);
+        if (!seen.length) continue;
+        const dist = Math.min(...seen.map(n => { const p = place.state.positions[n]; return Math.max(Math.abs(p.x - g.x), Math.abs(p.y - g.y)); }));
+        const band = NOTICE_BANDS.findIndex(([r]) => dist <= r);
+        if (band < 0 || (Number.isInteger(g.noticeBand) && band >= g.noticeBand)) continue;
+        g.noticeBand = band;
+        out.push(`${g.name} (${g.description || 'hostile'}, HOSTILE) can see ${seen.join(' and ')}: ${dist} square${dist === 1 ? '' : 's'} away, ${NOTICE_BANDS[band][1]}${g.state === 'alert' ? ', already alert' : ''}. Decide what ${g.name} does now (attack: place_changes.guards {"${g.name}": "hunting"}, the code runs the chase and calls you when they reach someone; hold and threaten; stalk; flee), brief them if they speak, and set the same for any others with them.`);
     }
     return out;
 }
