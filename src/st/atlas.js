@@ -2242,11 +2242,20 @@ async function custodyCheck(c, cur, start) {
     if (!kp || kp.floor !== lead.floor || start.floor !== lead.floor) return '';
     const keeperOut = place.state.pose?.[rec.by]?.pose === 'sleep' || outBy(conditionsOf(c.docs.world, rec.by)) || Boolean(place.guards[rec.by]?.down);
     if (keeperOut) return '';
-    // Walking along with a keeper who is coming too is an escort, not an escape (unless the player said they run).
-    if (start.following && rec.bolt !== c.meta.turn) return '';
     const far = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     const fromStart = far(lead, start), gap = far(lead, kp);
     if (fromStart <= rec.radius && gap <= rec.radius) return '';
+    // The keeper is coming along: a prisoner setting off across the map on their own is stopped and challenged,
+    // in the chat, the first time; the player's words then settle it (going along, or running: the chase).
+    // After a challenge the walk is an escort for a few turns, so a prisoner marched somewhere isn't nagged each step.
+    if (start.following && rec.bolt !== c.meta.turn) {
+        if ((rec.escortUntil ?? -1) >= c.meta.turn) return '';
+        const cuffsNow = restraintOf(conditionsOf(c.docs.world, player)).look;
+        rec.escortUntil = c.meta.turn + 3;
+        c.meta.stance ??= {}; c.meta.stance[rec.by] = 'close'; saveMeta();
+        savePlace(key, c);
+        return `${player} (${rec.by}'s prisoner${cuffsNow === 'cuffs' ? ', cuffed' : cuffsNow === 'rope' ? ', tied' : ''}) set off across the map on their own, ${fromStart} squares from where ${rec.by} stood; ${rec.by} is right on their heels and sees it. ${rec.by} stops them or challenges them (a sharp word, a hand on the chain, a question of where they think they're going): narrate that and brief ${rec.by}. The player's next words settle it: going along with ${rec.by}, or running (then the code runs the chase and the grab, with rolls). Don't resolve it yourself, and don't move anyone.`;
+    }
     const map = floorById(place, lead.floor).map;
     const sees = computeVisible(place, lead.floor, [{ x: kp.x, y: kp.y }], { radius: GUARD_SIGHT })[lead.y * map.w + lead.x] && !hiddenNow(place, player);
     if (!sees) {
