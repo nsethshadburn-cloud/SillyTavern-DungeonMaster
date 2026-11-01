@@ -36,7 +36,7 @@ export function ruleTriage(text, ctx = {}) {
     // Answer to a pending roll request.
     if (ctx.pendingRoll) {
         const sides = Number(ctx.pendingRoll.die ?? 20) || 20;
-        const parsed = parsePlayerRoll(raw, sides);
+        const parsed = parsePlayerRoll(raw, sides, { advantage: ctx.pendingRoll.advantage });
         if (parsed && (raw.length < 80 || /\broll|rolled|nat\b/i.test(raw))) {
             result.rollResult = true;
             result.roll = parsed;

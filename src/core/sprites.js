@@ -184,7 +184,18 @@ export function lookForNpc(name, description = '', key = '', gender = '') {
     const sex = gender === 'male' || gender === 'female' ? gender : sexFromText(`${name} ${description}`);
     const h = hashText(name);
     const preset = LIBRARY[key] ? key : presetFor(`${name} ${description}`) ?? COMMONERS[Math.floor(h / 7) % COMMONERS.length];
-    return libraryLook(preset, h % 7, sex);
+    const look = libraryLook(preset, h % 7, sex);
+    // "Brown Mare", "a dun gelding": the coat the words say.
+    if (look.beast) { const fur = furFromWords(`${name} ${description}`); if (fur) look.fur = fur; }
+    return look;
+}
+
+const FUR_WORDS = [[/\b(black|dark|sable|raven)\b/i, '#3b2a20'], [/\b(white|cream|pale|ivory|snow)\b/i, '#e8e2d6'], [/\b(grey|gray|silver|dapple)\b/i, '#5a5a5a'], [/\b(brown|bay|dun|chestnut|sorrel|tan|golden|buckskin|palomino|red|roan)\b/i, '#7a4a2a'], [/\b(dun|chestnut|sorrel|tan|golden|buckskin|palomino)\b/i, '#a87a4a']];
+export function furFromWords(text) {
+    const t = String(text || '');
+    const dun = FUR_WORDS[4][0].test(t) ? FUR_WORDS[4][1] : null;
+    if (dun) return dun;
+    return FUR_WORDS.find(([re]) => re.test(t))?.[1] ?? null;
 }
 
 const hex = v => (/^#[0-9a-f]{6}$/i.test(String(v || '').trim()) ? String(v).trim().toLowerCase() : null);

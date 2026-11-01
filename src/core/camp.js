@@ -9,7 +9,7 @@
 import { ensureIds, clearDoorways, normalizePlan, generatePlace } from './layout.js';
 import { generateTunnels } from './warren.js';
 import { PROPS, MAX_PLACE_SIZE, terrainAt } from './grid.js';
-import { nameKey, singular } from './text.js';
+import { nameKey, singular, bandWord, article } from './text.js';
 import { OWN_CAMP } from './architect.js';
 
 // ---------- randomness ----------
@@ -156,7 +156,7 @@ export function campFromBrief(brief, seed = 1) {
     if (obj && !/escape|get out|flee|leave|freedom/i.test(obj) && !rooms.some(x => x.items.some(it => nameKey(it.name) === nameKey(obj))) && !brief.people.some(p => nameKey(p.name) === nameKey(obj))) (find(/^lodge|^keep/) ?? find(/^fire/)).items.push({ name: obj, hidden: false, note: 'what the party came for' });
     // Who holds the camp: a chief (the brief's leader, or one of ours) and the band.
     const guards = [];
-    const band = spec.cannibal ? CANNIBAL_WORDS : brief.creatures ? [cap(singular(brief.creatures))] : BAND_WORDS;
+    const band = spec.cannibal ? CANNIBAL_WORDS : bandWord(brief.creatures) ? [bandWord(brief.creatures)] : BAND_WORDS;
     const chiefIn = brief.people.find(p => p.hostile && /chief|boss|leader|war ?lord|captain|king|queen|lord|matriarch|patriarch|head/i.test(p.what));
     const lodge = find(/^lodge|^keep/) ?? find(/^fire/);
     const chiefName = chiefIn ? chiefIn.name : `${pick(r, CHIEF_NAMES)} ${pick(r, CHIEF_EPITHETS)}`;
@@ -171,7 +171,7 @@ export function campFromBrief(brief, seed = 1) {
         if (kind === 'lookout') lookouts++; else if (kind === 'gate') gateGuards++;
         const home = kind === 'rover' ? pick(r, zones) : find(/^gate/) ?? zones[0];
         const patrol = kind === 'rover' ? [...new Set([home.id, ...shuffle(r, zones).slice(0, int(r, 1, 2)).map(z => z.id)])] : [home.id];
-        guards.push({ name: `${w} ${i + 1}`, description: `${kind === 'lookout' ? 'a lookout' : kind === 'gate' ? 'a gate guard' : 'a bandit'} of the camp, ${w.toLowerCase() === 'bandit' ? '' : `a ${w.toLowerCase()} `}${pick(r, LOOKS)}`, room: home.id, patrol, hostile: true, role: 'hostile', duty: kind, sprite: '' });
+        guards.push({ name: `${w} ${i + 1}`, description: `${kind === 'lookout' ? 'a lookout' : kind === 'gate' ? 'a gate guard' : 'a bandit'} of the camp, ${w.toLowerCase() === 'bandit' ? '' : `${article(w)} ${w.toLowerCase()} `}${pick(r, LOOKS)}`, room: home.id, patrol, hostile: true, role: 'hostile', duty: kind, sprite: '' });
     }
     // Everyone else the brief put here: other hostiles join the band; the rest are held or kept.
     const people = [];

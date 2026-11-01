@@ -14,6 +14,7 @@ import { guardSees, roomAt, hiddenNow, poseNow, isOut } from './explore.js';
 import { trespassOf, standingOf } from './access.js';
 import { cannedLine, lineRole } from './lines.js';
 import { nameKey } from './text.js';
+import { isBeast } from './sprites.js';
 
 /** A watcher doesn't react again to the same person (in the same room, for lines) for this many turns. */
 export const SETTLE_TURNS = 6;
@@ -139,6 +140,7 @@ export function noticeParty(place, names, ctx) {
             const st = standingOf(place, n);
             const prisoner = st.label === 'prisoner' && Boolean(room) && (st.home === room.id || st.rooms.includes(room.id));
             const hurt = Boolean(hp && hp.hp_max && hp.hp / hp.hp_max < 0.5);
+            if (isBeast(g)) continue;
             const line = cannedLine(g, { hurt, time, prisoner, rng: ctx?.rng });
             if (line) out.lines.push({ name: g.name, text: line, to: n, prisoner, room: room?.name ?? '', dist: dist(g, p) });
         }

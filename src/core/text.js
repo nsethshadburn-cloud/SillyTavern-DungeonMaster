@@ -164,6 +164,22 @@ export function matchName(name, candidates) {
 }
 
 /** One of them: "sentries" → "sentry", "wolves" → "wolf", "boxes" → "box", "raiders" → "raider". */
+/**
+ * The word for one of a band from a brief's creature text: "armed camp guards and one raven that watches
+ * the road" → "Camp Guard". The first noun phrase only, articles and counts off, singular, capped.
+ */
+export function bandWord(text) {
+    let s = String(text || '').split(/[,;.(]| and | with | that | who | which | while | plus /i)[0].trim();
+    s = s.replace(/^(?:a|an|the|some|several|a few|many|two|three|four|five|six|\d+|one|armed|hostile|dangerous|savage)\s+/i, '').replace(/^(?:a|an|the|some|several|a few|many|two|three|four|five|six|\d+|one|armed|hostile|dangerous|savage)\s+/i, '');
+    s = singular(s).replace(/\s+/g, ' ').trim().slice(0, 30).trim();
+    return s ? s.replace(/\b\w/g, ch => ch.toUpperCase()) : '';
+}
+
+/** "a" or "an" for a word. */
+export function article(word) {
+    return /^[aeiou]/i.test(String(word || '')) ? 'an' : 'a';
+}
+
 export function singular(word) {
     const w = String(word ?? '').trim();
     if (!w) return w;

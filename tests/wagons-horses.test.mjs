@@ -53,7 +53,7 @@ test('an open wagon: boards, a way off on either side; a jailer\'s wagon: bars a
 test('a horse is a beast: no lines; a rider\'s horse goes where they go; a team stands in front of its wagon', () => {
     assert.ok(isBeast({ name: 'Old Bess', description: 'a bay mare' }) && isBeast({ name: 'Horse 1' }) && isBeast({ name: 'Grimble', sprite: 'horse' }));
     assert.ok(!isBeast({ name: 'Judy Hopps', description: 'a rabbit police officer' }) && !isBeast({ name: 'Horseman', description: 'a horse-man of the plains' }));
-    const map = { w: 10, h: 8, rows: Array(8).fill('..........'), theme: 'forest', props: [{ id: 'P1', x: 5, y: 3, type: 'wagon' }] };
+    const map = { w: 14, h: 8, rows: Array(8).fill('..............'), theme: 'forest', props: [{ id: 'P1', x: 5, y: 3, type: 'wagon' }] };
     const place = { name: 'x', floors: [{ id: 'F0', name: 'x', level: 0, map }], rooms: {}, doors: {}, traps: {}, items: {}, guards: {}, stairs: [], exits: [], buildings: {}, state: { positions: { Amber: 'a1' }, explored: {}, floor: 'F0' } };
     let log = applyPlaceChanges(place, { guards: { 'Old Bess': { at: 'c3', description: 'a bay mare', hostile: false }, Hob: { at: 'd4', description: 'a carter', hostile: false } } });
     assert.ok(place.guards['Old Bess'] && place.guards.Hob, log.join('\n'));
@@ -68,7 +68,7 @@ test('a horse is a beast: no lines; a rider\'s horse goes where they go; a team 
     log = applyPlaceChanges(place, { props: { P1: { team: ['Old Bess'], move: 'h6' } } });
     assert.ok(/drawn by Old Bess/.test(log.join('\n')) && /P1 moved/.test(log.join('\n')), log.join('\n'));
     const w = map.props.find(p => p.id === 'P1');
-    assert.ok(place.guards['Old Bess'].x < w.x && Math.abs(place.guards['Old Bess'].y - w.y) <= 1, 'the horse stands in front of the wagon');
+    assert.ok(place.guards['Old Bess'].x === w.x + 3 && Math.abs(place.guards['Old Bess'].y - w.y) <= 1, `the horse stands in front of the wagon (it went east): ${place.guards['Old Bess'].x},${place.guards['Old Bess'].y} vs wagon ${w.x},${w.y}`);
     // a dead horse ends the ride
     applyPlaceChanges(place, { ride: { Hob: 'Old Bess' } });
     place.guards['Old Bess'].state = 'dead';

@@ -8,6 +8,7 @@ import { nameKey, matchName } from './text.js';
 import { lockDc } from './locks.js';
 import { grantAccess, trespassOf, accessSummary, zoneOf, placeClass } from './access.js';
 import { WEATHER_WORDS } from './clock.js';
+import { isBeast } from './sprites.js';
 
 export const OUTDOOR = new Set(['town', 'forest', 'camp', 'swamp', 'snow', 'desert', 'jungle']);
 /** Squares you can't see through. Windows and open doors are see-through. */
@@ -642,6 +643,9 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
             if (!g) { log.push(`⚠️ guards.${name}: couldn't place them (no square or room given)`); continue; }
             if (raw.description) g.description = String(raw.description).slice(0, 240);
             if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
+            // A horse (or anyone) the DM gives numbers to keeps them for when a fight starts.
+            if (Number.isFinite(Number(raw.hp)) && Number(raw.hp) > 0) { g.hp = Number(raw.hp); g.hp_max = Number(raw.hp_max ?? raw.hp); }
+            if (Number.isFinite(Number(raw.ac)) && Number(raw.ac) > 0) g.ac = Number(raw.ac);
             if (Array.isArray(raw.patrol)) g.patrol = raw.patrol.map(id => findRoom(place, id)?.id).filter(Boolean);
             if (!g.patrol.length && g.room) g.patrol = [g.room];
             const st = String(raw.state || '').toLowerCase();
@@ -716,11 +720,11 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         if (/^(removed|gone|taken)$/.test(st)) { const map = floorById(place, found.floor).map; map.props = map.props.filter(p => p !== found.prop); bump(place, found.floor); log.push(`${id} removed`); continue; }
         const to = v.move ?? v.to ?? (/^[nsew]$/.test(st) ? st : null);
         // A wagon's team: the horses that pull it, kept in front of it when it moves.
-        if (Array.isArray(v.team)) { const team = v.team.map(n => personByName(place, n)?.name).filter(Boolean); found.prop.team = team; log.push(team.length ? `${id} drawn by ${team.join(', ')}` : `${id} has no team`); }
+        if (Array.isArray(v.team)) { const team = v.team.map(n => personByName(place, n)?.name).filter(Boolean); const missing = v.team.filter(n => !personByName(place, n)); found.prop.team = team; log.push(team.length ? `${id} drawn by ${team.join(', ')}` : `${id} has no team`); if (missing.length) log.push(`⚠️ props.${id}.team: ${missing.join(', ')} not on the map (add the horse with guards first)`); if (!to && team.length) teamInFront(place, found, null); }
         if (to) {
             const r = moveProp(place, id, to, { force: true });
-            log.push(r.ok ? `${id} moved` : `${id} couldn't move: ${r.why}`);
-            if (r.ok && Array.isArray(found.prop.team)) for (const [i, n] of found.prop.team.entries()) placePerson(place, n, { floor: found.floor, x: found.prop.x - 1 - Math.floor(i / 2), y: found.prop.y + (i % 2) }, { floor: found.floor });
+            log.push(r.ok ? `${id} moved${r.near ? ` (to ${coord(found.prop.x, found.prop.y)}, the nearest place it fits)` : ''}` : `⚠️ props.${id} couldn't move: ${r.why}`);
+            if (r.ok && Array.isArray(found.prop.team)) teamInFront(place, found, r.from);
         }
         if (typeof v.obstacle === 'boolean') found.prop.obstacle = v.obstacle;
     }
@@ -851,23 +855,70 @@ export function moveProp(place, id, to, { force = false, people = [] } = {}) {
     if (DIR[to]) { nx = prop.x + DIR[to][0]; ny = prop.y + DIR[to][1]; }
     else { const pt = parseCoord(to, map); if (!pt) return { ok: false, why: 'no such square' }; nx = pt.x; ny = pt.y; }
     if (!force && !isLight(prop)) return { ok: false, why: 'too heavy to shove without a roll' };
-    const w = prop.w || 1, h = prop.h || 1;
-    let door = null;
-    for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) {
-        const x = nx + i, y = ny + j;
-        if (x < 0 || y < 0 || x >= map.w || y >= map.h) return { ok: false, why: 'off the map' };
-        const ch = terrainAt(map, x, y);
-        if (ch === '+' || ch === '/') door = doorAt(place, floor, x, y);
-        else if (TERRAIN[ch]?.walk === false || ch === '<' || ch === '>') return { ok: false, why: 'something is in the way' };
-        if (map.props.some(p => p !== prop && PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1))) return { ok: false, why: 'something is in the way' };
-        if (people.some(pp => pp.floor === floor && pp.x === x && pp.y === y)) return { ok: false, why: 'someone is standing there' };
+    const w = prop.w || PROPS[prop.type]?.size?.[0] || 1, h = prop.h || PROPS[prop.type]?.size?.[1] || 1;
+    const vehicle = Boolean(PROPS[prop.type]?.vehicle);
+    const from = { x: prop.x, y: prop.y };
+    /** Can the prop stand with its corner at x,y? A wagon rolls over undergrowth and between trees (drawn over them), never through walls, water or people. */
+    const fits = (cx, cy) => {
+        let d = null;
+        for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) {
+            const x = cx + i, y = cy + j;
+            if (x < 0 || y < 0 || x >= map.w || y >= map.h) return { why: 'off the map' };
+            const ch = terrainAt(map, x, y);
+            if (ch === '+' || ch === '/') d = doorAt(place, floor, x, y);
+            else if (vehicle ? (ch === '#' || ch === 'I' || ch === '~' || ch === 'w' || ch === '<' || ch === '>' || ch === 'D' || ch === 'J' || ch === 'j') : (TERRAIN[ch]?.walk === false || ch === '<' || ch === '>')) return { why: 'something is in the way' };
+            if (map.props.some(p => p !== prop && PROPS[p.type]?.blocks && x >= p.x && x < p.x + (p.w || 1) && y >= p.y && y < p.y + (p.h || 1))) return { why: 'something is in the way' };
+            if (people.some(pp => pp.floor === floor && pp.x === x && pp.y === y)) return { why: 'someone is standing there' };
+        }
+        return { door: d };
+    };
+    let at = fits(nx, ny);
+    let near = false;
+    if (at.why && vehicle && force) {
+        // The square the DM named doesn't take a wagon: the nearest one that does, within a few squares.
+        let best = null;
+        for (let rad = 1; rad <= 4 && !best; rad++) for (let dy = -rad; dy <= rad && !best; dy++) for (let dx = -rad; dx <= rad && !best; dx++) { if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue; const f = fits(nx + dx, ny + dy); if (!f.why) best = { x: nx + dx, y: ny + dy, door: f.door }; }
+        if (!best) return { ok: false, why: `${at.why} (no room for it within 4 squares of there)` };
+        nx = best.x; ny = best.y; at = { door: best.door }; near = true;
     }
+    if (at.why) return { ok: false, why: at.why };
+    const door = at.door;
     prop.x = nx; prop.y = ny;
     // Shoved into a doorway: a barricade, there on purpose.
     prop.obstacle = Boolean(door) || undefined;
     if (door) prop.barricades = door.id; else delete prop.barricades;
     bump(place, floor);
-    return { ok: true, door: door?.id };
+    return { ok: true, door: door?.id, near, from };
+}
+
+/** A wagon's team stands in front of it: on the side it came from going away, else to its west. */
+export function teamInFront(place, found, from) {
+    const { prop, floor } = found;
+    const w = prop.w || PROPS[prop.type]?.size?.[0] || 1, h = prop.h || PROPS[prop.type]?.size?.[1] || 1;
+    const dx = from ? Math.sign(prop.x - from.x) : 0, dy = from ? Math.sign(prop.y - from.y) : 0;
+    for (const [i, n] of (prop.team || []).entries()) {
+        const spot = dx !== 0 || dy === 0
+            ? { x: dx >= 0 ? prop.x + w + Math.floor(i / h) : prop.x - 1 - Math.floor(i / h), y: prop.y + (i % h) }
+            : { x: prop.x + (i % w), y: dy > 0 ? prop.y + h + Math.floor(i / w) : prop.y - 1 - Math.floor(i / w) };
+        placePerson(place, n, { floor, ...spot }, { floor });
+    }
+}
+
+/**
+ * Riders who got down in the story: "Judy slides off the saddle", "Hobb dismounts". The DM is
+ * supposed to send ride ""; when it narrates the dismount instead, the code reads it. Returns who.
+ */
+export function dismountsInText(place, text) {
+    const mounts = place.state?.mounts;
+    if (!mounts || !text) return [];
+    const out = [];
+    for (const rider of Object.keys(mounts)) {
+        const first = rider.split(' ')[0];
+        const who = `(?:${rider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${first.length > 3 ? `|${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}` : ''}|she|he|they)`;
+        const re = new RegExp(`\\b${who}\\b[^.!?\\n]{0,40}?\\b(?:dismounts?|slid(?:es?|ing) (?:off|down|from)|climb(?:s|ed|ing)? (?:down|off)|(?:gets?|got|getting) (?:off|down)|swings? (?:down|off)|swung (?:down|off)|drops? (?:down|off)|hops? (?:off|down)|jumps? (?:off|down)|steps? (?:off|down)|out of the saddle)\\b`, 'i');
+        if (re.test(text)) { delete mounts[rider]; out.push(rider); }
+    }
+    return out;
 }
 
 export function windowAt(place, floorId, x, y) {
@@ -1180,8 +1231,11 @@ function wanderNextDoor(place, g, r) {
  */
 export function tickGuards(place, r = Math.random, chance = 0.5, steps = PATROL_STEPS, { skip = null } = {}) {
     const moved = [];
+    // A horse in a wagon's traces or under a rider goes nowhere on its own.
+    const tied = new Set([...Object.values(place.state?.mounts || {}), ...place.floors.flatMap(f => (f.map.props || []).flatMap(p => Array.isArray(p.team) ? p.team : []))].map(nameKey));
     for (const g of Object.values(place.guards)) {
         if (isOut(g) || skip?.(g) || (g.intent && g.intent !== 'wander')) continue;
+        if (tied.has(nameKey(g.name))) continue;
         const from = { x: g.x, y: g.y };
         const busy = new Set([
             ...Object.values(place.state?.positions || {}).filter(p => p && p.floor === g.floor).map(p => `${p.x},${p.y}`),
@@ -1546,6 +1600,7 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const fallen = st.fallen?.length ?? 0;
     const alive = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').length;
     const slots = Math.max(0, NEWCOMER_MAX - (st.newcomers ?? 0));
+    if (place.parent?.prop) lines.push(`THIS IS THE INSIDE OF A WAGON (prop ${place.parent.prop} on the map of ${place.parent.name || 'the place outside'}). The wagon moves on the outside map with place_changes props {"${place.parent.prop}": {"move": "<a square on the outside map>"}} (its team of horses with it); the party inside goes along and climbs out beside it wherever it has stopped. Say it rolls, and send the move: the code moves it even while the party is inside.`);
     lines.push(`People of this place: ${alive} on their feet, ${fallen + bodies.length} dead and gone for good. Newcomers this place can still take: ${slots}${slots ? '' : ' (none: no more guards or arrivals here; escalate through the story instead: the alarm, time running out, locked gates, what waits outside)'}.`);
     // How far each one is from the party and what the party could possibly sense of them, so nobody
     // hears footsteps or smells lamp oil from across the map.

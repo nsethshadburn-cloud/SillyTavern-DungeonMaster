@@ -610,7 +610,9 @@ function drawTokens(ctx, c, b, tile, now, restore) {
     const friends = new Set([player, ...c.meta.party.map(pt => pt.name)]);
     const figures = settings().mapFigures !== false;
     // A horse is drawn first and its rider on top of it, a little higher.
-    const mounts = b.place?.state?.mounts || {};
+    // A rider sits up on the horse only while the horse is there under them.
+    const mountsAll = b.place?.state?.mounts || {};
+    const mounts = Object.fromEntries(Object.entries(mountsAll).filter(([rider, horse]) => b.positions[rider] && b.positions[horse] && b.positions[rider] === b.positions[horse]));
     for (const [name, coord] of Object.entries(b.positions).sort((p, q) => (mounts[p[0]] ? 1 : 0) - (mounts[q[0]] ? 1 : 0))) {
         const pt = parseCoord(coord, map);
         if (!pt) continue;
@@ -867,8 +869,9 @@ function sendAsPlayer(text, { send = true } = {}) {
 
 /** Tapping someone: who they are, their health, and what they're doing. No actions. */
 function showPerson(ev, c, b, who) {
-    const hp = hpOf(c, who);
     const place = b.place;
+    const g = place?.guards[who];
+    const hp = hpOf(c, who) ?? (g?.hp_max ? { hp: g.hp, hp_max: g.hp_max } : null);
     const conds = conditionsOf(c.docs.world, who);
     const hid = place ? hiddenNow(place, who) : null;
     const rest = place ? poseNow(place, who) : null;
@@ -879,9 +882,13 @@ function showPerson(ev, c, b, who) {
         rest ? `${rest.pose === 'sit' ? 'sitting on' : rest.pose === 'sleep' ? 'asleep on' : 'lying on'} the ${rest.what}` : '',
         place && caughtNow(place, who) ? `caught in the ${caughtNow(place, who).kind}` : '',
         place?.state.waiting?.[who] ? 'staying here' : '',
+        place?.state.mounts?.[who] ? `riding ${place.state.mounts[who]}` : '',
+        Object.entries(place?.state.mounts || {}).find(([, h]) => h === who) ? `ridden by ${Object.entries(place.state.mounts).find(([, h]) => h === who)[0]}` : '',
+        g?.ac ? `AC ${g.ac}` : '',
         place?.guards[who]?.description || '',
     ].filter(Boolean);
-    showMenu(ev, who, lines.join(' · ') || (c.meta.party.some(p => p.name === who) || who === c.meta.persona.name ? 'fine' : ''), []);
+    const horse = place?.state.mounts?.[who];
+    showMenu(ev, who, lines.join(' · ') || (c.meta.party.some(p => p.name === who) || who === c.meta.persona.name ? 'fine' : ''), horse ? [[horse, 'fa-horse', () => { closeMenu(); showPerson(ev, c, b, horse); }]] : []);
 }
 
 // ---------- the tap menu for things: furniture and windows ----------
@@ -912,6 +919,7 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
         actions = [
             ...(info?.key ? [[`Unlock it (${info.key})`, 'fa-key', async () => { await unlockWithKey(thing.door.id, redraw); done(); }]] : []),
             ['Pick the lock', 'fa-unlock', async () => { await pickLock(thing.door.id, redraw); done(); }],
+            ['Force it', 'fa-hand-fist', async () => { if (!(await near())) return; closeMenu(); const dc = (thing.door.lockDc ?? thing.door.dc ?? 15) + 2; setMapAction(`${player} tries to force ${thing.name} (${thing.door.id} at ${where}) open. Ask for an Athletics roll (DC ${dc}); on a success set place_changes.doors {"${thing.door.id}": "broken"}; a loud failure may bring whoever is near.`); sendAsPlayer(`*${player} throws their weight against ${thing.name}.*`); done(); }],
         ];
         showMenu(ev, thing.name, info ? `${info.words}${info.key ? '; you have the key' : ''}` : '', actions);
         return;

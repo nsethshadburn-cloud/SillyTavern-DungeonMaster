@@ -15,19 +15,21 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
-import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts } from '../core/explore.js';
+import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts, dismountsInText, propById, freeNear } from '../core/explore.js';
+import { isBeast } from '../core/sprites.js';
+import { isWildKind } from '../core/architect.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
-import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice } from '../core/dice.js';
+import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
@@ -231,7 +233,7 @@ async function turnBody(c, opts, status, signal) {
         if (rule.needsHelper && s.useHelper) {
             const step = status.step('Reading your move (local helper)');
             try {
-                const candidates = speakerCandidates();
+                const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n }));
                 // Companions here, and what's around them on the map, so the helper can spot a task ("Judy, search that crate").
                 const helpers = meta.party.map(p => p.name).filter(n => candidates.includes(n));
                 const onMap = currentPlace(c);
@@ -301,6 +303,11 @@ async function turnBody(c, opts, status, signal) {
     let target = null;
     // Only when they DO something to it (open, search, smash, hide behind, climb...); a line about leaning on a log is roleplay. A tap on the map already said which one.
     const actsOnThing = Boolean(triage.task?.who) || /\b(open|close|shut|search|rummage|look (?:in|inside|into|through|under|behind)|check|examine|inspect|read|smash|break|bash|kick|force|pry|push|shove|pull|drag|lift|climb|hide|take|grab|pick (?:up|the|it)|unlock|lock|light|loot|rifle|empty|dig|cut|untie|tap|knock|jam|barricade|wedge|sit|lie down|sleep|rest on|attack|stab|hit|strike|smack)\b/i.test(playerText);
+    // "Amber climbs into the wagon": in by code, and the DM told so (never narrated from outside).
+    if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted && !peekMapAction()) {
+        const climbed = await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
+        if (climbed) { events.push(climbed); status.note('Climbed into the wagon'); }
+    }
     if (triage.thing && actsOnThing && !peekMapAction() && !autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
         const actor = triage.task?.who || meta.persona.name;
         const found = targetFor(c, actor, triage.thing);
@@ -447,6 +454,10 @@ async function turnBody(c, opts, status, signal) {
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
         // The player attacked and the DM neither started a fight nor asked for a roll: say so, to both.
         const attackWords = /\b(attacks?|stabs?|slash(?:es)?|shoots?|swings? (?:at|his|her|the)|punch(?:es)?|strikes?|hits?|kicks?|lunges?|charges? at|tackles?|fires? (?:an? )?(?:arrow|bolt)|casts? \w+ at|throws? (?:a|the|his|her) \w+ at)\b/i;
+        if (attackWords.test(playerText) && !c.docs.world.combat && !result.turn.start_combat && result.turn.player_roll && result.turn.player_roll.kind !== 'attack' && result.turn.player_roll.kind !== 'initiative' && !result.turn.end_combat && !signal.aborted) {
+            meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and you asked for a ${result.turn.player_roll.skill} check instead of an attack: an attack on someone is player_roll kind "attack" against their AC with start_combat (the enemies by name), never a skill check.`];
+            saveMeta();
+        }
         if (attackWords.test(playerText) && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !result.turn.end_combat && !signal.aborted) {
             meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and nothing happened: no start_combat, no player_roll. When the player attacks, that same turn: start_combat (the enemies by name, a map if outdoors with no built map) and player_roll "initiative". Never narrate the attack as pending.`];
             saveMeta();
@@ -459,7 +470,7 @@ async function turnBody(c, opts, status, signal) {
         }
         // Their action is resolved: done with the turn, or more to do (movement, a bonus action)?
         const cb = c.docs.world.combat;
-        if (cb && turnPromptsOn() && cb.phase === 'player' && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0)) {
+        if (cb && turnPromptsOn() && cb.phase === 'player' && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0) && !(meta.lastRoll?.kind === 'initiative' && meta.lastRoll.turn === meta.turn)) {
             if (await askEndTurn(meta.persona.name)) {
                 cb.phase = 'others';
                 saveDoc('world');
@@ -675,10 +686,11 @@ async function enemyHere(c, name, status = null) {
     if (known) return known;
     const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(clean)) ?? (c.docs.npcs || []).find(n => matchName(clean, [n.name]));
     const stats = String(npc?.stats || '');
-    const hp = Number(/\bHP\s*(\d+)/i.exec(stats)?.[1]) || 10, ac = Number(/\bAC\s*(\d+)/i.exec(stats)?.[1]) || 12;
+    const here = currentPlace(c);
+    const onMap = here ? personByName(here.place, npc?.name ?? clean) : null;
+    const hp = Number(/\bHP\s*(\d+)/i.exec(stats)?.[1]) || onMap?.hp || 10, ac = Number(/\bAC\s*(\d+)/i.exec(stats)?.[1]) || onMap?.ac || 12;
     const added = ensureEnemy(world, npc?.name ?? clean, { hp, ac, sprite: npc?.sprite || '' });
     if (!added) return null;
-    const here = currentPlace(c);
     const g = here ? personByName(here.place, added) : null;
     if (g) { g.hostile = true; g.state = 'alert'; if (world.combat.map) world.combat.positions[added] = toCoord(g.x, g.y); }
     status?.note(`${added} joins the fight (HP ${hp}, AC ${ac})`);
@@ -956,7 +968,7 @@ function summarizeTurn(t) {
  * else a companion who is with the player. Companions who split off never answer.
  */
 function localSpeakers(c, triage, playerText) {
-    const candidates = speakerCandidates();
+    const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n }));
     if (!candidates.length) return [];
     if (triage.speakers?.length) return triage.speakers.filter(n => candidates.includes(n));
     if (triage.helperChoseSpeakers) return [];
@@ -1105,13 +1117,22 @@ async function resolvePlayerRoll(c, parsed, status) {
     if (pr.kind === 'attack') playAnim(meta.persona.name, 'attack');
     c.docs.rolls_log.push({ at: new Date().toISOString(), who: meta.persona.name, what: pr.skill, kind: pr.kind, natural, mod, total, dc: pr.dc, success: judged.success });
     saveDoc('rolls_log');
+    meta.lastRoll = { kind: pr.kind, turn: meta.turn };
+    let afterInit = '';
     if (pr.kind === 'initiative' && c.docs.world.combat) {
         addToInitiative(c.docs.world, meta.persona.name, total);
         saveDoc('world');
+        // The attack that started the fight was put aside for initiative: it's asked for now, not lost.
+        if (meta.afterInitiative) {
+            const again = meta.afterInitiative;
+            delete meta.afterInitiative;
+            await postRollRequest(c, again);
+            afterInit = ` The code has asked ${meta.persona.name} for the attack roll that started the fight (${again.skill}${again.target ? ` on ${again.target}` : ''}): don't ask again; wait for it, then resolve it as their first action.`;
+        }
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
     // A grab: a miss means cuffs and the cell; a slip means the chase goes on (the third, a fight).
-    let saveHurt = '';
+    let saveHurt = afterInit;
     // A hit: the damage roll is asked for right away (the DM used to forget).
     if (pr.kind === 'attack' && judged.success === true) {
         const dice = judged.critical ? (pr.damage ? doubleDice(pr.damage) : attackDamage(statsForName(meta.persona.name, meta), `${pr.reason || ''} ${pr.skill || ''}`, { critical: true })) : pr.damage;
@@ -1145,6 +1166,8 @@ async function resolvePlayerRoll(c, parsed, status) {
     if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
     const searchText = search ? ` Searching with that roll (${search.radius ? `${search.radius} squares around them` : 'a failed roll: nothing'}), the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
     if (pr.kind === 'damage') {
+        const cap = diceMax(pr.damage);
+        if (cap && total > cap) { await postNote(`⚠️ ${total} is more than ${pr.damage} can roll: ${cap} taken.`); total = cap; }
         // The target takes it here and now (registered in the fight if they weren't yet), so the DM never has to bookkeep it.
         const who = pr.target ? (await enemyHere(c, pr.target, status), matchName(pr.target, [...Object.keys(c.docs.world.combat?.enemies ?? {}), ...meta.party.map(p => p.name)])) : null;
         if (who) {
@@ -1240,7 +1263,7 @@ function fallenInFight(c) {
         e.dead = true;
         any = true;
         const pname = world.combat.aliases?.[name] ?? name;
-        if (here) killPerson(here.place, pname, c.meta.turn);
+        if (here) { killPerson(here.place, pname, c.meta.turn); syncMounts(here.place); }
         dropFallen(world);
         const npc = (c.docs.npcs || []).find(x => nameKey(x.name) === nameKey(pname) || nameKey(x.name) === nameKey(name));
         if (npc) npc.dead = true;
@@ -1342,6 +1365,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const herePlace = currentPlace(c);
     if (herePlace && t.party_back.length) {
         for (const n of t.party_back) { const m = matchName(n, meta.party.map(p => p.name)); if (m) { delete herePlace.place.state.waiting?.[m]; delete herePlace.place.state.held?.[m]; } }
+    }
+    // A companion who is with the player (arrived, or there from the start) and has no figure on the map gets one beside them.
+    if (herePlace && !world.combat) {
+        const lead = herePlace.place.state.positions[meta.persona.name];
+        for (const n of meta.party.map(p => p.name)) {
+            if (!lead || isAway(world, n) || herePlace.place.state.positions[n]) continue;
+            const spot = freeNear(herePlace.place, lead.floor, lead.x, lead.y);
+            if (spot) { herePlace.place.state.positions[n] = { floor: lead.floor, ...spot }; status.note(`${n} is on the map beside ${meta.persona.name}`); }
+        }
         savePlace(herePlace.key, c);
     }
     // Taken somewhere in this place (caged in the dungeon): they're put in a real room to find.
@@ -1601,16 +1633,41 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const { key, place } = inside;
         const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
         if (t.place_changes) {
+            // Inside a wagon: the wagon itself and its horses are on the map outside; what's aimed at them goes there.
+            const host = place.parent?.key && (t.place_changes.props || t.place_changes.guards || t.place_changes.ride) ? await loadPlace(place.parent.key, c) : null;
+            if (host) {
+                const out = {};
+                for (const [id, v] of Object.entries(t.place_changes.props || {})) if (!propById(place, id) && propById(host, id)) { (out.props ??= {})[id] = v; delete t.place_changes.props[id]; }
+                for (const [n, v] of Object.entries(t.place_changes.guards || {})) if (!personByName(place, n) && personByName(host, n)) { (out.guards ??= {})[n] = v; delete t.place_changes.guards[n]; }
+                for (const [n, v] of Object.entries(t.place_changes.ride || {})) if (!personByName(place, n) && !place.state.positions[n] && (personByName(host, n) || host.state.positions[n])) { (out.ride ??= {})[n] = v; delete t.place_changes.ride[n]; }
+                if (Object.keys(out).length) {
+                    const hl = applyPlaceChanges(host, out, { floor: host.state.floor, turn: meta.turn });
+                    if (hl.length) status.note(`Outside: ${hl.join(', ')}`);
+                    problems.push(...hl.filter(l => l.startsWith('⚠️')).map(l => `place_changes (outside) ${l.slice(2).trim()}`));
+                    syncMounts(host);
+                    savePlace(place.parent.key, c);
+                }
+            }
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
             problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
             syncMounts(place);
         }
+        // Riders the story got down from their horses without the DM sending ride "".
+        for (const who of dismountsInText(place, `${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`)) status.note(`${who} dismounts (from the story)`);
+        // The player gave in: a guard takes them, no guard attacks them for it.
+        if (!world.combat && playerGivesIn(lastPlayerMessage())) {
+            for (const [n, raw] of Object.entries(t.place_changes?.guards || {})) {
+                const g = personByName(place, n);
+                const intent = raw && typeof raw === 'object' ? raw.intent : /^(hunting|chasing|attacking|attack)$/i.test(String(raw)) ? 'attack' : '';
+                if (g && intent === 'attack' && (!raw.target || matchName(String(raw.target), [meta.persona.name]))) { delete g.intent; delete g.target; problems.push(`guards.${n} intent "attack" dropped: the player just gave themselves up; a guard takes a prisoner (escort), they don't attack one who surrenders`); }
+            }
+        }
         // The player gave in to a guard: walked to their cell, door locked (the code checks their words).
         if (t.escort && !world.combat) {
             const note = await escortToCell(c, t.escort, lastPlayerMessage());
             if (note) status.note(note);
-            if (/^escort ignored/.test(note)) console.warn('[Dungeon Master]', note);
+            if (/^escort ignored/.test(note)) { console.warn('[Dungeon Master]', note); problems.push(`${note} (the player stays where they are: don't narrate the walk to a cell)`); }
         }
         if (!world.combat) {
             const map = floorById(place, floorId).map;
@@ -1649,7 +1706,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 const info = { description: npc ? [npc.role, npc.description].filter(Boolean).join('. ') : '', hostile: npc?.attitude === 'hostile', gender: npc?.gender };
                 if (!placePerson(place, npc?.name ?? name, coord, { floor: floorId, info, arrive: !personByName(place, npc?.name ?? name) })) missed.push(`${name} → ${coord}`);
             }
-            if (missed.length) status.note(`Couldn't place on the map: ${missed.join(', ')}`);
+            if (missed.length) { status.note(`Couldn't place on the map: ${missed.join(', ')}`); problems.push(`positions not applied: ${missed.join('; ')}`); }
         }
         look(c, key, place);
         savePlace(key, c);
@@ -1755,6 +1812,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // rolls the DM sent anyway wait (the DM runs them in order once the player's number is in).
     if (world.combat && !world.combat.order.some(o => o.name === meta.persona.name)) {
         if (t.npc_rolls.length) { status.note(`Held back ${t.npc_rolls.length} roll(s): initiative first`); t.npc_rolls = []; }
+        if (t.player_roll && t.player_roll.kind !== 'initiative') { meta.afterInitiative = t.player_roll; status.note(`${t.player_roll.skill} roll kept for after initiative`); }
         if (t.player_roll?.kind !== 'initiative') t.player_roll = { kind: 'initiative', skill: 'Initiative', ability: 'DEX', die: 20, dc: null, advantage: 'none', reason: 'The fight is on: roll initiative. Nobody acts until you have.', damage: '', half: false, bonus: null, spot: null };
     }
     // Who has noticed whom, when the DM says so outright.
@@ -1877,7 +1935,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         else refreshMap();
     }
     // Leaving a place, going back to one that's already built.
-    if (t.leave_place) leavePlace(c);
+    if (t.leave_place) {
+        leavePlace(c);
+        // Travel with no map at the other end: outdoors (a road, the woods, a camp, a town) the code builds one, so the party is never off the map.
+        const loc = String(t.scene?.location || '').trim();
+        const outdoors = loc && (isWildKind(kindFromWords(loc), loc) || /\b(road|trail|path|track|woods?|forest|trees|hills?|moor|downs|field|meadow|clearing|river|stream|lake|shore|beach|bridge|crossroads|ford|camp|village|town|hamlet|gate|ruins?|cliff|valley|pass|plain|marsh|swamp)\b/i.test(loc));
+        if (!t.build_place && !t.enter_place && !world.combat && mapsOn() && outdoors) {
+            status.note(`No map at ${loc}: building one`);
+            try { await buildFromRequest({ text: loc, kind: kindFromWords(loc) || '', size: 'small' }, { status }); } catch (error) { problems.push(`the party left the map for "${loc}" and no map could be built there (${error.message}): send build_place for it`); }
+        } else if (!t.build_place && !t.enter_place && mapsOn()) problems.push(`leave_place took the party off the map${loc ? ` to "${loc}"` : ''} with nothing built there: send build_place (or enter_place for a place in the ATLAS) in the same turn, so they are never without a map`);
+    }
     if (t.enter_place && !t.build_place) {
         const entry = atlasEntry(t.enter_place, c);
         // Already there (the DM named it again): nobody moves, the map stays as it is.
@@ -1953,6 +2020,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const sheetAc = pr.target && !foe ? statsForName(pr.target, meta)?.ac : null;
             const ac = foe && Number.isFinite(Number(foe.ac)) ? Number(foe.ac) : Number.isFinite(Number(sheetAc)) ? Number(sheetAc) : null;
             if (ac !== null && pr.dc !== ac) { if (pr.dc !== null) problems.push(`player_roll.dc ${pr.dc} for the attack on ${pr.target} was replaced by their AC ${ac} (the roster's; it never changes between rolls)`); pr.dc = ac; }
+            if (/cuff|shackl|manacle|bound|tied|restrained/i.test(conditionsOf(world, meta.persona.name).join(' ')) && pr.advantage !== 'disadvantage') { pr.advantage = 'disadvantage'; status.note('Cuffed: the attack is at disadvantage'); }
         }
         await postRollRequest(c, pr);
     }

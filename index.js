@@ -8,7 +8,7 @@ import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll, levelUp }
 import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, addNoteToChat, briefForMessage } from './src/st/actors.js';
 import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig, voicesActive } from './src/st/voices.js';
 import { sayOnMap } from './src/ui/bubbles.js';
-import { toggleMap, refreshMap, closeMap } from './src/ui/map.js';
+import { toggleMap, refreshMap, closeMap, openMap } from './src/ui/map.js';
 import { postDiceCard } from './src/st/messages.js';
 import { forgetAll, flushWrites } from './src/st/storage.js';
 import { recap } from './src/st/dm.js';
@@ -67,7 +67,9 @@ async function onChatChanged() {
     }
     const active = campaign();
     syncTtsTakeover(Boolean(active && !active.meta.paused));
-    if (active?.docs.world.combat?.map || active?.docs.world.sceneMap?.map || active?.docs.world.place) refreshMap();
+    // A campaign on a map (or in a fight) opens its panel with the chat, as it was before the reload.
+    if (active && !active.meta.paused && (active.docs.world.place || active.docs.world.combat?.map)) openMap();
+    else if (active?.docs.world.combat?.map || active?.docs.world.sceneMap?.map || active?.docs.world.place) refreshMap();
     renderScreen();
     updateMenuState();
 }
@@ -286,7 +288,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.50.0-beta';
+export const LOADED_VERSION = '0.51.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

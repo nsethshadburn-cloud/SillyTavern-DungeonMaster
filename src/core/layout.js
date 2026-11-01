@@ -2041,7 +2041,8 @@ export function generateWilds(planIn, seed = 1) {
     const r = rng(seed);
     const theme = wildTheme(plan);
     const spots = plan.rooms.slice(0, 9);
-    const W = clamp(30 + spots.length * 4, 32, 56), H = clamp(26 + spots.length * 3, 28, 50);
+    // Two spots (a campsite and the trail in) is a small map; more spots, more ground.
+    const W = spots.length <= 2 ? 26 : clamp(30 + spots.length * 4, 32, 56), H = spots.length <= 2 ? 22 : clamp(26 + spots.length * 3, 28, 50);
     const c = [...Array(H)].map(() => Array(W).fill('.'));
     const map = { w: W, h: H, rows: [], theme, props: [], areas: [], roofs: [], seed };
     const place = {
@@ -2111,6 +2112,9 @@ export function generateWilds(planIn, seed = 1) {
     const taken = new Set();
     const put = (x, y, type, extra = {}) => { if (c[y]?.[x] === undefined || !'.:'.includes(c[y][x]) || taken.has(K(x, y)) || trail.has(K(x, y))) return false; map.props.push({ x, y, type, ...extra }); taken.add(K(x, y)); return true; };
     const freeIn = cc => { for (let tries = 0; tries < 40; tries++) { const x = int(r, cc.x - cc.rad + 1, cc.x + cc.rad - 1), y = int(r, cc.y - cc.rad + 1, cc.y + cc.rad - 1); if (c[y]?.[x] && '.:'.includes(c[y][x]) && !taken.has(K(x, y)) && Math.hypot(x - cc.x, y - cc.y) < cc.rad - 0.5) return [x, y]; } return null; };
+    // When the spot is mostly trail (a small clearing the path runs through): any open square in it, the trail included.
+    const anyIn = cc => { const out = []; for (let y = cc.y - cc.rad + 1; y <= cc.y + cc.rad - 1; y++) for (let x = cc.x - cc.rad + 1; x <= cc.x + cc.rad - 1; x++) if (c[y]?.[x] && '.:'.includes(c[y][x]) && !taken.has(K(x, y)) && Math.hypot(x - cc.x, y - cc.y) < cc.rad - 0.5) out.push([x, y]); return out.length ? out.sort((p, q) => Math.hypot(p[0] - cc.x, p[1] - cc.y) - Math.hypot(q[0] - cc.x, q[1] - cc.y))[0] : null; };
+    const putIn = (cc, type, extra = {}) => { const p = freeIn(cc); if (p && put(p[0], p[1], type, extra)) return true; const q = anyIn(cc); if (!q) return false; trail.delete(K(q[0], q[1])); return put(q[0], q[1], type, extra); };
     // Standing stones: a ring of them at the spot named for them (or the first), to fight round and hide behind.
     if (/standing stones|stone circle|menhir|the stones\b/.test(words)) {
         const cc = centers.find(x => /stone/.test(x.sp.name.toLowerCase())) ?? centers[0];
@@ -2126,7 +2130,8 @@ export function generateWilds(planIn, seed = 1) {
                     : /nest|lair|den/.test(nm) ? ['bones', 'skull', 'boulder'] : ['flowers', 'log', 'boulder'];
         if (/waterfall|pool|spring|pond|lagoon/.test(nm)) addWater(c, W, H, r, 'pool', [cc.x, cc.y + Math.max(1, cc.rad - 2)]);
         if (/ruin/.test(nm)) for (let i = 0; i < 4; i++) { const p = freeIn(cc); if (p) c[p[1]][p[0]] = '^'; }
-        for (const type of [...dress, ...cc.sp.props.flatMap(p => Array(p.count || 1).fill(p.type))]) { if (!PROPS[type]) continue; const p = freeIn(cc); if (p) put(p[0], p[1], type); }
+        const must = /campsite|'s camp|small camp/.test(nm);
+        for (const type of [...dress, ...cc.sp.props.flatMap(p => Array(p.count || 1).fill(p.type))]) { if (!PROPS[type]) continue; if (must && (type === 'campfire' || type === 'tent')) { putIn(cc, type); continue; } const p = freeIn(cc); if (p) put(p[0], p[1], type); }
         // Traps (hidden until searched or stepped on) and hidden things in this spot.
         // Where a trap makes sense out here: on the trail leading in, or in front of what's worth
         // guarding in the spot (an altar, a grave, a chest); now and then anywhere in it.

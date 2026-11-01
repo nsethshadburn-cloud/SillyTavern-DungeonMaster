@@ -8,7 +8,7 @@
 // (rules.js) as a plan Claude writes, then the same geometry. Pure module.
 
 import { roomType } from './rooms.js';
-import { nameKey, singular } from './text.js';
+import { nameKey, singular, bandWord, article } from './text.js';
 
 // ---------- randomness ----------
 
@@ -486,7 +486,7 @@ const GENERIC = {
 /** Kinds of place built as land: woods, water, open country. (Towns and camps are matched before this.) */
 export const WILD_KINDS = /jungle|rainforest|forest|\bwoods?\b|\bgrove\b|glade|clearing|swamp|marsh|\bbogs?\b|meadow|wilderness|\bwilds?\b|valley|canyon|oasis|beach|\bcoast|riverbank|\briver\b|lakeshore|\blake\b|waterfall|\bcamp\b|grassland|\bplains?\b|savanna|\bdowns\b|\bhills?\b|hilltop|hillside|foothills|\bmoors?\b|\bheath\b|prairie|steppe|tundra|\bfields?\b|pasture|farmland|countryside|open country|\bridge\b|\bmountains?\b|\bglen\b|\bdale\b|\bdell\b|\bcopse\b|thicket|woodland|\bshore\b|riverside|\bford\b|standing stones|stone circle|menhir|\bcairn\b|crossroads|\btrail\b|the wild\b|outdoors|open ground/;
 /** Somebody's own little camp (the party's, a character's): a tent and a fire on the land, never the fort builder. */
-export const OWN_CAMP = /\b(?:our|my|his|her|their|your|the party'?s)\b[^.]{0,24}\bcamp\b|\b[A-Za-z]+'s (?:(?:forest|hidden|little|small|woodland|secret|old) )?camp\b|\bcampsite\b|\bcamp(?:ing|ed)? for the night\b|\bmakes? camp\b|\bset(?:s|ting)? up camp\b|\bsmall camp (?:in|by|at|under)\b|\ba (?:tent|fire) and\b/i;
+export const OWN_CAMP = /\b(?:our|my|his|her|their|your|the party'?s)\b[^.]{0,24}\bcamp\b|\b[A-Za-z]+'s (?:(?:forest|hidden|little|small|woodland|secret|old) )?camp\b|\bcampsite\b|\bcamp(?:ing|ed)? for the night\b|\bmakes? camp\b|\bmade camp\b|\bset(?:s|ting)? up (?:a |their |our |the )?(?:\w+ )?camp\b|\btemporary camp\b|\bsmall camp (?:in|by|at|under)\b|\ba (?:tent|fire) and\b|\bone (?:small )?(?:fire|tent)\b|\b(?:two|2)-person camp\b|\bcamp (?:in|by|at|under) the (?:woods|trees|forest|stream|river|road|hill)s?\b[^.]{0,40}\b(?:fire|tent)\b/i;
 /** Open country within that: grass with few trees (downs, moors, plains), not woods. */
 export const OPEN_COUNTRY = /\bdowns\b|\bhills?\b|hilltop|hillside|foothills|\bmoors?\b|\bheath\b|\bplains?\b|prairie|steppe|tundra|\bfields?\b|pasture|farmland|meadow|grassland|savanna|open country|\bridge\b|standing stones|stone circle|menhir|\bcairn\b|open ground/;
 
@@ -1397,7 +1397,7 @@ export function wildsFromBrief(briefIn, seed = 1) {
     const n = campsite ? 2 : brief.size === 'big' ? int(r, 7, 10) : brief.size === 'medium' ? int(r, 5, 7) : int(r, 3, 5);
     const names = shuffle(r, SPOTS[set]);
     const rooms = [{ id: 'W1', name: pick(r, ['Trailhead', 'Edge of the Trees', 'Where the Path Starts']), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: true }];
-    for (let i = 0; i < n - 1; i++) rooms.push({ id: `W${i + 2}`, name: names[i % names.length], type: 'room', floor: 'F0', size: pick(r, ['small', 'medium', 'large']), description: '', props: [], marks: [], traps: [], items: [], exit: false });
+    for (let i = 0; i < n - 1; i++) rooms.push({ id: `W${i + 2}`, name: names[i % names.length], type: 'room', floor: 'F0', size: campsite ? 'medium' : pick(r, ['small', 'medium', 'large']), description: '', props: [], marks: [], traps: [], items: [], exit: false });
     for (const s of brief.rooms) {
         const hit = rooms.find(x => nameKey(x.name).includes(nameKey(s.room)) || nameKey(s.room).includes(nameKey(x.name)));
         const rm = hit ?? (rooms.push({ id: `W${rooms.length + 1}`, name: cap(s.name || s.room), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: false }), rooms.at(-1));
@@ -1408,7 +1408,7 @@ export function wildsFromBrief(briefIn, seed = 1) {
     if (rooms.length > 4) links.push({ a: rooms[1].id, b: rooms[rooms.length - 1].id, via: 'door' });
     const guards = [];
     const nG = brief.guards ?? (campsite ? 0 : int(r, 0, brief.size === 'big' ? 5 : 3));
-    for (let i = 0; i < nG; i++) { const w = brief.creatures ? cap(singular(brief.creatures)) : pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `a ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
+    for (let i = 0; i < nG; i++) { const w = bandWord(brief.creatures) || pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
     const nT = brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 0, 2);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });
     return {
@@ -1416,6 +1416,7 @@ export function wildsFromBrief(briefIn, seed = 1) {
         summary: [brief.summary, `${brief.name}: ${rooms.length} spots joined by trails${brief.mood ? `, ${brief.mood}` : ''}.`].filter(Boolean).join(' '),
         floors: [{ id: 'F0', name: brief.name, level: 0 }],
         rooms, links, guards, people: brief.people.filter(p => !p.hostile).map(p => ({ name: p.name, description: p.what, room: (rooms.find(x => nameKey(x.name).includes(nameKey(p.where))) ?? rooms[1] ?? rooms[0]).id })),
-        start: rooms[0].id,
+        // A campsite starts at the fire (the premise has them sitting by it), the trail in is the way out.
+        start: campsite && rooms[1] ? rooms[1].id : rooms[0].id,
     };
 }

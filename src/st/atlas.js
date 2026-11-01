@@ -14,6 +14,7 @@ import { roll } from '../core/dice.js';
 import { slug, nameKey, matchName } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, generateWilds, WILD_KINDS, clearDoorways, ensureIds } from '../core/layout.js';
 import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson, syncMounts } from '../core/explore.js';
+import { isBeast } from '../core/sprites.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
@@ -669,6 +670,7 @@ export async function pickLock(doorId, redraw = () => { }) {
     const { isRunning } = await import('./orchestrator.js');
     if (isRunning()) { toastr.info('The DM is busy. Try the lock when the turn is done.', 'Map', { timeOut: 2500 }); return; }
     if (stuck(c)) return;
+    if (/cuff|shackl|manacle|bound|tied|restrained/i.test(conditionsOf(c.docs.world, c.meta.persona.name).join(' '))) { toastr.info('Your hands are cuffed: get free first (tap yourself on the map).', 'Map', { timeOut: 3500 }); return; }
     if (!(await approachSpot({ x: door.x, y: door.y }, redraw))) return;
     const { key, place } = cur;
     const player = c.meta.persona.name;
@@ -1116,7 +1118,8 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
             const brief = normalizeBrief(await askPlaceBrief({ ...req, town }, { signal }).catch(error => { console.warn('[Dungeon Master] brief failed, building from the request', error); return {}; }), req);
             if (town) brief.kind = brief.kind && /town|village|city|hamlet/.test(brief.kind) ? brief.kind : 'town';
             // The brief may show it's a camp after all (a stockade of raiders holding captives): the fort builder, not a castle.
-            if (!camp && !town && isCamp(brief.kind, `${brief.name} ${brief.summary} ${brief.mood} ${brief.creatures}`)) camp = true;
+            // ...and a "camp" the brief shows is the party's own (they set up a temporary camp, one fire, one tent) is land, not a fort.
+            if (!town) camp = isCamp(brief.kind || req.kind, `${req.name} ${req.why || ''} ${req.objective || ''} ${req.start || ''} ${brief.name} ${brief.summary} ${brief.mood} ${brief.creatures}`);
             raw = town ? townFromBrief(brief, seed) : camp ? campFromBrief(brief, seed) : isWildKind(brief.kind, brief.name) || isWildKind(req.kind, req.name) ? wildsFromBrief(brief, seed) : planFromBrief(brief, seed);
             // The land hears what was asked for (a stream, standing stones) in the builder's own words.
             if (raw?.wild && req.why) raw.summary = [raw.summary, req.why].filter(Boolean).join(' ');
@@ -1180,7 +1183,7 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         await flushWrites();
         const summary = town
             ? `🗺️ **${place.name}** is ready: ${Object.keys(place.buildings).length} buildings. Their insides are built when you walk in.`
-            : camp ? `🗺️ **${place.name}** is ready: ${{ small: 'a small camp', medium: 'a camp', big: 'a big camp', massive: 'a sprawling war camp' }[place.camp?.size] ?? 'a camp'} ${place.camp?.walls === 'stone' ? 'behind stone walls' : place.camp?.walls === 'palisade' ? 'behind a palisade' : 'in the open'}, ${Object.keys(place.guards).length} people${Object.values(place.buildings).filter(b => b.kind !== 'tunnels').length ? ', and its houses have insides (walk in through their doors)' : ''}. The inside shows itself as you see it.`
+            : camp ? `🗺️ **${place.name}** is ready: ${{ small: 'a small camp', medium: 'a camp', big: 'a big camp', massive: 'a sprawling war camp' }[place.camp?.size] ?? 'a camp'} ${place.camp?.walls === 'stone' ? 'behind stone walls' : place.camp?.walls === 'palisade' ? 'behind a palisade' : 'in the open'}, ${Object.keys(place.guards).length} ${Object.keys(place.guards).length === 1 ? 'person' : 'people'}${Object.values(place.buildings).filter(b => b.kind !== 'tunnels').length ? ', and its houses have insides (walk in through their doors)' : ''}. The inside shows itself as you see it.`
             : `🗺️ **${place.name}** is ready: ${place.floors.length > 1 ? `${place.floors.length} floors, ` : ''}${Object.keys(place.rooms).length} ${wild ? 'spots joined by trails' : 'rooms'}${outside ? ', and its grounds outside (walk through the front door to go in or out)' : ''}.${place.fog ? ' Rooms reveal themselves as you explore.' : ''}`;
         await anim.finish(summary);
         await enterPlace(enterKey, { quiet });
@@ -1425,7 +1428,8 @@ export async function escortToCell(c, escort, playerText) {
     if (!lead) return 'escort ignored: the player is not on this map';
     const floorId = lead.floor;
     const near = g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId && !isOut(g) && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT;
-    const staff = g => g.hostile !== true || g.wasHostile === false;
+    // Who may take the player to a cell: anyone of the place who isn't an enemy, and the place's own band (a raider camp's guards, hostile or not).
+    const staff = g => g.hostile !== true || g.wasHostile === false || lineRole(g) === 'guard' || g.role === 'hostile' || Boolean(g.duty);
     let guard = escort.by ? personByName(place, escort.by) : null;
     if (guard && !(near(guard) && staff(guard))) return `escort ignored: ${guard.name} is not a guard of this place within reach`;
     if (!guard) guard = Object.values(place.guards).filter(g => near(g) && staff(g) && lineRole(g) === 'guard').sort((a, b) => Math.max(Math.abs(a.x - lead.x), Math.abs(a.y - lead.y)) - Math.max(Math.abs(b.x - lead.x), Math.abs(b.y - lead.y)))[0] ?? null;
@@ -1647,7 +1651,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         }
         return moved;
     };
-    const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => g.name));
+    const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => { g.met = true; return g.name; }));
     const quarry = names.filter(n => !(place.state.held?.[n] && isAway(c.docs.world, n)));
     // How far each guard after the player was when the walk began: walking up to him is not running from him.
     const chaseFrom = Object.fromEntries(Object.values(place.guards).filter(g => g.seize && g.floor === floorId).map(g => [g.name, Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y))]));
@@ -1658,10 +1662,10 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') { setDoorState(place, d, 'open'); sfx('door'); }
             lead.x = x; lead.y = y;
-            syncMounts(place);
             walked++;
             sfx('step', { theme: floorById(place, floorId).map.theme });
             advance();
+            syncMounts(place);
             // Anyone after the party keeps after them, a step for each of the player's.
             const caught = moveHunters(place, floorId, quarry, 1, { skip: g => outByWorld(c, g) });
             const vis = look(c, key, place);
@@ -1678,8 +1682,9 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             // Guards and residents who see the party: a trespasser stops the walk (the DM rules on it).
             const watched = watchParty(c, cur, quarry);
             if (watched.events.length) { event = watched.events.join(' '); break; }
-            const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false);
-            if (newGuard) { event = `${newGuard.name} (${newGuard.description || 'a guard'}${newGuard.down ? `, ${DOWN_WORDS[newGuard.down]}` : ''}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
+            // Someone new comes into view: the DM decides if they notice. Once met, a person (or a horse) wandering in and out of sight is no event.
+            const newGuard = visibleGuards(place, floorId, vis).find(g => !seenGuards.has(g.name) && g.hostile !== false && !g.met && !isBeast(g));
+            if (newGuard) { newGuard.met = true; event = `${newGuard.name} (${newGuard.description || 'a guard'}${newGuard.down ? `, ${DOWN_WORDS[newGuard.down]}` : ''}) comes into view in ${place.rooms[newGuard.room]?.name ?? 'a passage'}, ${Math.max(Math.abs(newGuard.x - x), Math.abs(newGuard.y - y))} squares away${newGuard.state === 'alert' ? ', already alert' : ''}. Decide if they notice the party (their passive Perception against the party's Stealth if sneaking), and what they do.`; break; }
             const up = stairsAt(place, floorId, x, y);
             if (up) { handoff = { stairs: up }; break; }
             const exit = exitAt(place, floorId, x, y);
@@ -1690,6 +1695,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         // Wait for anyone still deciding, then everyone following catches up (unless something happened).
         if (pending.length) await Promise.all(pending);
         for (let i = 0; i < 40 && !event && advance(); i++) {
+            syncMounts(place);
             look(c, key, place);
             redraw();
             await sleep(125);
@@ -1752,7 +1758,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
                 // Out of a wagon: on the ground beside it, wherever it has got to.
                 const pv = place.parent.prop && town ? propById(town, place.parent.prop) : null;
                 if (td && td.state === 'hidden') setDoorState(town, td, 'open');
-                const outside = td ? freeNear(town, td.floor, td.x, td.y) : pv ? freeNear(town, pv.floor, pv.prop.x + Math.floor((pv.prop.w || 1) / 2), pv.prop.y - 1) : null;
+                const outside = td ? freeNear(town, td.floor, td.x, td.y) : pv ? freeNear(town, pv.floor, ...wagonSide(place, handoff.exit, pv.prop)) : null;
                 const outFloor = td?.floor ?? pv?.floor;
                 await enterPlace(upKey, { at: outside && outFloor ? { floor: outFloor, ...outside } : null, quiet: true });
             } else {
@@ -1958,7 +1964,7 @@ export async function applyMapSync(c, ops) {
             const isParty = Boolean(place.state.positions[ch.who]);
             if (!isParty) {
                 const g = personByName(place, ch.who), to = where(ch.to);
-                if (g && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to the ${thingLabel(place, ch.to)}`);
+                if (g && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to ${/^the /i.test(thingLabel(place, ch.to)) ? '' : 'the '}${thingLabel(place, ch.to)}`);
                 continue;
             }
             if (lockedReason(c, ch.who)) continue;
@@ -2088,7 +2094,7 @@ export async function enterVehicle(propId, { quiet = false } = {}) {
     const ikey = `${here.key}--${slug(prop.id, 12)}`;
     if (!atlas(c).places[ikey]) {
         const inside = generateWagon(kind, { name: prop.label || PROPS[prop.type].name, seed: Math.floor(Math.random() * 1e9) });
-        inside.parent = { key: here.key, prop: prop.id };
+        inside.parent = { key: here.key, prop: prop.id, name: here.place.name };
         inside.hostKind = 'wagon';
         for (const n of [c.meta.persona.name, ...c.meta.party.map(p => p.name)]) setStanding(inside, n, standingFor('free'));
         storePlace(c, ikey, inside, { parent: here.key, size: 'small' });
@@ -2108,4 +2114,44 @@ export function findVehicle(c, name) {
     return wagons.find(p => p.label && (nameKey(p.label) === key || nameKey(p.label).includes(key) || key.includes(nameKey(p.label))))
         ?? wagons.find(p => key.includes(nameKey(PROPS[p.type].name)) || (/jail|prison|cage|barred/.test(key) ? p.type === 'jailwagon' : /wagon|cart|carriage|caravan/.test(key) && p.type === 'wagon'))
         ?? null;
+}
+
+/** The square beside a wagon on the side of the door the party came out by (x, y on the outside map). */
+function wagonSide(inside, exit, prop) {
+    const im = floorById(inside, exit?.floor ?? inside.state.floor)?.map;
+    const w = prop.w || 1, h = prop.h || 1, cx = prop.x + Math.floor(w / 2);
+    if (!im || !exit) return [cx, prop.y - 1];
+    if (exit.y === 0) return [cx, prop.y - 1];
+    if (exit.y === im.h - 1) return [cx, prop.y + h];
+    if (exit.x === im.w - 1) return [prop.x + w, prop.y];
+    return [prop.x - 1, prop.y];
+}
+
+/** The player's own words give in to a guard (surrender, going quietly). */
+export function playerGivesIn(text) {
+    return givesIn(text);
+}
+
+/**
+ * "Amber climbs into the wagon": the player's words put them in a wagon on this map, by code. The
+ * nearest wagon the words fit (within reach, or walked up to), then its inside. Returns the event
+ * line for the DM, or '' when there's no wagon in it.
+ */
+export async function climbInFromText(c, text, redraw = () => { }) {
+    const here = currentPlace(c);
+    if (!here || !text) return '';
+    const m = /\b(?:climb|clamber|get|gets|got|hop|hops|haul|hauls|step|steps|crawl|crawls|scramble|scrambles|duck|ducks|go|goes)\b[^.!?\n]{0,30}?\b(?:in|into|inside|aboard|onto|up into|up on)\b[^.!?\n]{0,30}?\b((?:jail(?:er'?s)?|prison|barred|open|covered|the)?\s*(?:wagon|cart|carriage|caravan|coach))\b/i.exec(text);
+    if (!m) return '';
+    const v = findVehicle(c, m[1]) ?? findVehicle(c, 'wagon');
+    if (!v) return '';
+    const lead = here.place.state.positions[c.meta.persona.name];
+    if (!lead) return '';
+    const w = v.w || 1, h = v.h || 1;
+    const dist = Math.max(Math.max(v.x - lead.x, lead.x - (v.x + w - 1), 0), Math.max(v.y - lead.y, lead.y - (v.y + h - 1), 0));
+    if (dist > 1 && !(await approachSpot({ x: v.x, y: v.y }, redraw))) return '';
+    const label = v.label || PROPS[v.type].name;
+    const ok = await enterVehicle(v.id, { quiet: true });
+    if (!ok) return '';
+    const inside = currentPlace(c)?.place;
+    return `${c.meta.persona.name} climbed into ${label} (${v.id}): the party is now on its inside map, "${inside?.name ?? label}"${inside?.vehicle === 'jail' ? ', iron bars all round and one steel door, locked' : ', open on either side'}. Narrate only what is on that map: ${inside ? (inside.floors[0].map.props || []).map(p => p.label || PROPS[p.type]?.name || p.type).join(', ') : 'nothing'}.`;
 }

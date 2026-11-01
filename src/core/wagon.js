@@ -21,7 +21,7 @@ export function generateWagon(kind = 'open', { name = '', seed = 1 } = {}) {
     const map = { w: W, h: H, rows: [], theme: 'ship', props: [], areas: [{ x: 0, y: 0, w: W, h: H, floor: 'planks', wall: 'timber' }], roofs: [], seed, ambience: 'none' };
     const place = {
         version: 1, kind: 'interior', name: title, theme: 'ship', fog: false, seed, vehicle: kind,
-        summary: jail ? 'Inside a jailer\'s wagon: iron bars on every side, a bed of planks, one steel door, locked.' : 'Inside a covered wagon: boards, planks and straw, open to climb off on either side.',
+        summary: jail ? 'Inside a jailer\'s wagon: iron bars on every side, a bed of planks, one steel door, locked.' : 'Inside an open wagon: boards, planks and straw, open to climb off on either side.',
         floors: [{ id: 'F0', name: title, level: 0, map }], rooms: {}, doors: {}, stairs: [], traps: {}, items: {}, guards: {}, exits: [], buildings: {},
         start: { floor: 'F0', x: 3, y: 2, room: 'WAGON' }, state: { positions: {}, explored: { F0: '1'.repeat(W * H) }, visited: [], floor: 'F0' },
     };

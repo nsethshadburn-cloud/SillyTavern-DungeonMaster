@@ -60,8 +60,9 @@ export function defaultTaskModels(main = DEFAULT_MAIN_MODEL, light = DEFAULT_LIG
  */
 export function pickModel(tasks, { hybrid, mainModel, taskModels, criticalModel = '', criticalRoll = false, rank = () => 0 }) {
     if (!hybrid) return mainModel;
-    // A job the settings don't know about (added in a later version) uses the main model.
-    const models = tasks.map(t => taskModels?.[t] || mainModel);
+    // The turn prompts' names are the combat round's job; a job the settings don't know about (added in a later version) uses the main model.
+    const ALIAS = { player_turn: 'combat_round', end_turn: 'combat_round', reaction: 'combat_round' };
+    const models = tasks.map(t => taskModels?.[ALIAS[t] ?? t] || taskModels?.[t] || mainModel);
     if (criticalRoll && criticalModel) models.push(criticalModel);
     if (!models.length) return mainModel;
     // Highest rank wins; on a tie the main model wins, then the first listed.

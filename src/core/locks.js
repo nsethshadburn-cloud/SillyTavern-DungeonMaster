@@ -37,6 +37,7 @@ function hash(text) {
  */
 export function lockDc(place, door) {
     if (Number.isFinite(door.lockDc)) return door.lockDc;
+    if (Number.isFinite(door.dc)) { door.lockDc = door.dc; return door.dc; }
     const words = `${place.kind || ''} ${place.name || ''}`.toLowerCase();
     let dc = PLACE_DC.find(([re]) => re.test(words))?.[1] ?? 13;
     const behind = (door.rooms || []).map(id => place.rooms?.[id]?.type).filter(Boolean);

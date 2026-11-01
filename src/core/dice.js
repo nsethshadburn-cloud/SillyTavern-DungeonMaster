@@ -182,7 +182,21 @@ export function judge(total, dc, natural = null, kind = 'check') {
  * Read a die result the player typed, e.g. "14", "I rolled a 17", "nat 20", "rolled 12 total 17".
  * @returns {{natural:number|null, total:number|null}|null}
  */
-export function parsePlayerRoll(text, dieSides = 20) {
+/** The most a dice expression can come to ("1d4+5" → 9); 0 when it isn't one. */
+export function diceMax(expr) {
+    const s = String(expr || '').toLowerCase().replace(/\s+/g, '');
+    if (!/^\d*d\d+([+-]\d*d?\d+)*$/.test(s)) return 0;
+    let max = 0;
+    for (const term of s.match(/[+-]?[^+-]+/g) || []) {
+        const sign = term.startsWith('-') ? -1 : 1;
+        const t = term.replace(/^[+-]/, '');
+        const d = /^(\d*)d(\d+)$/.exec(t);
+        max += sign * (d ? Math.max(1, Number(d[1] || 1)) * Number(d[2]) : Number(t));
+    }
+    return Math.max(0, max);
+}
+
+export function parsePlayerRoll(text, dieSides = 20, { advantage = 'none' } = {}) {
     if (!text) return null;
     const t = String(text).toLowerCase();
     let natural = null;
@@ -192,10 +206,12 @@ export function parsePlayerRoll(text, dieSides = 20) {
     const tot = t.match(/\b(?:total|totals|for a total of|=)\s*(?:of\s*)?(-?\d{1,3})\b/);
     if (tot) total = parseInt(tot[1], 10);
     if (natural === null) {
-        // First standalone number in the message.
+        // First standalone number in the message; with advantage or disadvantage and two dice typed ("14, 5"), the one the rule keeps.
         const nums = [...t.matchAll(/(?<![\w.])(\d{1,3})(?![\w.])/g)].map(m => parseInt(m[1], 10));
         const candidates = nums.filter(n => total === null || n !== total);
-        if (candidates.length) {
+        const two = advantage && advantage !== 'none' && candidates.length >= 2 && candidates.slice(0, 2).every(n => n >= 1 && n <= dieSides);
+        if (two) natural = advantage === 'disadvantage' ? Math.min(candidates[0], candidates[1]) : Math.max(candidates[0], candidates[1]);
+        else if (candidates.length) {
             const first = candidates[0];
             if (first >= 1 && first <= dieSides) natural = first;
             else if (total === null) total = first;
