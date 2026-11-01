@@ -18,7 +18,7 @@ import { isBeast } from '../core/sprites.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
-import { PROPS, HIDE, colName } from '../core/grid.js';
+import { PROPS, HIDE, colName, toCoord } from '../core/grid.js';
 import { generateWagon } from '../core/wagon.js';
 import { BODY_MS, OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, GUARD_SIGHT, hostileNotice, checkTriggers, ageNotice, noticeTraps, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
@@ -699,6 +699,7 @@ export async function pickLock(doorId, redraw = () => { }) {
         sfx('lockpick', { ok: true });
         setDoorState(place, door, 'open');
         delete door.picks;
+        noteMapAction(c, `${player} picked the lock of ${door.id} (${doorRooms(place, door)}) and opened it (${skill} ${total} against DC ${dc})`);
         await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✔ · it clicks open.`, { roll: { who: player, what: skill, natural, total, success: true } });
         look(c, key, place);
         savePlace(key, c);
@@ -710,6 +711,7 @@ export async function pickLock(doorId, redraw = () => { }) {
         return;
     }
     const { count, alarm } = notePickFailure(door, player, natural);
+    noteMapAction(c, `${player} tried to pick ${door.id} (${doorRooms(place, door)}) and failed (${count} tr${count > 1 ? 'ies' : 'y'}${natural === 1 ? ', the pick snapped' : ''})`);
     sfx('lockpick', { ok: false, snap: natural === 1 });
     savePlace(key, c);
     await postDiceCard(`🎲 **${player}** · ${skill} (picking ${what}, ${lockWords(dc)}): d20 (${natural}) ${mod >= 0 ? '+' : ''}${mod} = **${total}** ✘${natural === 1 ? ' · the pick snaps with a loud scrape.' : ` · it won't give (${count} tr${count > 1 ? 'ies' : 'y'}).`}`, { roll: { who: player, what: skill, natural, total, success: false } });
@@ -736,6 +738,7 @@ export async function unlockWithKey(doorId, redraw = () => { }) {
     if (!(await approachSpot({ x: door.x, y: door.y }, redraw))) return;
     setDoorState(cur.place, door, 'open');
     await postNote(`🔑 ${c.meta.persona.name} unlocks the door with the ${item}.`);
+    noteMapAction(c, `${c.meta.persona.name} unlocked ${door.id} (${doorRooms(cur.place, door)}) with the ${item}`);
     look(c, cur.key, cur.place);
     savePlace(cur.key, c);
     redraw();
@@ -744,7 +747,7 @@ export async function unlockWithKey(doorId, redraw = () => { }) {
 }
 
 /** Shove something light one square (free). Heavy things go to the DM for a roll instead. */
-export function pushProp(id, dir) {
+export async function pushProp(id, dir) {
     const c = campaign();
     const cur = currentPlace(c);
     if (!cur) return { ok: false, why: 'no map' };
@@ -752,10 +755,19 @@ export function pushProp(id, dir) {
     const held = lockedReason(c, c.meta.persona.name);
     if (held) return { ok: false, why: held };
     const people = [...Object.values(place.state.positions), ...Object.values(place.guards).filter(g => g.state !== 'gone')];
+    const found = propById(place, id);
+    const label = found?.prop.label || PROPS[found?.prop.type]?.name || id;
     const r = moveProp(place, id, dir, { people });
-    if (r.ok) { savePlace(key, c); look(c, key, place); }
+    if (r.ok) {
+        savePlace(key, c); look(c, key, place);
+        const what = `shoved the ${label} ${DIR_NAMES[dir] ?? dir}${r.door ? ', blocking a doorway' : ''}`;
+        noteMapAction(c, `${c.meta.persona.name} ${what}`);
+        await witnessed(c, what);
+    }
     return r;
 }
+
+const DIR_NAMES = { n: 'north', s: 'south', e: 'east', w: 'west' };
 
 /** Climb out through a broken window: out of a town building onto the street beside it, or out of a place. */
 export async function climbOut(winId) {
@@ -1674,6 +1686,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => { g.met = true; return g.name; }));
     const keeperStart = custodyStart(c, place, names[0]);
+    const startAt = { x: lead.x, y: lead.y };
     const quarry = names.filter(n => !(place.state.held?.[n] && isAway(c.docs.world, n)));
     // How far each guard after the player was when the walk began: walking up to him is not running from him.
     const chaseFrom = Object.fromEntries(Object.values(place.guards).filter(g => g.seize && g.floor === floorId).map(g => [g.name, Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y))]));
@@ -1774,8 +1787,10 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         if (handoff?.stairs) {
             const s = handoff.stairs;
             await enterPlace(key, { at: { floor: s.floor, x: s.x, y: s.y } });
+            noteMapAction(c, `${names[0]} took the stairs to ${floorById(place, s.floor).name}`);
             toastr.info(`${floorById(place, s.floor).name}`, 'Map', { timeOut: 1800 });
         } else if (handoff?.building) {
+            noteMapAction(c, `the party went in through ${handoff.building.name || 'a door'} (${handoff.building.id})`);
             await enterBuilding(c, key, place, handoff.building);
         } else if (handoff?.exit) {
             if (place.parent) {
@@ -1791,6 +1806,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
                 const outside = td ? freeNear(town, td.floor, td.x, td.y) : pv ? freeNear(town, pv.floor, ...wagonSide(place, handoff.exit, pv.prop)) : null;
                 const outFloor = td?.floor ?? pv?.floor;
                 await enterPlace(upKey, { at: outside && outFloor ? { floor: outFloor, ...outside } : null, quiet: true });
+                noteMapAction(c, `the party came out of ${place.name}${pv ? ' (climbed out of the wagon)' : ''}`);
             } else {
                 // Leaving the map for good: ask first (a stray tap shouldn't end it).
                 const ok = await ST.callGenericPopup(`<h3>Leave ${escape(place.name)}?</h3><p>You'll walk out and this map closes. The DM takes the story from there (it can bring you back here later).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Leave', cancelButton: 'Stay' });
@@ -1814,6 +1830,15 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     if (inTurn) {
         if (event) trapEvents.push(event);
         return;
+    }
+    // A walk that went somewhere (three squares or a new room) is on the record for the DM and the companions.
+    if (!event && !handoff) {
+        const endRoom = roomAt(place, lead.floor, lead.x, lead.y);
+        const moved = Math.max(Math.abs(lead.x - startAt.x), Math.abs(lead.y - startAt.y));
+        if (moved >= 3 || endRoom?.id !== fromRoom?.id) {
+            const stayed = Object.entries(place.state.waiting || {}).filter(([n, w]) => w && refused.has(n)).map(([n]) => n);
+            noteMapAction(c, `${names[0]} walked ${fromRoom ? `from ${fromRoom.name} ` : ''}to ${endRoom ? endRoom.name : 'the open ground'} (${toCoord(lead.x, lead.y)}, ${moved} squares)${stayed.length ? `; ${stayed.join(' and ')} stayed behind` : ''}`);
+        }
     }
     if (!event) { const { drainTalk } = await import('./talk.js'); await drainTalk(); }
     if (event) {
@@ -2133,7 +2158,16 @@ export async function enterVehicle(propId, { quiet = false } = {}) {
         storePlace(c, ikey, inside, { parent: here.key, size: 'small' });
         await flushWrites();
     }
+    const label = prop.label || PROPS[prop.type].name;
+    const lead = here.place.state.positions[c.meta.persona.name];
+    const seenBy = !quiet && lead ? watchersSeeing(c, here.place, lead.floor, c.meta.persona.name) : [];
     await enterPlace(ikey, { quiet });
+    if (!quiet) {
+        await postNote(`🛞 ${c.meta.persona.name} climbs into ${label}${partyOnMap(c).length > 1 ? ' with the party' : ''}.`);
+        noteMapAction(c, `the party climbed into ${label} (${prop.id}); they are on its inside map now`);
+        if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched the party climb into ${label}. Decide what they make of it and do; brief them if they speak.`);
+        else { const { companionSaw } = await import('./orchestrator.js'); await companionSaw(c, `climbed into ${label}`); }
+    }
     return true;
 }
 
@@ -2372,4 +2406,26 @@ export async function custodyBolt(c, text) {
     if (gap <= 1 && rec.lastGrabTurn !== c.meta.turn) return custodyGrab(c, cur, rec, cuffs);
     savePlace(key, c);
     return `${player} says they run from ${rec.by} (${gap} squares off): ${rec.by} goes after them; the code rolls the grab when ${rec.by} reaches them. Narrate the break and brief ${rec.by}; don't resolve the chase.`;
+}
+
+// ---------- the map and the chat in step ----------
+
+/**
+ * What the player did on the map, resolved by the code (a walk, a lock, a shove, a wagon): kept
+ * until the DM's next turn, where it's read as fact, and shown to the companions as just happened.
+ */
+export function noteMapAction(c, text) {
+    if (!c || !text) return;
+    c.meta.mapLog = [...(c.meta.mapLog || []).slice(-11), { turn: c.meta.turn, text: String(text).slice(0, 200) }];
+    saveMeta();
+}
+
+/** Something the player just did on the map, in plain view: whoever of the place saw it goes to the DM; else a companion may say a word. */
+async function witnessed(c, what) {
+    const cur = currentPlace(c);
+    const lead = cur?.place.state.positions[c.meta.persona.name];
+    if (!cur || !lead) return;
+    const seenBy = watchersSeeing(c, cur.place, lead.floor, c.meta.persona.name);
+    if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched ${c.meta.persona.name} ${what}. Decide what they make of it and do (object, help, shout, look the other way); brief them if they speak.`);
+    else { const { companionSaw } = await import('./orchestrator.js'); await companionSaw(c, what); }
 }

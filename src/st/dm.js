@@ -242,6 +242,7 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     if (c.meta.turnProblems?.length) sections.push('', `WHAT DIDN'T TAKE LAST TURN (the code dropped these and the player saw a warning). Fix each one now with the exact names and ids in the state above, and never claim in the story what the tracker doesn't show:\n${c.meta.turnProblems.map(p => `- ${p}`).join('\n')}`);
     if (rollResolution) sections.push('', `ROLL RESULT: ${rollResolution}`);
     if (placeEvent) sections.push('', `PLACE EVENT: ${placeEvent}`);
+    if (c.meta.mapLog?.length) sections.push('', `ON THE MAP SINCE YOUR LAST TURN (the player did these on the map and the code resolved them; they are real and already done: narrate what follows from them in a line where it matters, keep every companion and NPC consistent with them, never redo or undo them, never ask for a roll for them):\n${c.meta.mapLog.map(e => `- ${e.text}`).join('\n')}`);
     if (events.length) {
         sections.push('', 'RANDOM EVENT CANDIDATES (use one by id, "custom", or "none"):');
         for (const ev of events) sections.push(`- [${ev.id}] ${ev.title} (${ev.type}, danger ${ev.danger}/5): ${ev.seed}`);

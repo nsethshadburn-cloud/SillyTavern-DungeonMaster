@@ -12,7 +12,7 @@ import { mapRequest } from '../core/triage.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, buildFromRequest, enterVehicle, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
+import { currentPlace, buildFromRequest, enterVehicle, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey, noteMapAction } from '../st/atlas.js';
 import { moveBudget, conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions, lockedLine } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
@@ -972,6 +972,7 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
             if (!r) { toastr.info('Someone is already there.', 'Map', { timeOut: 2000 }); return; }
             // Going to sleep matters to the story (time passes, a rest); sitting down doesn't need the DM.
             if (verb === 'sleep') { setMapAction(`${player} lies down on the ${r.what} (${p.id}) to sleep. A short or long rest if it's safe; otherwise someone may come.`); sendAsPlayer(`*${player} lies down on the ${r.what} and goes to sleep.*`); }
+            else noteMapAction(c, `${player} ${verb === 'sit' ? 'sat down on' : 'lay down on'} the ${r.what}`);
             done();
         }];
         actions = [
@@ -999,7 +1000,7 @@ function openPushMenu(ev, c, thing, light, redraw, done) {
     const player = c.meta.persona.name, p = thing.prop;
     const push = dir => async () => {
         if (light) {
-            const r = pushProp(p.id, dir);
+            const r = await pushProp(p.id, dir);
             if (!r.ok) toastr.info(`It won't go that way: ${r.why}.`, 'Map', { timeOut: 2500 });
             else if (r.door) toastr.info(`The ${thing.name} now blocks the door.`, 'Map', { timeOut: 2500 });
             done();

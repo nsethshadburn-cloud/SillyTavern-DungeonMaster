@@ -1790,6 +1790,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // What just visibly changed: companions see it until the DM's next turn, so they don't redo it,
     // and then in their timeline with when and where it happened.
     meta.happened = t.happened || '';
+    // The DM has had what was done on the map: the next turn starts a fresh record.
+    meta.mapLog = [];
     if (t.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: t.happened });
     if (t.table_rules_add.length || t.table_rules_remove.length) {
         meta.tableRules = applyTableRules(meta.tableRules, t.table_rules_add, t.table_rules_remove);

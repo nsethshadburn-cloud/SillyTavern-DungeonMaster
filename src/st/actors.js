@@ -105,7 +105,9 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
     });
     const state = stateVars(c, speaker, { npc: Boolean(npc) });
     parts.push({ key: 'state', text: renderTemplate(s.templates.state, { ...vars, ...state }) });
-    if (c.meta.happened) parts.push({ key: 'happened', text: renderTemplate(s.templates.happened, { ...vars, happened: c.meta.happened }) });
+    // What the DM said just happened, and what the player just did on the map (resolved by the code): already done, not to be redone.
+    const happened = [c.meta.happened, ...(c.meta.mapLog || []).map(e => e.text)].filter(Boolean).join(' ');
+    if (happened) parts.push({ key: 'happened', text: renderTemplate(s.templates.happened, { ...vars, happened }) });
     const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
     if (knowledge) parts.push({ key: 'knowledge', text: renderTemplate(s.templates.knowledge, { ...vars, knowledge }) });
     if (speaker) {
