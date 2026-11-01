@@ -27,7 +27,7 @@ import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
@@ -1310,7 +1310,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const said = nameKey(`${t.player_roll.reason} ${t.player_roll.skill}`);
         const first = n => nameKey(n).split(' ')[0];
         const rawSaid = `${t.player_roll.reason} ${t.player_roll.skill}`.toLowerCase();
-        const forWhom = meta.party.map(p => p.name).find(n => !new RegExp(`\\b${first(meta.persona.name)}(?:'s|’s)?\\b`).test(rawSaid) && new RegExp(`(?:^|\\s|\\()${first(n)}(?:'s|’s)\\s|\\bfor ${first(n)}\\b|^${first(n)} (?:must|needs to|has to|rolls|makes|saves|tries)\\b`).test(rawSaid));
+        const forWhom = rollBelongsTo(rawSaid, meta.persona.name, meta.party.map(p => p.name));
         if (forWhom) {
             const pr0 = t.player_roll;
             const mod = lookupModifier(statsForName(forWhom, meta), pr0).mod;

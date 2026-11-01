@@ -132,3 +132,15 @@ test('prone is a restraint: on the ground until they get up, drawn lying down, c
     const tidy = tidyBookkeeping({ conditions_add: { Amber: ['prone', 'poisoned'] }, conditions_remove: { Amber: ['prone'] } }, { party: ['Amber'] });
     assert.deepEqual(tidy.conditions_add?.Amber ?? [], ['poisoned'], 'the bookkeeper never sets or clears prone');
 });
+
+test("whose roll: the player's unless the words make it the companion's own", async () => {
+    const { rollBelongsTo } = await import('../src/core/triage.js');
+    const party = ['Judy Hopps'];
+    assert.equal(rollBelongsTo("Getting up off the ground with cuffed hands and Judy's weight on your back.", 'Amber', party), null, "Judy's weight on YOUR back is the player's roll");
+    assert.equal(rollBelongsTo('Acrobatics to slip free while Judy is watching', 'Amber', party), null);
+    assert.equal(rollBelongsTo("Judy's DEX save against the trap", 'Amber', party), 'Judy Hopps');
+    assert.equal(rollBelongsTo('Perception check for Judy to notice the knife', 'Amber', party), 'Judy Hopps');
+    assert.equal(rollBelongsTo('Judy must climb the wall: Athletics', 'Amber', party), 'Judy Hopps');
+    assert.equal(rollBelongsTo("Amber's Athletics, with Judy's knee on him", 'Amber', party), null, 'names the player: the player\'s');
+    assert.equal(rollBelongsTo("Judy's lantern lights the lock: Sleight of Hand to pick it", 'Amber', party), null, "a possessive that isn't a roll word");
+});

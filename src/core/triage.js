@@ -272,3 +272,31 @@ export function parseCompanionCombat(text, { foes = [], allies = [], weapons = [
     const where = ['closer', 'away'].includes(String(d.where || '').toLowerCase()) ? String(d.where).toLowerCase() : '';
     return { action, target, weapon, item, where, why: String(d.why || '').slice(0, 80) };
 }
+
+const ROLL_WORDS = 'save|saving throw|check|roll|skill|attack|test|contest|acrobatics|athletics|perception|stealth|insight|persuasion|deception|intimidation|investigation|survival|arcana|history|medicine|nature|religion|sleight of hand|animal handling|performance|initiative|dex|str|con|wis|int|cha|dexterity|strength|constitution|wisdom|intelligence|charisma';
+
+/**
+ * Whose roll a player_roll really is: the player's, unless its words make it a companion's own
+ * ("Judy's DEX save", "for Judy", "Judy must climb"). A reason that speaks to the player ("you",
+ * "your") is the player's whatever names it mentions ("Judy's weight on your back"), and so is
+ * one that names the player. Returns the companion's name, or null.
+ * @param {string} text the request's reason and skill
+ * @param {string} player
+ * @param {string[]} companions
+ */
+export function rollBelongsTo(text, player, companions) {
+    const raw = String(text || '').toLowerCase();
+    const esc = s => String(s || '').toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const first = n => esc(nameKey(n).split(' ')[0]);
+    if (new RegExp(`\\b${first(player)}(?:'s|’s)?\\b`).test(raw)) return null;
+    const addressed = /\b(?:you|your|yourself)\b/.test(raw);
+    for (const n of companions) {
+        const f = first(n);
+        if (!f) continue;
+        if (new RegExp(`\\bfor ${f}\\b`).test(raw)) return n;
+        if (addressed) continue;
+        if (new RegExp(`(?:^|\\s|\\()${f}(?:'s|’s)\\s+(?:\\w+\\s+){0,2}(?:${ROLL_WORDS})\\b`).test(raw)) return n;
+        if (new RegExp(`^${f} (?:must|needs to|has to|rolls|makes|saves|tries|attempts)\\b`).test(raw)) return n;
+    }
+    return null;
+}

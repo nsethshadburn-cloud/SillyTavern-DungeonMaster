@@ -288,7 +288,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.56.2-beta';
+export const LOADED_VERSION = '0.56.3-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

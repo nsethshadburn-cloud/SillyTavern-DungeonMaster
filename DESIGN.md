@@ -324,6 +324,9 @@ Each phase ends with something you can actually test in SillyTavern.
 - **DM style:** plain simple English, usually 1-3 sentences of narration.
 - Tested offline against fake KoboldCpp/Chatterbox servers that log every request: narration absent from the bot's prompt, brief present only on DM turns, voices requested by the plugin only and in chat order, battle map on desktop and phone sizes.
 
+### v0.56.3 (whose roll)
+"Getting up... with Judy's weight on your back" was rolled for Judy: the companion-roll reader took any possessive as the companion's roll. `rollBelongsTo` in `core/triage.js` now needs a roll word after the possessive ("Judy's DEX save"), "for Judy", or "Judy must...", and a reason that speaks to the player (you, your) is the player's whatever it names.
+
 ### v0.56.2 (staging companions)
 The DM's "positions" for a companion were refused outside a fight even at the opening ("Judy kneeling on his back" → a warning). The DM may now place anyone at the opening, put a companion beside the player, or nudge one a square or two; further moves are theirs to walk, and that refusal goes to the DM only.
 
