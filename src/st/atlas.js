@@ -13,11 +13,12 @@ import { lockDc, lockWords, pickModifier, notePickFailure, keyFor } from '../cor
 import { roll } from '../core/dice.js';
 import { slug, nameKey, matchName } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, generateWilds, WILD_KINDS, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson, syncMounts } from '../core/explore.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
 import { PROPS, HIDE, colName } from '../core/grid.js';
+import { generateWagon } from '../core/wagon.js';
 import { BODY_MS, OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
 import { outBy } from '../core/notice.js';
@@ -1657,6 +1658,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') { setDoorState(place, d, 'open'); sfx('door'); }
             lead.x = x; lead.y = y;
+            syncMounts(place);
             walked++;
             sfx('step', { theme: floorById(place, floorId).map.theme });
             advance();
@@ -1746,10 +1748,13 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
                 const up = handoff.exit.up && atlas(c).places[handoff.exit.up.key] ? handoff.exit.up : null;
                 const upKey = up?.key ?? place.parent.key;
                 const town = await loadPlace(upKey, c);
-                const td = town?.doors[up?.door ?? place.parent.door];
+                const td = place.parent.prop ? null : town?.doors[up?.door ?? place.parent.door];
+                // Out of a wagon: on the ground beside it, wherever it has got to.
+                const pv = place.parent.prop && town ? propById(town, place.parent.prop) : null;
                 if (td && td.state === 'hidden') setDoorState(town, td, 'open');
-                const outside = td ? freeNear(town, td.floor, td.x, td.y) : null;
-                await enterPlace(upKey, { at: outside ? { floor: td.floor, ...outside } : null, quiet: true });
+                const outside = td ? freeNear(town, td.floor, td.x, td.y) : pv ? freeNear(town, pv.floor, pv.prop.x + Math.floor((pv.prop.w || 1) / 2), pv.prop.y - 1) : null;
+                const outFloor = td?.floor ?? pv?.floor;
+                await enterPlace(upKey, { at: outside && outFloor ? { floor: outFloor, ...outside } : null, quiet: true });
             } else {
                 // Leaving the map for good: ask first (a stray tap shouldn't end it).
                 const ok = await ST.callGenericPopup(`<h3>Leave ${escape(place.name)}?</h3><p>You'll walk out and this map closes. The DM takes the story from there (it can bring you back here later).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Leave', cancelButton: 'Stay' });
@@ -1828,6 +1833,7 @@ export function tickPlace(c = campaign(), { still = [] } = {}) {
     clearTrails(place);
     const stillSet = new Set(still);
     tickGuards(place, Math.random, 0.75, PATROL_STEPS, { skip: g => outByWorld(c, g) || stillSet.has(g.name) });
+    syncMounts(place);
     const vis = look(c, key, place);
     clearBodies(place);
     const now = visibleGuards(place, floorId, vis);
@@ -2064,4 +2070,42 @@ export function syncContext(c) {
         party, people, things: [...things, ...doors], rooms: floorRooms, items, carried,
         known: { party: names, people: guards.map(g => g.name), peopleInfo: Object.fromEntries(guards.map(g => [g.name, g.description || ''])), things: things.map(t => t.id), doors: doors.map(d => d.id), rooms: floorRooms.map(r => r.id), items: items.map(i => i.id), carried , labels },
     };
+}
+
+/**
+ * Climb into a wagon on the map: its inside is a tiny place of its own, built the first time
+ * (an open wagon: boards and straw, off on either side; a jailer's wagon: bars and a locked steel
+ * door). The party comes out beside the wagon, wherever the story has moved it.
+ */
+export async function enterVehicle(propId, { quiet = false } = {}) {
+    const c = campaign();
+    const here = currentPlace(c);
+    if (!c || !here) return false;
+    const found = propById(here.place, propId);
+    const prop = found?.prop;
+    const kind = PROPS[prop?.type]?.vehicle;
+    if (!kind) return false;
+    const ikey = `${here.key}--${slug(prop.id, 12)}`;
+    if (!atlas(c).places[ikey]) {
+        const inside = generateWagon(kind, { name: prop.label || PROPS[prop.type].name, seed: Math.floor(Math.random() * 1e9) });
+        inside.parent = { key: here.key, prop: prop.id };
+        inside.hostKind = 'wagon';
+        for (const n of [c.meta.persona.name, ...c.meta.party.map(p => p.name)]) setStanding(inside, n, standingFor('free'));
+        storePlace(c, ikey, inside, { parent: here.key, size: 'small' });
+        await flushWrites();
+    }
+    await enterPlace(ikey, { quiet });
+    return true;
+}
+
+/** A wagon on the party's current map that a name fits ("the jailer's wagon", "wagon", its label), or null. */
+export function findVehicle(c, name) {
+    const here = currentPlace(c);
+    if (!here) return null;
+    const key = nameKey(name);
+    if (!key) return null;
+    const wagons = here.place.floors.flatMap(f => f.map.props.filter(p => PROPS[p.type]?.vehicle && !p.hidden));
+    return wagons.find(p => p.label && (nameKey(p.label) === key || nameKey(p.label).includes(key) || key.includes(nameKey(p.label))))
+        ?? wagons.find(p => key.includes(nameKey(PROPS[p.type].name)) || (/jail|prison|cage|barred/.test(key) ? p.type === 'jailwagon' : /wagon|cart|carriage|caravan/.test(key) && p.type === 'wagon'))
+        ?? null;
 }

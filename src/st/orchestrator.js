@@ -15,10 +15,10 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
-import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT } from '../core/explore.js';
+import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts } from '../core/explore.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -446,7 +446,8 @@ async function turnBody(c, opts, status, signal) {
         if (triage.mapRequest?.redo && result.turn.build_place) result.turn.build_place.replace = true;
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
         // The player attacked and the DM neither started a fight nor asked for a roll: say so, to both.
-        if (triage.category === 'combat_action' && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !signal.aborted) {
+        const attackWords = /\b(attacks?|stabs?|slash(?:es)?|shoots?|swings? (?:at|his|her|the)|punch(?:es)?|strikes?|hits?|kicks?|lunges?|charges? at|tackles?|fires? (?:an? )?(?:arrow|bolt)|casts? \w+ at|throws? (?:a|the|his|her) \w+ at)\b/i;
+        if (attackWords.test(playerText) && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !result.turn.end_combat && !signal.aborted) {
             meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and nothing happened: no start_combat, no player_roll. When the player attacks, that same turn: start_combat (the enemies by name, a map if outdoors with no built map) and player_roll "initiative". Never narrate the attack as pending.`];
             saveMeta();
             status.note('The DM let an attack go by: it has been told');
@@ -1274,7 +1275,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.player_roll && (t.player_roll.kind === 'save' || t.player_roll.kind === 'check')) {
         const said = nameKey(`${t.player_roll.reason} ${t.player_roll.skill}`);
         const first = n => nameKey(n).split(' ')[0];
-        const forWhom = meta.party.map(p => p.name).find(n => said.includes(first(n)) && !said.includes(first(meta.persona.name)) && new RegExp(`\\b${first(n)}(?:'s| is| makes| rolls| must| needs)\\b`).test(said));
+        const rawSaid = `${t.player_roll.reason} ${t.player_roll.skill}`.toLowerCase();
+        const forWhom = meta.party.map(p => p.name).find(n => !new RegExp(`\\b${first(meta.persona.name)}(?:'s|’s)?\\b`).test(rawSaid) && new RegExp(`(?:^|\\s|\\()${first(n)}(?:'s|’s)\\s|\\bfor ${first(n)}\\b|^${first(n)} (?:must|needs to|has to|rolls|makes|saves|tries)\\b`).test(rawSaid));
         if (forWhom) {
             const pr0 = t.player_roll;
             const mod = lookupModifier(statsForName(forWhom, meta), pr0).mod;
@@ -1602,6 +1604,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
             problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
+            syncMounts(place);
         }
         // The player gave in to a guard: walked to their cell, door locked (the code checks their words).
         if (t.escort && !world.combat) {
@@ -1880,7 +1883,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // Already there (the DM named it again): nobody moves, the map stays as it is.
         const here = currentPlace(c);
         const already = here && (here.key === entry?.key || here.place.parent?.key === entry?.key);
-        if (!entry) problems.push(`enter_place "${t.enter_place}" was dropped: no such place in the ATLAS (build it with build_place, or name one that is listed)`);
+        const wagon = !entry ? findVehicle(c, t.enter_place) : null;
+        if (wagon) { await enterVehicle(wagon.id, { quiet: true }); status.note(`Into the ${wagon.label || PROPS[wagon.type].name}`); }
+        else if (!entry) problems.push(`enter_place "${t.enter_place}" was dropped: no such place in the ATLAS (build it with build_place, or name one that is listed)`);
         if (entry && !already) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
     }
 

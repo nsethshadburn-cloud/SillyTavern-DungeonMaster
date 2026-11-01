@@ -1,3 +1,4 @@
+import { isBeast } from '../core/sprites.js';
 // Actors: party members speak through SillyTavern's normal group generation (your selected
 // prompts, formats and samplers). The plugin adds ONE note per reply, built from editable
 // templates (Settings → "What the bot is told"), and hides the DM's narration from the bot:
@@ -268,6 +269,8 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
     }
     const npcMatch = matchName(speaker, (c.docs.npcs || []).map(n => n.name));
     let npc = exactNpc ?? (c.docs.npcs || []).find(n => n.name === npcMatch);
+    // A horse, a hound, a bear: no lines, however it was briefed; the DM narrates animals.
+    if ((npc && isBeast(npc)) || (!npc && isBeast({ name: speaker }))) { console.info('[Dungeon Master] an animal gets no line:', speaker); return null; }
     if (!npc) {
         // A thing (a trap, a chest) can't speak, whatever the DM called it.
         if (notAPerson(currentPlace(c)?.place ?? null, speaker)) { console.warn('[Dungeon Master] not a person, no line:', speaker); return null; }

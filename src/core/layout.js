@@ -2065,7 +2065,7 @@ export function generateWilds(planIn, seed = 1) {
     // The spots: clearings spread over the land, each sized to what it is.
     const centers = [];
     for (const sp of spots) {
-        const rad = sp.size === 'huge' || sp.size === 'large' ? 5 : sp.size === 'small' || sp.size === 'tiny' ? 3 : 4;
+        const rad = /campsite/.test(sp.name.toLowerCase()) ? 3 : sp.size === 'huge' || sp.size === 'large' ? 5 : sp.size === 'small' || sp.size === 'tiny' ? 3 : 4;
         let best = null;
         for (let tries = 0; tries < 80; tries++) {
             const x = int(r, rad + 2, W - rad - 3), y = int(r, rad + 2, H - rad - 3);
@@ -2120,7 +2120,7 @@ export function generateWilds(planIn, seed = 1) {
     // What's in each spot: its plan props, and what fits its name.
     for (const cc of centers) {
         const nm = `${cc.sp.type} ${cc.sp.name}`.toLowerCase();
-        const dress = /camp/.test(nm) ? ['campfire', 'tent', 'tent', 'log', 'crate']
+        const dress = /campsite|'s camp|small camp/.test(nm) ? ['campfire', 'tent', 'log', 'sack'] : /camp/.test(nm) ? ['campfire', 'tent', 'tent', 'log', 'crate']
             : /shrine|temple|altar|ruin|idol|statue|monolith/.test(nm) ? ['altar', 'statue', 'pillar', 'pillar']
                 : /waterfall|pool|spring|pond|lagoon/.test(nm) ? [] : /grave|tomb|barrow/.test(nm) ? ['tombstone', 'tombstone', 'tombstone']
                     : /nest|lair|den/.test(nm) ? ['bones', 'skull', 'boulder'] : ['flowers', 'log', 'boulder'];

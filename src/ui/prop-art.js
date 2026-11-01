@@ -64,6 +64,27 @@ function signBoard(ctx, r, cx, cy, s, prop) {
     });
 }
 
+/** A wagon from above: shaft out the front, four wheels, a plank bed, and a canvas cover on hoops or an iron cage with a steel door. */
+function wagonArt(ctx, r, cx, cy, s, w, h, jail) {
+    const W = w * s, H = h * s, x = cx - W / 2, y = cy - H / 2;
+    shadow(ctx, cx + s * 0.08, cy + s * 0.12, W * 0.42, H * 0.36);
+    line(ctx, x + s * 0.05, cy - s * 0.12, x + s * 0.5, cy, WOOD(24), Math.max(2, s * 0.08)); line(ctx, x + s * 0.05, cy + s * 0.12, x + s * 0.5, cy, WOOD(24), Math.max(2, s * 0.08));
+    for (const wx of [x + s * 0.8, x + W - s * 0.7]) for (const wy of [y + s * 0.14, y + H - s * 0.14]) { ellipse(ctx, wx, wy, s * 0.26, s * 0.13, '#2a2420', '#111', 1.5); ellipse(ctx, wx, wy, s * 0.12, s * 0.06, '#4a3a2a'); }
+    woodBox(ctx, r, x + s * 0.45, y + s * 0.24, W - s * 0.85, H - s * 0.48, 30, 3);
+    if (jail) {
+        rrect(ctx, x + s * 0.55, y + s * 0.32, W - s * 1.05, H - s * 0.64, 3, 'rgba(20,18,20,0.78)', '#3a3a3e', 2);
+        const n = Math.max(5, Math.round((W - s) / (s * 0.28)));
+        for (let i = 1; i < n; i++) line(ctx, x + s * 0.55 + i * (W - s * 1.05) / n, y + s * 0.34, x + s * 0.55 + i * (W - s * 1.05) / n, y + H - s * 0.34, '#8a8f94', Math.max(1.5, s * 0.05));
+        line(ctx, x + s * 0.55, cy, x + W - s * 0.5, cy, '#8a8f94', Math.max(1.5, s * 0.05));
+        rrect(ctx, x + W - s * 0.66, y + s * 0.36, s * 0.14, H - s * 0.72, 1, '#5a5f64', '#2a2a2e', 1.5);
+        ellipse(ctx, x + W - s * 0.59, cy, s * 0.05, s * 0.05, '#c9a227');
+    } else {
+        rrect(ctx, x + s * 0.6, y + s * 0.3, W - s * 1.15, H - s * 0.6, s * 0.25, hsl(40, 30, 78), hsl(40, 25, 45), 1.5);
+        for (let i = 1; i < 4; i++) line(ctx, x + s * 0.6 + i * (W - s * 1.15) / 4, y + s * 0.32, x + s * 0.6 + i * (W - s * 1.15) / 4, y + H - s * 0.32, 'rgba(90,70,40,0.5)', 1.5);
+        ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(x + s * 0.66, y + s * 0.36, W - s * 1.27, s * 0.1);
+    }
+}
+
 /** Grain-lined wooden slab, the base of most furniture. */
 function woodBox(ctx, r, x, y, w, h, l = 32, rad = 2) {
     rrect(ctx, x, y, w, h, rad, WOOD(l), WOOD(l - 16), 1.5);
@@ -423,5 +444,7 @@ export const PROP_ART = {
         line(ctx, cx + s * 0.08, cy + s * 0.3, cx + s * 0.1, cy + s * 0.44, hsl(8, 55, 42), Math.max(2, s * 0.07));
         for (let i = 0; i < 2; i++) ellipse(ctx, cx + between(r, -0.1, 0.1) * s, cy + s * 0.46 + i * s * 0.04, s * 0.03, s * 0.02, '#7a1010');
     },
+    wagon(ctx, r, cx, cy, s, w = 3, h = 2) { wagonArt(ctx, r, cx, cy, s, w, h, false); },
+    jailwagon(ctx, r, cx, cy, s, w = 3, h = 2) { wagonArt(ctx, r, cx, cy, s, w, h, true); },
     skullpole(ctx, r, cx, cy, s) { shadow(ctx, cx + s * 0.06, cy + s * 0.3, s * 0.12, s * 0.06); ctx.fillStyle = hsl(26, 36, 20); ctx.fillRect(cx - s * 0.04, cy - s * 0.38, s * 0.08, s * 0.72); line(ctx, cx - s * 0.22, cy - s * 0.2, cx + s * 0.22, cy - s * 0.2, hsl(26, 36, 20), s * 0.06); for (const [dx, dy, k] of [[0, -0.36, 0.13], [-0.22, -0.18, 0.1], [0.22, -0.18, 0.1]]) { ellipse(ctx, cx + dx * s, cy + dy * s, s * k, s * k * 1.05, hsl(45, 20, 86)); ellipse(ctx, cx + dx * s - s * k * 0.35, cy + dy * s - s * k * 0.1, s * k * 0.25, s * k * 0.3, '#222'); ellipse(ctx, cx + dx * s + s * k * 0.35, cy + dy * s - s * k * 0.1, s * k * 0.25, s * k * 0.3, '#222'); } for (let i = 0; i < 3; i++) line(ctx, cx + s * 0.04, cy + s * (0.05 + i * 0.08), cx + s * 0.18, cy + s * (0.1 + i * 0.08), hsl(0, 50, 30), 1.5); },
 };

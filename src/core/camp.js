@@ -10,6 +10,7 @@ import { ensureIds, clearDoorways, normalizePlan, generatePlace } from './layout
 import { generateTunnels } from './warren.js';
 import { PROPS, MAX_PLACE_SIZE, terrainAt } from './grid.js';
 import { nameKey, singular } from './text.js';
+import { OWN_CAMP } from './architect.js';
 
 // ---------- randomness ----------
 
@@ -49,6 +50,8 @@ const PEACEFUL_WORDS = /caravan|pilgrim|travell?er|merchant|refugee|hunters?'|hu
  */
 export function isCamp(kind = '', name = '') {
     const k = String(kind || '').toLowerCase(), n = String(name || '').toLowerCase();
+    // Somebody's own camp, or a peaceful one, is land with a tent and a fire on it, not a fort.
+    if (!HOSTILE_WORDS.test(`${k} ${n}`) && (OWN_CAMP.test(`${k} ${n}`) || PEACEFUL_WORDS.test(`${k} ${n}`))) return false;
     if (/\b(camp|encampment|war ?camp|warcamp|hideout|palisade|outpost)\b/.test(k)) return true;
     if (/\b(fort|fortress|stockade|stronghold)\b/.test(k)) return HOSTILE_WORDS.test(`${k} ${n}`);
     if (!k || /^(place|site|location|area|wilds?)$/.test(k)) return /\b(camp|encampment|hideout|outpost)\b/.test(n) || (/\b(fort|stockade|stronghold)\b/.test(n) && HOSTILE_WORDS.test(n));
@@ -59,7 +62,8 @@ export function isCamp(kind = '', name = '') {
 export function campSpec(brief) {
     const words = `${brief.kind} ${brief.name} ${brief.mood} ${brief.summary} ${brief.creatures}`.toLowerCase();
     const peaceful = PEACEFUL_WORDS.test(words) && !HOSTILE_WORDS.test(words);
-    const hostile = !peaceful && (HOSTILE_WORDS.test(words) || brief.guards === null || brief.guards > 0);
+    // Hostile when the words say so or the brief posts guards; a camp with nothing said about either is peaceful.
+    const hostile = !peaceful && (HOSTILE_WORDS.test(words) || brief.guards > 0);
     let walls = ['palisade', 'stone', 'none'].includes(brief.walls) ? brief.walls : '';
     if (!walls) walls = /stone wall|stone-walled|fortress|garrison|citadel|stronghold|\bfort\b/.test(words) ? 'stone' : hostile ? 'palisade' : 'none';
     if (!brief.walls && /palisade|stockade|wooden wall|log wall|timber wall/.test(words)) walls = 'palisade';

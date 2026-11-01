@@ -105,7 +105,7 @@ export function presetFor(text) {
     const t = String(text || '').toLowerCase();
     const w = list => new RegExp(`\\b(${list})\\b`);
     const rules = [
-        [/\b(giant )?spiders?\b/, 'giant_spider'], [/\b(rat|rats)\b/, 'rat'], [/\b(horse|pony|steed|mare|stallion)\b/, 'horse'], [/\bbear\b/, 'bear'], [/\bboar\b/, 'boar'],
+        [/\b(giant )?spiders?\b/, 'giant_spider'], [/\b(rat|rats)\b/, 'rat'], [/\b(horse|pony|steed|mare|stallion|gelding|mule|donkey|ox|oxen|draft animal)\b/, 'horse'], [/\bbear\b/, 'bear'], [/\bboar\b/, 'boar'],
         [/\b(hound|mastiff|dog|cur)\b/, 'hound'], [/\b(lion|panther|tiger|big cat|leopard)\b/, 'big_cat'],
         [/\b(wolf|wolves|warg)\b(?!.*folk)/, /folk|man\b|woman\b/.test(t) ? 'wolffolk' : 'wolf'],
         [w('skeletons?|skeletal'), 'skeleton'], [w('zombies?|ghouls?|corpses?|undead|walking dead'), 'zombie'], [w('ghosts?|spirits?|specters?|spectres?|phantoms?|wraiths?|apparitions?|ghostly'), 'ghost'],
@@ -744,3 +744,10 @@ Return ONE JSON object and nothing else:
   "weapon": "${WEAPONS.join('|')} (what they'd fight with: their sheet's main weapon if given)"
 }
 Pick the closest species: rabbit-folk (harengon) = rabbit, cat-folk (tabaxi) = cat, kobolds and dragonborn = lizard, gnomes = halfling. Colors should match the picture.`;
+
+/** An animal (a horse, a hound, a bear): a figure from the beast library. Animals have no lines; the DM narrates them. */
+export function isBeast(npc) {
+    if (!npc) return false;
+    const key = LIBRARY[String(npc.sprite || '')] ? String(npc.sprite) : presetFor(`${npc.name || ''} ${npc.role || ''} ${npc.description || ''}`);
+    return Boolean(key && LIBRARY[key]?.beast) && !/\b(folk|-?man|woman|person|people)\b/i.test(`${npc.name || ''} ${npc.description || ''}`);
+}

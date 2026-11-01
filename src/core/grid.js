@@ -59,6 +59,8 @@ export const PROPS = Object.freeze({
     bonfire: { name: 'bonfire', blocks: true, light: 5 }, spikes: { name: 'sharpened stakes', blocks: true }, watchtower: { name: 'watchtower', cover: true, light: 4, size: [2, 2], platform: true }, skullpole: { name: 'skull pole', blocks: true },
     // A trapdoor (hidden until found: a door in the floor into the tunnels); a carcass hung from the ceiling.
     trapdoor: { name: 'trapdoor' }, carcass: { name: 'hanging carcass', blocks: true },
+    // Wagons: a vehicle has an inside of its own (climb in from the map); a jailer's wagon is iron bars and a locked steel door.
+    wagon: { name: 'wagon', blocks: true, cover: true, size: [3, 2], vehicle: 'open' }, jailwagon: { name: 'jailer\'s wagon', blocks: true, cover: true, size: [3, 2], vehicle: 'jail' },
     // Furniture
     wardrobe: { name: 'wardrobe', blocks: true, cover: true }, dresser: { name: 'dresser', blocks: true }, nightstand: { name: 'nightstand', blocks: true },
     desk: { name: 'desk', blocks: true, cover: true }, sofa: { name: 'sofa', blocks: true, cover: true, size: [2, 1] }, armchair: { name: 'armchair', blocks: true },
@@ -100,7 +102,7 @@ export const SEATS = Object.freeze({
     bed: 'lie', petbed: 'lie', hay: 'lie', bathtub: 'lie', coffin: 'lie', slab: 'lie',
 });
 
-export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence', 'bonfire', 'spikes', 'watchtower', 'skullpole']);
+export const HEAVY = new Set(['bookshelf', 'wardrobe', 'piano', 'iron_maiden', 'forge', 'anvil', 'statue', 'altar', 'coffin', 'cabinet', 'armor', 'throne', 'bathtub', 'counter', 'pew', 'bed', 'rack', 'slab', 'stocks', 'kennel', 'cage', 'boulder', 'well', 'fountain', 'stall', 'cart', 'clock', 'hay', 'trough', 'tombstone', 'pillar', 'workbench', 'weaponrack', 'sofa', 'dresser', 'desk', 'tent', 'stalagmite', 'crystal', 'cauldron', 'brazier', 'campfire', 'lamppost', 'fence', 'bonfire', 'spikes', 'watchtower', 'skullpole', 'wagon', 'jailwagon']);
 
 /** Furniture with a back and a front: drawn turned so its back is against the wall it stands by. */
 export const ORIENTED = new Set(['bed', 'sofa', 'armchair', 'chair', 'piano', 'wardrobe', 'dresser', 'desk', 'cabinet', 'throne', 'clock', 'weaponrack', 'pew', 'kennel', 'altar', 'workbench', 'iron_maiden', 'bookshelf', 'counter', 'nightstand']);

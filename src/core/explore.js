@@ -695,6 +695,18 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     if (Array.isArray(c.reveal) && c.reveal.length) { revealRooms(place, c.reveal.map(String)); log.push(`revealed ${c.reveal.join(', ')}`); }
     ensureIds(place);
     // Things on the map: smashed, removed, moved.
+    // Riding: a horse under someone goes where they go (the party too). "" dismounts; the horse stays where it is.
+    for (const [who, horse] of Object.entries(c.ride || {})) {
+        const rider = place.state.positions[who] ? who : personByName(place, who)?.name;
+        if (!rider) { log.push(`⚠️ ride.${who}: nobody by that name on the map`); continue; }
+        place.state.mounts ??= {};
+        if (!horse) { if (place.state.mounts[rider]) { log.push(`${rider} dismounts`); delete place.state.mounts[rider]; } continue; }
+        const h = personByName(place, horse);
+        if (!h || h.state === 'dead' || h.state === 'gone') { log.push(`⚠️ ride.${who}: no ${horse} on the map to ride (add the horse with guards first)`); continue; }
+        for (const [o, m] of Object.entries(place.state.mounts)) if (m === h.name && o !== rider) delete place.state.mounts[o];
+        place.state.mounts[rider] = h.name;
+        log.push(`${rider} rides ${h.name}`);
+    }
     for (const [id, raw] of Object.entries(c.props || {})) {
         const found = propById(place, id);
         if (!found) { log.push(`⚠️ props.${id}: no prop with that id`); continue; }
@@ -703,7 +715,13 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         if (/^(broken|smashed|destroyed|debris)$/.test(st)) { const name = found.prop.label || PROPS[found.prop.type]?.name || id; smashProp(place, id); log.push(`${name} smashed`); continue; }
         if (/^(removed|gone|taken)$/.test(st)) { const map = floorById(place, found.floor).map; map.props = map.props.filter(p => p !== found.prop); bump(place, found.floor); log.push(`${id} removed`); continue; }
         const to = v.move ?? v.to ?? (/^[nsew]$/.test(st) ? st : null);
-        if (to) { const r = moveProp(place, id, to, { force: true }); log.push(r.ok ? `${id} moved` : `${id} couldn't move: ${r.why}`); }
+        // A wagon's team: the horses that pull it, kept in front of it when it moves.
+        if (Array.isArray(v.team)) { const team = v.team.map(n => personByName(place, n)?.name).filter(Boolean); found.prop.team = team; log.push(team.length ? `${id} drawn by ${team.join(', ')}` : `${id} has no team`); }
+        if (to) {
+            const r = moveProp(place, id, to, { force: true });
+            log.push(r.ok ? `${id} moved` : `${id} couldn't move: ${r.why}`);
+            if (r.ok && Array.isArray(found.prop.team)) for (const [i, n] of found.prop.team.entries()) placePerson(place, n, { floor: found.floor, x: found.prop.x - 1 - Math.floor(i / 2), y: found.prop.y + (i % 2) }, { floor: found.floor });
+        }
         if (typeof v.obstacle === 'boolean') found.prop.obstacle = v.obstacle;
     }
     // New traps the DM sets: real traps (they go off when stepped on), not just a picture.
@@ -1501,7 +1519,7 @@ export function cropText(place, floorId, rect, people = {}) {
         for (let x = x0; x <= x1; x++) row += (at[`${x},${y}`] ? '@' : terrainAt(map, x, y)).padEnd(3);
         lines.push(`${String(y + 1).padStart(3)}  ${row.trimEnd()}`);
     }
-    const props = (map.props || []).filter(p => !p.hidden && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && (!PROPS[p.type]?.decal || p.type === 'debris')).map(p => `${p.label || PROPS[p.type]?.name || p.type} ${p.id ?? ''} ${coord(p.x, p.y)}${p.obstacle ? ' (blocking on purpose)' : ''}`.replace(/ {2}/g, ' '));
+    const props = (map.props || []).filter(p => !p.hidden && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && (!PROPS[p.type]?.decal || p.type === 'debris')).map(p => `${p.label || PROPS[p.type]?.name || p.type} ${p.id ?? ''} ${coord(p.x, p.y)}${p.obstacle ? ' (blocking on purpose)' : ''}${PROPS[p.type]?.vehicle ? ` (a wagon: the party climbs in from the map or enter_place "${p.label || PROPS[p.type].name}"; move it with props {"${p.id}": {"move": "ab14"}}${p.team?.length ? `; drawn by ${p.team.join(', ')}` : ''})` : ''}`.replace(/ {2}/g, ' '));
     const wins = Object.values(place.windows || {}).filter(w => w.floor === floorId && w.x >= x0 && w.x <= x1 && w.y >= y0 && w.y <= y1).map(w => `${w.id} ${coord(w.x, w.y)} ${w.state}`);
     const who = Object.entries(people).filter(([, p]) => p && p.floor === floorId && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1).map(([n, p]) => `${n} ${coord(p.x, p.y)}`);
     return `${lines.join('\n')}\n(@ = someone; | window, H barred window, U broken window) People: ${who.join('; ') || 'none'}\nThings (ids for place_changes.props): ${props.join(', ') || 'none'}${wins.length ? `\nWindows: ${wins.join(', ')}` : ''}`;
@@ -1568,4 +1586,21 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const area = room?.rect ?? (lead ? { x: lead.x - 4, y: lead.y - 4, w: 9, h: 9 } : null);
     if (area) lines.push(`Map here (floor ${floor.id}; columns ${colName(0)}.., rows 1.. from the bottom):`, cropText(place, floor.id, area, people));
     return lines.join('\n');
+}
+
+/**
+ * Mounts stay under their riders: wherever a rider stands (the party by their position, anyone else by
+ * their square), their horse stands too. A dead or gone horse, or a rider who left, ends the ride.
+ */
+export function syncMounts(place) {
+    const mounts = place.state?.mounts;
+    if (!mounts) return [];
+    const out = [];
+    for (const [rider, horse] of Object.entries(mounts)) {
+        const h = personByName(place, horse);
+        const at = place.state.positions[rider] ?? (() => { const g = personByName(place, rider); return g && g.state !== 'dead' && g.state !== 'gone' ? { floor: g.floor, x: g.x, y: g.y } : null; })();
+        if (!h || h.state === 'dead' || h.state === 'gone' || !at) { delete mounts[rider]; out.push(`${rider} no longer rides ${horse}`); continue; }
+        if (h.x !== at.x || h.y !== at.y || h.floor !== at.floor) { Object.assign(h, { floor: at.floor, x: at.x, y: at.y, room: roomAt(place, at.floor, at.x, at.y)?.id ?? h.room }); out.push(`${horse} under ${rider}`); }
+    }
+    return out;
 }

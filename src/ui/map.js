@@ -12,7 +12,7 @@ import { mapRequest } from '../core/triage.js';
 import { parseCoord, toCoord, colName, terrainAt, isWalkable, TERRAIN, PROPS, HIDE, SEATS, reachable, speedSquares, propAt } from '../core/grid.js';
 import { paintMapBase, squareName } from './tiles.js';
 import { escapeHtml } from '../core/text.js';
-import { currentPlace, buildFromRequest, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
+import { currentPlace, buildFromRequest, enterVehicle, partyOnMap, look, walkTo, approachSpot, pushProp, climbOut, setMapAction, lockedReason, hideAt, restAt, lockedDoorInfo, pickLock, unlockWithKey } from '../st/atlas.js';
 import { moveBudget, conditionsOf } from '../core/world.js';
 import { restraintOf, escapeOptions, lockedLine } from '../core/restraints.js';
 import { floorById, roomAt, doorAt, isExplored, computeVisible, reveal, windowAt, isLight, hiddenNow, poseNow, caughtNow } from '../core/explore.js';
@@ -609,10 +609,12 @@ function drawTokens(ctx, c, b, tile, now, restore) {
     const player = c.meta.persona.name;
     const friends = new Set([player, ...c.meta.party.map(pt => pt.name)]);
     const figures = settings().mapFigures !== false;
-    for (const [name, coord] of Object.entries(b.positions)) {
+    // A horse is drawn first and its rider on top of it, a little higher.
+    const mounts = b.place?.state?.mounts || {};
+    for (const [name, coord] of Object.entries(b.positions).sort((p, q) => (mounts[p[0]] ? 1 : 0) - (mounts[q[0]] ? 1 : 0))) {
         const pt = parseCoord(coord, map);
         if (!pt) continue;
-        const px = MARGIN + pt.x * tile, py = (map.h - 1 - pt.y) * tile;
+        const px = MARGIN + pt.x * tile, py = (map.h - 1 - pt.y) * tile - (mounts[name] ? tile * 0.3 : 0);
         if (restore) ctx.drawImage(live.layer, px, py, tile, tile, px, py, tile, tile);
         const cx = px + tile / 2, cy = py + tile / 2;
         const side = name === player ? '#ffd54a' : friends.has(name) ? '#4caf50' : b.enemies.has(name) ? '#e53935' : b.guards?.has(name) ? '#ff9800' : '#8fb4d9';
@@ -952,6 +954,7 @@ function openThingMenu(ev, c, b, thing, view, canvas) {
             done();
         }];
         actions = [
+            ...(PROPS[p.type]?.vehicle ? [['Climb in', 'fa-door-open', async () => { if (!(await near())) return; closeMenu(); await enterVehicle(p.id); }]] : []),
             ...(seat === 'sit' ? [use('sit', 'fa-chair', 'Sit down')] : []),
             ...(seat === 'lie' ? [use('lie', 'fa-bed', 'Lie down'), use('sleep', 'fa-moon', 'Sleep'), ...(p.type === 'bed' ? [use('sit', 'fa-chair', 'Sit on it')] : [])] : []),
             ...(how ? [[`Hide ${how === 'in' ? 'in' : how === 'under' ? 'under' : 'behind'} it`, 'fa-user-secret', async () => {
