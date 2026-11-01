@@ -38,7 +38,7 @@ export function readsAsRunning(text) {
 const OUT = [
     [/unconscious|knocked out|out cold|senseless|stunned|paralyz|paralys|petrified|incapacit|dying|dead/i, 'unconscious'],
     [/asleep|sleeping|drugged|passed out/i, 'asleep'],
-    [/restrained|tied|bound|shackl|chained|cuffed|manacl|in irons|grappled|caged/i, 'bound'],
+    [/restrained|tied|bound|shackl|chained|cuffed|manacl|in irons|caged/i, 'bound'],
 ];
 
 /** What the DM's conditions on someone say about whether they're out of it: 'unconscious' | 'asleep' | 'bound' | null. */

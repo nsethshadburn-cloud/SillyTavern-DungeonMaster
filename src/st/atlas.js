@@ -179,6 +179,7 @@ export function lockedReason(c, name) {
 
 /** Say why the player can't move, if they can't. */
 function stuck(c) {
+    for (const line of releaseStalePins(c)) { toastr.info(line, 'Map', { timeOut: 2500 }); noteMapAction(c, line); }
     const why = lockedReason(c, c.meta.persona.name);
     if (why) toastr.info(why, 'Map', { timeOut: 4000 });
     return Boolean(why);
@@ -267,7 +268,7 @@ function peopleWith(c, place, name, pos, rm) {
     for (const g of Object.values(place.guards)) {
         if (g.state === 'gone' || !sees(g)) continue;
         const state = g.state === 'dead' ? 'dead' : g.down ? DOWN_WORDS[g.down] : outBy(conditionsOf(c.docs.world, g.name)) ? DOWN_WORDS[outBy(conditionsOf(c.docs.world, g.name))] : g.hostile === true || g.intent === 'attack' ? 'HOSTILE, looks dangerous' : g.role === 'guard' ? 'a guard' : '';
-        out.push(`${g.name} (${g.description || 'someone'}, ${dist(g)} squares ${dir(g)}${state ? `, ${state}` : ''})`);
+        out.push(`${nameKnown(c, g) ? `${g.name} (${g.description || 'someone'}, ` : `someone you can't name (${g.description || 'a stranger'}, `}${dist(g)} squares ${dir(g)}${state ? `, ${state}` : ''})`);
     }
     return out.join('; ') || 'nobody else in sight';
 }
@@ -385,8 +386,9 @@ export async function companionGoTo(c, name, targetId, { hide = false, pose = ''
     savePlace(key, c);
     refreshMap();
     const restingNow = !hide && pose && prop ? poseNow(place, name) : null;
-    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} the ` : restingNow ? `${restingNow.pose === 'sit' ? 'sit on' : restingNow.pose === 'sleep' ? 'sleep on' : 'lie on'} the ` : ''}${prop.label || PROPS[prop.type]?.name || prop.type}`
-        : room ? room.name : other.name ? other.name : place.doors[targetId] ? 'door' : 'window';
+    const article = s => (/^(?:the|inside|before|behind|under|outside|where)\b/i.test(s) ? s : `the ${s}`);
+    return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} ` : restingNow ? `${restingNow.pose === 'sit' ? 'sit on' : restingNow.pose === 'sleep' ? 'sleep on' : 'lie on'} ` : ''}the ${prop.label || PROPS[prop.type]?.name || prop.type}`
+        : room ? article(room.name) : other.name ? other.name : place.doors[targetId] ? 'the door' : 'the window';
 }
 
 /**
@@ -1809,6 +1811,13 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
                 const outFloor = td?.floor ?? pv?.floor;
                 await enterPlace(upKey, { at: outside && outFloor ? { floor: outFloor, ...outside } : null, quiet: true });
                 noteMapAction(c, `the party came out of ${place.name}${pv ? ' (climbed out of the wagon)' : ''}`);
+            } else if (keptHere(c, place, names[0])) {
+                // Kept here (a captive, a god the tribe won't let go): no walking out. Stopped at the way out, and whoever keeps them comes after them; the DM has it.
+                const back = freeNear(place, lead.floor, lead.x, lead.y);
+                Object.assign(lead, back);
+                event = keptEvent(c, place, names[0]);
+                noteMapAction(c, `${names[0]} made for the way out of ${place.name} and was stopped there: ${keptHere(c, place, names[0]).by} won't let them leave`);
+                toastr.info(`${keptHere(c, place, names[0]).by} won't let you leave`, 'Map', { timeOut: 3000 });
             } else {
                 // Leaving the map for good: ask first (a stray tap shouldn't end it).
                 const ok = await ST.callGenericPopup(`<h3>Leave ${escape(place.name)}?</h3><p>You'll walk out and this map closes. The DM takes the story from there (it can bring you back here later).</p>`, ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Leave', cancelButton: 'Stay' });
@@ -2013,18 +2022,19 @@ export async function applyMapSync(c, ops) {
     const { refreshMap } = await import('../ui/map.js');
     for (const ch of ops) {
         if (ch.op === 'spawn') {
-            // The story breathes after a fight or a capture: nobody new turns up for a few turns.
+            // The story breathes after a fight or a capture: nobody new turns up for a few turns. And nobody turns up inside a wagon by a guess.
             if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) continue;
+            if (place.parent?.prop) continue;
             const at = where(ch.near) ?? (lead ? { floor: floorId, x: lead.x, y: lead.y } : null);
-            const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile }, arrive: !ch.near });
+            const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile }, arrive: true });
             if (!g) continue;
             if (ch.intent) setIntent(g, ch.intent, ch.target);
-            log.push(`${g.name} appears${ch.near ? ` by the ${thingLabel(place, ch.near)}` : ''}${g.intent === 'attack' ? `, going for ${g.target || 'the party'}` : ''}`);
+            log.push(`${g.name} appears${ch.near ? ` by ${thingLabel(place, ch.near)}` : ''}${g.intent === 'attack' ? `, going for ${g.target || 'the party'}` : ''}`);
         } else if (ch.op === 'move' || ch.op === 'hide' || ch.op === 'pose') {
             const isParty = Boolean(place.state.positions[ch.who]);
             if (!isParty) {
                 const g = personByName(place, ch.who), to = where(ch.to);
-                if (g && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to ${/^the /i.test(thingLabel(place, ch.to)) ? '' : 'the '}${thingLabel(place, ch.to)}`);
+                if (g && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to ${thingLabel(place, ch.to)}`);
                 continue;
             }
             if (lockedReason(c, ch.who)) continue;
@@ -2034,13 +2044,15 @@ export async function applyMapSync(c, ops) {
             if (ch.op === 'hide' && !to) to = nearestHide(place, ch.who)?.id ?? '';
             if (!to) continue;
             if (ch.who === player) {
+                // The sync never walks the player (the story's "he fled into the trees" doesn't move his figure: his own taps and the DM's "positions" do). Hiding or sitting down is where he stands.
+                if (ch.op === 'move') continue;
                 const spot = where(to);
-                if (!spot || typeof spot === 'string') continue;
+                if (!spot || typeof spot === 'string' || !lead || spot.floor !== lead.floor || Math.max(Math.abs(spot.x - lead.x), Math.abs(spot.y - lead.y)) > 2) continue;
                 const pr = propById(place, to)?.prop;
                 await approachSpot(pr ? { x: pr.x, y: pr.y, w: pr.w, h: pr.h } : spot, refreshMap, { inTurn: true });
                 if (ch.op === 'hide') hideAt(c, player, to);
                 else if (ch.op === 'pose') restAt(c, player, to, ch.how);
-                log.push(`${player} ${ch.op === 'hide' ? 'hides' : ch.op === 'pose' ? ch.how + 's' : 'goes'} by the ${thingLabel(place, to)}`);
+                log.push(`${player} ${ch.op === 'hide' ? 'hides' : ch.op === 'pose' ? ch.how + 's' : 'goes'} by ${thingLabel(place, to)}`);
                 continue;
             }
             // Walking over to something keeps them following; only hiding or lying down means they stay put.
@@ -2052,6 +2064,8 @@ export async function applyMapSync(c, ops) {
             if (g && g.state !== 'gone' && g.state !== 'dead' && !(c.docs.world.combat?.enemies?.[g.name]?.hp <= 0)) { g.state = 'gone'; log.push(`${g.name} is gone`); }
         } else if (ch.op === 'intent') {
             const g = personByName(place, ch.who);
+            // Someone the DM made no enemy (a tribe that worships him) is never set on the party by a guess of the sync.
+            if (g && ch.intent === 'attack' && g.hostile === false) continue;
             if (g && g.intent !== ch.intent) { setIntent(g, ch.intent, ch.target); log.push(`${g.name}: ${ch.intent}${ch.target ? ` ${ch.target}` : ''}`); }
         } else if (ch.op === 'door') {
             const d = place.doors[ch.id];
@@ -2079,11 +2093,14 @@ export async function applyMapSync(c, ops) {
 }
 
 /** A thing's, door's, room's or person's name for a log line. */
+/** A thing, a door, a room or someone, with its article: "the crate", "the door", "the Gate Yard", "Inside the wagon", "Judy Hopps". */
 function thingLabel(place, id) {
     const p = propById(place, id)?.prop;
-    if (p) return thingName(p);
-    if (place.doors[id]) return 'door';
-    return place.rooms[id]?.name ?? id;
+    if (p) return `the ${thingName(p)}`;
+    if (place.doors[id]) return 'the door';
+    const rm = place.rooms[id];
+    if (rm) return /^(?:the|inside|before|behind|under|outside|where)\b/i.test(rm.name) ? rm.name : `the ${rm.name}`;
+    return id;
 }
 
 /** The nearest thing to hide in, under or behind, in someone's room (or close by). */
@@ -2259,7 +2276,8 @@ function custodyStart(c, place, player) {
     const companion = c.meta.party.some(p => p.name === rec.by);
     // A keeper walking along is escorting: the prisoner moving with them is no escape.
     const following = companion && !place.state.waiting?.[rec.by] && !lockedReason(c, rec.by);
-    return { by: rec.by, x: kp.x, y: kp.y, floor: kp.floor, companion, following };
+    const me = place.state.positions[player];
+    return { by: rec.by, x: kp.x, y: kp.y, floor: kp.floor, companion, following, from: me ? { x: me.x, y: me.y } : null };
 }
 
 /**
@@ -2281,11 +2299,20 @@ async function custodyCheck(c, cur, start) {
     if (keeperOut) return '';
     const far = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     const fromStart = far(lead, start), gap = far(lead, kp);
-    if (fromStart <= rec.radius && gap <= rec.radius) return '';
+    if (fromStart <= rec.radius && gap <= rec.radius) { if (rec.chase) { delete rec.chase; savePlace(key, c); } return ''; }
+    // Coming back toward the keeper is never making off: one who had slipped away and walks back into view is met, not chased.
+    if (start.from && gap < far(start.from, kp)) {
+        if (!rec.slipped) return '';
+        const m0 = floorById(place, lead.floor).map;
+        const seen = computeVisible(place, lead.floor, [{ x: kp.x, y: kp.y }], { radius: GUARD_SIGHT })[lead.y * m0.w + lead.x] && !hiddenNow(place, player);
+        if (!seen) return '';
+        delete rec.slipped; savePlace(key, c);
+        return `${player} (${rec.by}'s prisoner) had slipped out of ${rec.by}'s sight and is coming back toward ${rec.by}: ${gap} squares off now, in view. ${rec.by} sees them coming: a line from ${rec.by} (relief, suspicion, a sharp word) and nothing more; no chase.`;
+    }
     // The keeper is coming along: a prisoner setting off across the map on their own is stopped and challenged,
     // in the chat, the first time; the player's words then settle it (going along, or running: the chase).
     // After a challenge the walk is an escort for a few turns, so a prisoner marched somewhere isn't nagged each step.
-    if (start.following && rec.bolt !== c.meta.turn) {
+    if (start.following && rec.bolt !== c.meta.turn && !rec.chase) {
         if ((rec.escortUntil ?? -1) >= c.meta.turn) return '';
         const cuffsNow = restraintOf(conditionsOf(c.docs.world, player)).look;
         rec.escortUntil = c.meta.turn + 3;
@@ -2296,9 +2323,10 @@ async function custodyCheck(c, cur, start) {
     const map = floorById(place, lead.floor).map;
     const sees = computeVisible(place, lead.floor, [{ x: kp.x, y: kp.y }], { radius: GUARD_SIGHT })[lead.y * map.w + lead.x] && !hiddenNow(place, player);
     if (!sees) {
-        // Out of the keeper's sight: they got away for now. The DM hears of it in the place view.
-        if (!rec.slipped) { rec.slipped = true; savePlace(key, c); }
-        return '';
+        // Out of the keeper's sight: they got away for now. The DM hears of it once, now, and in the place view after.
+        if (rec.slipped) return '';
+        rec.slipped = true; savePlace(key, c);
+        return `${player} (${rec.by}'s prisoner) has walked out of ${rec.by}'s sight: ${gap} squares off now${place.state.night ? ', in the dark' : ''}, and ${rec.by} hasn't noticed. Decide when ${rec.by} looks up and finds them gone (now, or in a turn or two) and what ${rec.by} does then: a shout, a search${start.companion ? '' : ` (set ${rec.by} on them with place_changes guards "following")`}, or letting it go. Brief ${rec.by} if they speak.`;
     }
     rec.chase = true;
     delete rec.slipped;
@@ -2533,4 +2561,58 @@ export async function setDoorFromMap(doorId, state, redraw = () => { }) {
     look(c, key, place);
     noteMapAction(c, `${c.meta.persona.name} ${state === 'open' ? 'opened' : 'closed'} ${door.id} (${doorRooms(place, door)})`);
     return true;
+}
+
+/** Who won't let this one leave the place: the DM's "kept", or their keeper while they're someone's prisoner. Null when free to go. */
+function keptHere(c, place, name) {
+    const k = place.state.kept?.[name];
+    if (k) return k;
+    const rec = place.state.custody?.[name];
+    if (!rec) return null;
+    const kp = place.state.positions[rec.by] ?? personByName(place, rec.by);
+    if (!kp || kp.state === 'gone' || kp.state === 'dead') return null;
+    return { by: rec.by, why: 'their prisoner' };
+}
+
+/** Stopped at the way out: the nearest two able people of the place go after them (the guard chase: a grab when they reach them, then back). The event for the DM. */
+function keptEvent(c, place, player) {
+    const k = keptHere(c, place, player);
+    const lead = place.state.positions[player];
+    const d = g => Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y));
+    const able = place.state.custody?.[player] ? [] : Object.values(place.guards).filter(g => !isOut(g) && g.role !== 'animal' && g.floor === lead.floor).sort((a, b) => d(a) - d(b)).slice(0, 2);
+    for (const g of able) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: 0 }; g.state = 'alert'; }
+    return `${player} made for the way out of ${place.name}: ${k.by}${k.why ? ` (${k.why})` : ''} won't let them leave, and the map stopped them at it. ${able.length ? `${able.map(g => g.name).join(' and ')} ${able.length > 1 ? 'go' : 'goes'} after them: the code runs the chase (a grab when they reach them, with rolls; then they're brought back, not harmed). ` : ''}Narrate it (who saw them going, the shout, the pursuit) and brief whoever speaks. Don't resolve the chase, and don't move anyone.`;
+}
+
+/**
+ * "pinned (held down by X)" and "grappled (held by X)" hold only while X is right there: X walking
+ * off, gone, down or dead lets them up to try (prone stays). Returns a line for each release.
+ */
+export function releaseStalePins(c = campaign()) {
+    const cur = currentPlace(c);
+    if (!c || !cur) return [];
+    const w = c.docs.world, out = [];
+    for (const name of [c.meta.persona.name, ...c.meta.party.map(p => p.name)]) {
+        const pin = conditionsOf(w, name).find(x => /pinned|grappled/i.test(x));
+        const by = pin?.match(/held (?:down )?by ([^)]+)\)?\s*$/i)?.[1]?.trim();
+        if (!pin || !by) continue;
+        const me = cur.place.state.positions[name];
+        const holder = cur.place.state.positions[by] ?? personByName(cur.place, by);
+        const gone = !holder || holder.state === 'gone' || holder.state === 'dead' || Boolean(holder.down) || isAway(w, by) || !me || holder.floor !== me.floor || Math.max(Math.abs(holder.x - me.x), Math.abs(holder.y - me.y)) > 1;
+        if (!gone) continue;
+        applyStateChanges(w, { conditions_remove: { [name]: [pin] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
+        out.push(`${name} is no longer ${/pinned/i.test(pin) ? 'pinned' : 'held'}: ${by} isn't on them any more`);
+    }
+    if (out.length) saveDoc('world');
+    return out;
+}
+
+/** Does the party know this one's name? Spoken in the story, met, or no real name (a wolf, a guard, "Cannibal 3"): yes. A name the story hasn't said yet (Brakh Spearman One, Mother Ghesh) stays unknown to a companion. */
+function nameKnown(c, g) {
+    if (g.met || g.role === 'animal') return true;
+    const first = String(g.name || '').split(' ')[0];
+    if (first.length < 3 || !/^[A-Z]/.test(first)) return true;
+    if (new RegExp(`\\b${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(g.description || '')) return true;
+    if (/^(?:guard|wolf|wolves|dog|hound|bandit|raider|cannibal|captive|prisoner|sentry|lookout|thug|soldier|archer|spearman|hunter|scout|boar|bear|deer|stag|raven|crow|owl|hawk|rat|snake|spider|skeleton|zombie|ghoul|goblin|orc|kobold|cultist|priest|villager|farmer|merchant|servant|cook|butler|maid|jailer|warden|chief|king|queen|horse|mare|pony|mule|ox|cow|pig|goat|sheep|hen|chicken|duck)\b/i.test(g.name)) return true;
+    return (c.meta.namesKnown || []).includes(nameKey(g.name));
 }

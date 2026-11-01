@@ -46,6 +46,14 @@ export function ruleTriage(text, ctx = {}) {
         }
     }
 
+    // An order to the people of the place ("Bring Judy to me, unharmed.", "You. Unlock this door.", "Go and fetch her"):
+    // the world has to act on it, so the DM rules and moves them. A word to a companion by name is the helper's: a task.
+    if (!ctx.inCombat && isOrder(raw, ctx.companions || [])) {
+        result.category = 'risky_action';
+        result.order = true;
+        result.needsHelper = true;
+        return result;
+    }
     // Obvious scene moves.
     if (/\b(let'?s|we|i)\s+(head|go|travel|leave|set off|ride|sail|walk|move on|make camp|rest|sleep|camp)\b/.test(t) ||
         /\b(long rest|short rest|fast[- ]travel|skip (ahead|to))\b/.test(t)) {
@@ -212,8 +220,17 @@ export function kindFromWords(text) {
 export function mapRequest(text) {
     const t = String(text ?? '').trim();
     if (!t || !/\b(map|grid|battle ?map)\b/i.test(t)) return null;
-    if (!/\b(re-?)?(gen(erate|erated|erating)?|regen\w*|build|rebuild|make|remake|create|draw|redraw|render|redo|re-?roll|change|fix|update|do|give|want|need)\b|\bnew map\b|\bmap (please|now|again|correctly|properly)\b/i.test(t)) return null;
+    // A question about the map ("do the guards on the map see me?") or a word about something on it ("I can't pick it up from the map") is not a request for one.
+    if (/^\s*(?:do|does|did|is|are|was|were|what|where|who|why|how|which|will|would|should)\b/i.test(t)) return null;
+    if (/\?\s*$/.test(t) && !/\b(?:can|could|would|will) you\b/i.test(t)) return null;
     if (/\b(don'?t|do not|never|without|no need|stop)\b[^.?!]{0,40}\b(map|grid)\b/i.test(t) || /\b(can i see|where is|open|show|hide|close|minimi[sz]e)\b[^.?!]{0,30}\b(the )?map\b/i.test(t)) return null;
+    // The build word has to be about the map itself: "regenerate the map", "make a map of the woods", "a new map", "the map again".
+    const build = '(?:re-?gen(?:erate|erated|erating)?|regen\\w*|build|rebuild|make|remake|create|draw|redraw|render|redo|re-?roll|generate|fix|change|update|replace)';
+    const asks = new RegExp(`\\b${build}\\b[^.?!,;]{0,24}\\b(?:map|grid|battle ?map)\\b`, 'i').test(t)
+        || /\bnew (?:map|grid|battle ?map)\b/i.test(t)
+        || /\b(?:map|grid)\b[^.?!]{0,12}\b(?:again|please|now|correctly|properly|redo|regen\w*)\b/i.test(t)
+        || /\b(?:want|need|give (?:me|us)|can (?:i|we) (?:get|have))\b[^.?!]{0,16}\b(?:map|grid|battle ?map)\b/i.test(t);
+    if (!asks) return null;
     const w = t.toLowerCase();
     return {
         text: t,
@@ -299,4 +316,31 @@ export function rollBelongsTo(text, player, companions) {
         if (new RegExp(`^${f} (?:must|needs to|has to|rolls|makes|saves|tries|attempts)\\b`).test(raw)) return n;
     }
     return null;
+}
+
+const ORDER_VERBS = 'bring|fetch|take|carry|drag|haul|seize|grab|release|free|unlock|unchain|untie|open|lock|bind|chain|kill|escort|send|summon|gather|feed|keep|leave|let|put|throw|cut|strike|get|hand|give|guard|stand|kneel|bow|drop|lower|raise|follow|stop|back';
+const ORDER_RE = new RegExp(`(?:^|["“]\\s*|\\*\\s*|\\b(?:you|now)[.,!]\\s+|\\b(?:go|come) (?:and |now and )?)(?:${ORDER_VERBS})\\b[^.!?]{0,60}\\b(?:me|here|him|her|them|us|to me|loose|alone|away|out|off|down|back|(?:the|this|that|these|those|my|his|her|their|your) (?:door|gate|cage|cuffs|irons|chains|bars|prisoner|captive|wagon|wrists|hands|weapon|weapons|spear|spears|knife|rope|cloak))\\b`, 'i');
+
+/**
+ * The player's line is an order to the people of the place ("Bring Judy to me", "Unlock this door"),
+ * not a word to a companion by name ("Judy, bring me the rope": a task for the helper). The world
+ * has to act on an order, so it goes to the DM.
+ */
+export function isOrder(text, companions = []) {
+    const raw = String(text || '');
+    if (!raw.trim() || /^\s*\(\(|^\s*ooc\b/i.test(raw)) return false;
+    const esc = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const firsts = companions.map(n => esc(String(n).split(' ')[0])).filter(Boolean);
+    if (firsts.length && new RegExp(`^\\s*[*"“_]*\\s*(?:${firsts.join('|')})\\b`, 'i').test(raw)) return false;
+    return ORDER_RE.test(raw);
+}
+
+const ATTACK_WORDS = /\b(attacks?|stabs?|slash(?:es)?|shoots?|swings? (?:at|his|her|the)|punch(?:es)?|strikes?|hits?|kicks?|lunges?|charges? at|tackles?|fires? (?:an? )?(?:arrow|bolt)|casts? \w+ at|throws? (?:a|the|his|her) \w+ at)\b/i;
+
+/** The player attacks someone: not "strike these irons off my wrists", "hit the road", "kick the door down", "break the chain". */
+export function attacksSomeone(text) {
+    const t = String(text || '')
+        .replace(/\b(?:strikes?|knocks?|cuts?|breaks?|smash(?:es)?|hits?|kicks?)\b[^.!?]{0,30}\b(?:off|out|loose|free|open|the door|the lock|the chain|the chains|the irons|the cuffs|the bars)\b/gi, ' ')
+        .replace(/\b(?:strikes? (?:a|the|up a) (?:deal|bargain|conversation)|hits? the (?:road|hay|sack|deck|ground)|kicks? (?:off|back|the (?:fire|dirt|dust)))\b/gi, ' ');
+    return ATTACK_WORDS.test(t);
 }

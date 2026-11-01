@@ -635,12 +635,59 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         else if (place.rooms[v]) { item.room = v; item.floor = place.rooms[v].floor; item.state = 'here'; }
         log.push(`${item.name}: ${v}`);
     }
+    // Who the place won't let leave (a captive, the tribe's god): stopped at the way out, and the nearest of the place's people go after them.
+    for (const [who, raw] of Object.entries(c.kept || {})) {
+        const name = matchName(who, place.state?.party || []) ?? String(who).trim();
+        place.state.kept ??= {};
+        if (!raw) { if (place.state.kept[name]) { delete place.state.kept[name]; log.push(`${name} may leave ${place.name} now`); } continue; }
+        const by = String((raw && typeof raw === 'object' ? raw.by : raw) || '').trim().slice(0, 60);
+        if (!by) { log.push(`⚠️ kept.${who}: say who keeps them ("by")`); continue; }
+        const why = raw && typeof raw === 'object' ? String(raw.why || '').trim().slice(0, 120) : '';
+        place.state.kept[name] = { by, why };
+        log.push(`${name} is kept in ${place.name} by ${by}${why ? ` (${why})` : ''}`);
+    }
+    // Everyone of the place at once: a tribe that yields or worships, a crowd that turns.
+    if (c.everyone && typeof c.everyone === 'object') {
+        let n = 0;
+        for (const g of Object.values(place.guards)) {
+            if (g.state === 'gone' || g.state === 'dead' || g.role === 'animal') continue;
+            if (typeof c.everyone.hostile === 'boolean') { g.hostile = c.everyone.hostile; if (!c.everyone.hostile) { delete g.wasHostile; if (g.intent === 'attack' || g.intent === 'stalk') setIntent(g, ''); } }
+            if (c.everyone.intent !== undefined && c.everyone.intent !== null) setIntent(g, c.everyone.intent, c.everyone.target);
+            n++;
+        }
+        log.push(`everyone here (${n})${typeof c.everyone.hostile === 'boolean' ? `: ${c.everyone.hostile ? 'hostile' : 'not hostile'}` : ''}${c.everyone.intent ? `, ${c.everyone.intent}` : ''}`);
+    }
+    // Things put on the ground on purpose (a knife a few squares off): real items, a pouch on the map, taken with a tap.
+    for (const raw of Array.isArray(c.add_items) ? c.add_items : []) {
+        const name = String(raw?.name || '').trim().slice(0, 60);
+        if (!name) { log.push('⚠️ add_items: each needs a "name"'); continue; }
+        let at = null, floorId = floor;
+        const where = raw.at ?? raw.square ?? raw.near ?? raw.room;
+        const pt = parseCoord(where, floorById(place, floorId).map);
+        if (pt) at = pt;
+        else if (where) {
+            const rm = findRoom(place, where);
+            if (rm) { floorId = rm.floor; at = freeInRoom(place, rm); }
+            else {
+                const someone = personByName(place, where) ?? place.state?.positions?.[matchName(where, place.state?.party || []) ?? ''];
+                if (someone && Number.isFinite(someone.x)) { floorId = someone.floor; at = openSquareNear(place, someone.floor, someone.x + 2, someone.y, new Set([`${someone.x},${someone.y}`])); }
+            }
+        }
+        if (!at) { log.push(`⚠️ add_items ${name}: couldn't place it (give "at": a square, a room or someone's name)`); continue; }
+        let k = 1;
+        while (place.items[`I${k}a`]) k++;
+        const id = `I${k}a`;
+        place.items[id] = { id, name, room: roomAt(place, floorId, at.x, at.y)?.id ?? null, floor: floorId, x: at.x, y: at.y, hidden: raw.hidden === true, found: raw.hidden !== true, note: String(raw.note || '').slice(0, 120), state: 'here' };
+        log.push(`${name} (${id}) on the ground at ${coord(at.x, at.y)}${raw.hidden === true ? ', hidden' : ''}`);
+    }
     for (const [name, raw] of Object.entries(c.guards || {})) {
         let g = personByName(place, name);
         // Someone new on the map, or moved: {"at": "ab14" | "room": "G5", "description": "the cook", "hostile": false}.
         if (raw && typeof raw === 'object') {
             if (!g && looksLikeThing(name)) { log.push(`⚠️ guards.${name}: that's not a person (fire, smoke, a noise and the like are never someone on the map; use map_effects or narration)`); continue; }
-            const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : null);
+            // No square given for someone new: they come in from the edge (or a doorway out of sight) toward the party.
+            const leadPos = place.state?.positions?.[place.state?.party?.[0]];
+            const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : leadPos ? { floor: leadPos.floor, x: leadPos.x, y: leadPos.y } : null);
             const info = { description: raw.description, hostile: raw.hostile === true };
             g = where ? placePerson(place, name, where, { floor, info, arrive: true }) : null;
             if (!g) { log.push(`⚠️ guards.${name}: couldn't place them (no square or room given)`); continue; }
@@ -1136,6 +1183,8 @@ export function placePerson(place, name, where, { floor = place.state?.floor, in
     if (!g) {
         g = place.guards[clean] = { name: clean, description: String(info.description || '').slice(0, 240), hostile: info.hostile === true, room, patrol: room ? [room] : [], step: 0, floor: floorId, x: spot.x, y: spot.y, state: 'patrol' };
         if (info.gender === 'male' || info.gender === 'female') g.gender = info.gender;
+        // "a sentry asleep at his post": asleep on the map too (notices nothing until a noise or the DM wakes him).
+        if (/\b(?:asleep|sleeping|dozing|snoring|passed out|fast asleep|sound asleep)\b/i.test(g.description)) g.down = 'asleep';
     }
     Object.assign(g, { floor: floorId, x: spot.x, y: spot.y, room: room ?? g.room ?? null });
     if (goal) { g.goal = { x: goal.x, y: goal.y }; if (!g.intent) g.intent = 'goto'; }
@@ -1168,7 +1217,20 @@ export function arrivalSpot(place, floorId, spot, taken = new Set()) {
     // Every way in is in plain sight (one lit hall): they walk in through the one farthest from the party.
     const gap = w => Math.min(...viewers.map(v => Math.max(Math.abs(v.x - w.x), Math.abs(v.y - w.y))));
     const far = all.filter(w => gap(w) > 3).sort((a, b) => gap(b) - gap(a))[0];
-    return far ? openSquareNear(place, floorId, far.x, far.y, taken, 2) : null;
+    const byFar = far ? openSquareNear(place, floorId, far.x, far.y, taken, 2) : null;
+    if (byFar) return byFar;
+    // Open land with no door to come in by: a spot in plain view further off is fine ("the wolf steps out of the trees, eight squares north");
+    // only one beside the party is moved to the edge of the map, out of sight where the land allows, on the side nearest where they were meant to be.
+    if (!viewers.some(v => Math.max(Math.abs(v.x - spot.x), Math.abs(v.y - spot.y)) <= 4)) return null;
+    const edge = [];
+    for (let x = 0; x < map.w; x++) for (const y of [0, map.h - 1]) if (walkable(place, floorId, x, y)) edge.push({ x, y });
+    for (let y = 1; y < map.h - 1; y++) for (const x of [0, map.w - 1]) if (walkable(place, floorId, x, y)) edge.push({ x, y });
+    for (const w of edge.filter(w => !inSight(w.x, w.y) && gap(w) > 4).sort((a, b) => dist(a) - dist(b))) {
+        const at = openSquareNear(place, floorId, w.x, w.y, taken, 1);
+        if (at && !inSight(at.x, at.y)) return at;
+    }
+    const best = edge.filter(w => gap(w) > 4).sort((a, b) => gap(b) - gap(a))[0];
+    return best ? openSquareNear(place, floorId, best.x, best.y, taken, 1) : null;
 }
 
 /**
@@ -1598,7 +1660,7 @@ export function placeSummary(place) {
             const stairs = place.stairs.filter(s => s.a.room === rm.id || s.b.room === rm.id).map(s => { const o = s.a.room === rm.id ? s.b : s.a; return `stairs ${s.id}→${o.room} (${floorById(place, o.floor).name})`; });
             const traps = Object.values(place.traps).filter(t => t.room === rm.id).map(t => `${t.id} ${t.kind} at ${coord(t.x, t.y)} DC ${t.dc}${t.save ? ` ${t.save}` : ''}: ${t.effect}`);
             const items = Object.values(place.items).filter(i => i.room === rm.id).map(i => `${i.id} ${i.name}${i.hidden ? ' (hidden)' : ''}${i.note ? ` ${i.note}` : ''}`);
-            lines.push(`- ${rm.id} ${rm.name} [${rm.type}${rm.lit ? ', lit' : ', dark'}${rm.exit ? ', has the way out' : ''}]${rm.description ? `: ${rm.description}` : rm.hint ? ` (notes: ${rm.hint})` : ''}`);
+            lines.push(`- ${rm.id} ${rm.name} [${rm.type}${rm.lit ? ', lit' : ', dark'}${rm.exit ? ', has the way out' : ''}]${rm.description ? `: ${rm.description}` : ''}${rm.hint ? ` (your notes, never the player's: ${rm.hint})` : ''}`);
             lines.push(`  exits: ${[...doors, ...stairs].join('; ') || 'none'}${traps.length ? ` | traps: ${traps.join('; ')}` : ''}${items.length ? ` | items: ${items.join('; ')}` : ''}`);
         }
     }
@@ -1643,6 +1705,7 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `${OUTDOOR.has(floor.map.theme) ? 'in the open' : 'in a corridor'} at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
     if (OUTDOOR.has(floor.map.theme) && st.weather && st.weather !== 'clear') lines.push(`Weather here: ${WEATHER_WORDS[st.weather] ?? st.weather}${st.weather === 'fog' ? ` (nobody sees past ${FOG_SIGHT} squares)` : st.weather === 'storm' ? ' (sound carries half as far; tracks wash out)' : st.weather === 'snow' ? ' (tracks show; slow going)' : st.weather === 'rain' ? ' (tracks wash out; torches gutter)' : ''}.`);
     for (const [p, rec] of Object.entries(st.custody || {})) lines.push(`CUSTODY: ${p} is ${rec.by}'s prisoner, kept within ${rec.radius} squares (the code stops ${p} walking off: ${rec.by} sees it, goes after them and grabs, with rolls; you're told each time)${rec.slipped ? `. ${p} has slipped out of ${rec.by}'s sight` : ''}. End it with place_changes custody {"${p}": ""}.`);
+    for (const [p, k] of Object.entries(st.kept || {})) lines.push(`KEPT: ${p} can't leave ${place.name}: ${k.by}${k.why ? ` (${k.why})` : ''} won't let them (the code stops them at the way out and sends the nearest of the place's people after them, with rolls; you're told). End it with place_changes kept {"${p}": ""}.`);
     if (st.triggers?.length) lines.push(`YOUR TRIGGERS (each tells you once when any party member comes within reach): ${st.triggers.map(t => `${t.id} within ${t.radius} of ${t.near}: "${t.note}"`).join('; ')}.`);
     if (st.night) lines.push(`It is ${st.late ? 'NIGHT' : 'DARK out (evening)'}: outdoors is dark; a room is lit only with someone awake in it or a light burning; ${st.late ? 'residents are asleep and shops and homes are shut (taverns, inns, guardhouses and jails are up); ' : ''}in the dark people see two squares, lantern-bearers three around them.`);
     if (st.visited.length) lines.push(`Rooms the party has been in: ${st.visited.join(', ')}.`);

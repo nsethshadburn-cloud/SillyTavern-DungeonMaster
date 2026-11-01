@@ -16,19 +16,19 @@ import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType }
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
-import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts, dismountsInText, propById, freeNear } from '../core/explore.js';
+import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts, dismountsInText, propById, freeNear, makeNoise } from '../core/explore.js';
 import { isBeast } from '../core/sprites.js';
 import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
@@ -227,9 +227,9 @@ async function turnBody(c, opts, status, signal) {
     } else if (opts.force !== 'manual' && opts.force !== 'opening') {
         meta.turn++;
         pacing.localTurnsSinceDM++;
-        const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat });
+        const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat, companions: meta.party.map(p => p.name) });
         // The clock ticks by turn: a few minutes of story each; a minute a round in a fight, and a minute for a turn the map forced mid-walk; nothing for a question out of character.
-        if (!rule.ooc) await tickClock(c, pacing.inCombat || opts.force === 'explore' ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
+        if (!rule.ooc) await tickClock(c, pacing.inCombat || c.docs.world.combat || opts.force === 'explore' ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
         triage = { ...triage, ...rule };
         let engaged = null;
         if (rule.needsHelper && s.useHelper) {
@@ -303,6 +303,7 @@ async function turnBody(c, opts, status, signal) {
     // several in reach and the player picks on the map. Then whoever does it walks up to it first,
     // and the DM is told exactly which one.
     let target = null;
+    let events = [];
     // Only when they DO something to it (open, search, smash, hide behind, climb...); a line about leaning on a log is roleplay. A tap on the map already said which one.
     const actsOnThing = Boolean(triage.task?.who) || /\b(open|close|shut|search|rummage|look (?:in|inside|into|through|under|behind)|check|examine|inspect|read|smash|break|bash|kick|force|pry|push|shove|pull|drag|lift|climb|hide|take|grab|pick (?:up|the|it)|unlock|lock|light|loot|rifle|empty|dig|cut|untie|tap|knock|jam|barricade|wedge|sit|lie down|sleep|rest on|attack|stab|hit|strike|smack)\b/i.test(playerText);
     // "Amber climbs into the wagon": in by code, and the DM told so (never narrated from outside).
@@ -360,7 +361,7 @@ async function turnBody(c, opts, status, signal) {
         // Told to hide there, or sit or lie down on it: they do when they get there.
         const what = String(triage.task.what || '').toLowerCase();
         const how = { hide: /\bhide|duck|crouch behind|get (in|under|behind)\b/.test(what), pose: /\bsleep\b/.test(what) ? 'sleep' : /\b(lie|lay) down\b/.test(what) ? 'lie' : /\bsit\b/.test(what) ? 'sit' : '' };
-        taskWalk = companionGoTo(c, who, go, how).then(went => { taskWent = went; if (went) status.note(`${who} goes to the ${went}`); }).catch(() => { });
+        taskWalk = companionGoTo(c, who, go, how).then(went => { taskWent = went; if (went) status.note(`${who} goes to ${went}`); }).catch(() => { });
     }
 
     // ---------- 2. Player roll resolution ----------
@@ -374,7 +375,6 @@ async function turnBody(c, opts, status, signal) {
 
     // ---------- 3. Random event (Claude decides whether one fits) ----------
     const b = budget();
-    let events = [];
     if (!pacing.inCombat && b.level !== 'blocked' && opts.force !== 'opening') {
         events = await maybeDrawEvents(c, status, b.level === 'tight');
     }
@@ -459,12 +459,12 @@ async function turnBody(c, opts, status, signal) {
         if (triage.mapRequest?.redo && result.turn.build_place) result.turn.build_place.replace = true;
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
         // The player attacked and the DM neither started a fight nor asked for a roll: say so, to both.
-        const attackWords = /\b(attacks?|stabs?|slash(?:es)?|shoots?|swings? (?:at|his|her|the)|punch(?:es)?|strikes?|hits?|kicks?|lunges?|charges? at|tackles?|fires? (?:an? )?(?:arrow|bolt)|casts? \w+ at|throws? (?:a|the|his|her) \w+ at)\b/i;
-        if (attackWords.test(playerText) && !c.docs.world.combat && !result.turn.start_combat && result.turn.player_roll && result.turn.player_roll.kind !== 'attack' && result.turn.player_roll.kind !== 'initiative' && !result.turn.end_combat && !signal.aborted) {
+        const attacked = attacksSomeone(playerText);
+        if (attacked && !c.docs.world.combat && !result.turn.start_combat && result.turn.player_roll && result.turn.player_roll.kind !== 'attack' && result.turn.player_roll.kind !== 'initiative' && !result.turn.end_combat && !signal.aborted) {
             meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and you asked for a ${result.turn.player_roll.skill} check instead of an attack: an attack on someone is player_roll kind "attack" against their AC with start_combat (the enemies by name), never a skill check.`];
             saveMeta();
         }
-        if (attackWords.test(playerText) && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !result.turn.end_combat && !signal.aborted) {
+        if (attacked && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !result.turn.end_combat && !signal.aborted) {
             meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and nothing happened: no start_combat, no player_roll. When the player attacks, that same turn: start_combat (the enemies by name, a map if outdoors with no built map) and player_roll "initiative". Never narrate the attack as pending.`];
             saveMeta();
             status.note('The DM let an attack go by: it has been told');
@@ -800,6 +800,15 @@ async function bookkeep(c, fromIndex) {
     // grappled...): never unconscious, dead, asleep, caged or cuffed, which the dice, the DM and the map own.
     const tidy = tidyBookkeeping(changes, { party: [c.meta.persona.name, ...c.meta.party.map(p => p.name)] });
     if (!tidy) return;
+    // The one doing the holding isn't the one held: a keeper, or whoever has the player pinned, is never "grappled" by the books.
+    {
+        const holders = new Set([...Object.values(currentPlace(c)?.place.state.custody || {}).map(r => r.by), ...conditionsOf(w, c.meta.persona.name).map(x => x.match(/held (?:down )?by ([^)]+)\)?\s*$/i)?.[1]?.trim()).filter(Boolean)]);
+        for (const [who, list] of Object.entries(tidy.conditions_add || {})) {
+            if (!holders.has(who) && !matchName(who, [...holders])) continue;
+            const kept = (Array.isArray(list) ? list : [list]).filter(x => !/grappled|pinned|grabbed|held/i.test(String(x)));
+            if (kept.length) tidy.conditions_add[who] = kept; else delete tidy.conditions_add[who];
+        }
+    }
     Object.keys(changes).forEach(k => delete changes[k]);
     Object.assign(changes, tidy);
     const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name), { turn: c.meta.turn });
@@ -1009,7 +1018,7 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
         if (attempt.stance && !attempt.go) await setStance(c, name, attempt.stance, status);
         if (attempt.go && !signal.aborted) {
             const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide, pose: attempt.pose });
-            if (went) status.note(attempt.hide ? `${name} hides ${went}` : /^(sit|lie|sleep) on /.test(went) ? `${name} goes to ${went}` : `${name} goes to the ${went} and stays there`);
+            if (went) status.note(attempt.hide ? `${name} hides ${went}` : `${name} goes to ${went} and stays there`);
         }
         if (!attempt.attempt || signal.aborted) continue;
         const reasons = ['companion_action'];
@@ -1041,7 +1050,7 @@ async function companionMovesOnMap(c, name, status, signal) {
         if (stance && !go) await setStance(c, name, stance, status);
         if (!go || signal.aborted) return;
         const went = await companionGoTo(c, name, go, { hide, pose });
-        if (went) status.note(hide ? `${name} hides ${went}` : /^(sit|lie|sleep) on /.test(went) ? `${name} goes to ${went.replace(/ on /, ' on ')}` : `${name} goes to the ${went} and stays there`);
+        if (went) status.note(hide ? `${name} hides ${went}` : `${name} goes to ${went} and stays there`);
     } catch (error) {
         console.warn('[Dungeon Master] companion move check failed', error);
     }
@@ -1155,6 +1164,16 @@ async function resolvePlayerRoll(c, parsed, status) {
         const settled = await settleCustody(c, pr, judged.success === true);
         if (settled) saveHurt += ` ${settled}`;
     }
+    // Throwing your weight at a door or a cage and failing is still a noise (unless your Stealth this turn covers it): whoever is near hears it.
+    if (pr.kind === 'check' && judged.success === false && /\b(?:force|forces|forcing|bash|break|smash|kick|shoulder|batter|pry|ram|throws? (?:his|her|their|your) weight)\b/i.test(`${pr.reason || ''} ${pr.skill || ''}`)) {
+        const here = currentPlace(c);
+        const me = here?.place.state.positions[meta.persona.name];
+        if (here && me) {
+            const heard = makeNoise(here.place, me.floor, me.x, me.y, { what: `${meta.persona.name} heaving at something and failing`, loud: 1, stealth: withAt(stealthOf(meta), here.place), turn: meta.turn });
+            savePlace(here.key, c);
+            saveHurt += heard.length ? ` The failed attempt was loud: heard by ${heard.join(', ')} (alert now; decide what they do).` : ' Nobody near enough, or awake enough, heard the failed attempt.';
+        }
+    }
     // Caught in a trap: a save or a check that works gets you loose (whichever the DM asked for).
     if ((pr.kind === 'save' || pr.kind === 'check') && judged.success === true && freeFromTrap(c, meta.persona.name)) {
         await postNote(`🪤 ${meta.persona.name} gets loose!`);
@@ -1249,7 +1268,9 @@ function recordEvent(c, { id, title, type }, how) {
 }
 
 /** Plain-words outcome line for a dice card. */
-function outcomeText(r, judged) {
+function outcomeText(r, judged, noticed = null) {
+    // A roll about seeing someone reads from what the code recorded, not the DM's guess at the outcome (written backwards now and then).
+    if (r.spot && noticed !== null) return ` → ${r.spot.seer} ${noticed ? 'notices' : "doesn't notice"} ${r.spot.seen}`;
     const text = judged.success === false ? r.on_fail : r.on_success;
     return text ? ` → ${text}` : '';
 }
@@ -1830,13 +1851,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // What just visibly changed: companions see it until the DM's next turn, so they don't redo it,
     // and then in their timeline with when and where it happened.
     meta.happened = t.happened || '';
-    // The DM has had what was done on the map: the next turn starts a fresh record.
-    meta.mapLog = [];
+    // The DM has had what was done on the map: the next in-character turn starts a fresh record (an out-of-character answer doesn't use it up).
+    const oocNow = reasons.includes('ooc') || /^\s*(?:\*?\(\s*ooc\s*\)\*?|\(\(|ooc\s*[:\-]|@?dm\s*[,:\-]|\/rule\b)/i.test(lastPlayerMessage());
+    if (!oocNow) meta.mapLog = [];
     if (t.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: t.happened });
     // Table rules come only from the player's own out-of-character words: the premise and the plot are the DM's private plan, and companions read the rules.
     if (t.table_rules_add.length) {
-        const said = lastPlayerMessage();
-        const oocNow = reasons.includes('ooc') || /^\s*(?:\*?\(\s*ooc\s*\)\*?|\(\(|ooc\s*[:\-]|@?dm\s*[,:\-]|\/rule\b)/i.test(said);
         if (!oocNow) { problems.push(`table_rules_add dropped (${t.table_rules_add.length}): table rules are only what the player settled out of character, in their own OOC words. Your plot, the premise's secrets and what is going to happen stay in your own plan; companions and NPCs read the rules, so a rule would give the story away.`); t.table_rules_add = []; }
     }
     if (t.table_rules_add.length || t.table_rules_remove.length) {
@@ -1921,6 +1941,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (choices) {
         for (const [n, ch] of Object.entries(choices)) {
             if (ch.action === 'use' && ch.item && /potion|elixir|philt|draught|salve|tonic/i.test(ch.item) && !(world.party[n]?.hp <= 0) && !meta.combatChoices.used?.[n]) {
+                // The DM already had her drink it (HP up, or the potion taken from her pack): once is enough.
+                const hpKey = matchName(n, Object.keys(t.state_changes?.hp || {})), rmKey = matchName(n, Object.keys(t.state_changes?.items_remove || {}));
+                const dmDid = (hpKey && !/^\s*-/.test(String(t.state_changes.hp[hpKey]))) || (rmKey && (Array.isArray(t.state_changes.items_remove[rmKey]) ? t.state_changes.items_remove[rmKey] : [t.state_changes.items_remove[rmKey]]).some(x => /potion|elixir|philt|draught|salve|tonic/i.test(String(x))));
+                if (dmDid) { (meta.combatChoices.used ??= {})[n] = true; status.note(`${n}'s ${ch.item}: the DM applied it`); continue; }
                 const dice = /superior/i.test(ch.item) ? '8d4+8' : /greater/i.test(ch.item) ? '4d4+4' : '2d4+2';
                 const r = roll(dice);
                 if (r) {
@@ -1944,6 +1968,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (signal.aborted) throw new Error('aborted');
         const result = roll(r.notation);
         if (!result) continue;
+        // Down earlier this same turn (a companion's blow came first): the dead roll nothing.
+        if (world.combat && r.kind === 'attack') {
+            const k = matchName(r.who, Object.keys(world.combat.enemies || {}));
+            if (k && world.combat.enemies[k]?.hp <= 0) { problems.push(`${r.who}'s ${r.what || 'attack'} was dropped: they went down to 0 HP before it this turn and never act again`); continue; }
+        }
         // An attack always lands on someone and always does damage: who it's at (named, or read from
         // its own words), against their AC when the DM left it out, with the DM's dice or the attacker's.
         if (r.kind === 'attack') {
@@ -1955,6 +1984,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
         const judged = judge(result.total, r.dc, result.natural, r.kind);
         let damageText = '';
+        let spotNoticed = null;
         if (r.kind === 'attack' && judged.success && r.damage && r.target) {
             let dmg = roll(r.damage);
             if (dmg && judged.critical) {
@@ -1982,6 +2012,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (r.spot && judged.success !== null) {
             const watcherRolled = nameKey(r.who) === nameKey(r.spot.seer) || matchName(r.who, [r.spot.seer]);
             const noticed = watcherRolled ? judged.success : !judged.success;
+            spotNoticed = noticed;
             noteSeen(world, r.spot.seer, r.spot.seen, noticed);
             const here = currentPlace(c);
             if (here && markNoticed(here.place, r.spot.seer, r.spot.seen, noticed)) savePlace(here.key, c);
@@ -2003,7 +2034,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
         const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';
         const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';
-        const card = `🎲 **${r.who}** · ${r.what}: ${result.detail} = **${result.total}** ${mark}${vs}${nat}${damageText}${outcomeText(r, judged)}`;
+        const card = `🎲 **${r.who}** · ${r.what}: ${result.detail} = **${result.total}** ${mark}${vs}${nat}${damageText}${outcomeText(r, judged, spotNoticed)}`;
         await postDiceCard(card, { roll: { ...r, total: result.total, natural: result.natural, success: judged.success } });
         if (r.kind === 'attack') playAnim(matchName(r.who, Object.keys(world.combat?.positions || {})) ?? r.who, 'attack');
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
@@ -2012,7 +2043,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const search = searcher ? searchForTraps(c, searcher, result.total, { dc: r.dc }) : null;
             if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${searcher} spots: ${search.found.join(', ')}.`); refreshMap(); }
         }
-        const outcome = judged.success === false ? r.on_fail : r.on_success;
+        const outcome = r.spot && spotNoticed !== null ? `${r.spot.seer} ${spotNoticed ? 'noticed' : 'did not notice'} ${r.spot.seen}` : judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {
             const key = matchName(r.who, [...meta.party.map(p => p.name), ...c.docs.npcs.map(n => n.name)]) || r.who;
             outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'} (already told by the game master; react to it, don't describe it again): ${outcome}`;
@@ -2083,11 +2114,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             continue;
         }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
+        // A roll the player is about to make: the speaker doesn't settle it or act on them first.
+        const pendingLine = t.player_roll && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is about to roll ${t.player_roll.skill || 'a check'}${t.player_roll.reason ? `: ${t.player_roll.reason}` : ''}. Don't settle it and don't do anything to ${meta.persona.name} before it's rolled.)` : '';
         // In a fight, or while just exploring (nobody talking to them): one short line.
         const length = meta.pacing.inCombat || quiet ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);
         try {
-            await makeSpeak(speaker, [d.direction, extra].filter(Boolean).join(' '), { signal, length });
+            await makeSpeak(speaker, [d.direction, extra, pendingLine].filter(Boolean).join(' '), { signal, length });
             step.done();
             await companionMovesOnMap(c, speaker, status, signal);
         } catch (error) {
@@ -2134,11 +2167,23 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (t.build_place) try {
             if (atlasEntry(t.build_place.name, c) && !t.build_place.replace) problems.push(`build_place "${t.build_place.name}" built nothing: that map already exists (the party was sent back to it). To build it again, send it with "replace": true.`);
             await requestBuild(t.build_place, { status, signal });
+            // Who the new place won't let leave (a captive, the tribe's god): set on it the moment it's built.
+            if (t.build_place.kept && typeof t.build_place.kept === 'object') { const here = currentPlace(c); if (here) { const kl = applyPlaceChanges(here.place, { kept: t.build_place.kept }, { floor: here.place.state.floor, turn: meta.turn }); if (kl.length) status.note(`Map: ${kl.join(', ')}`); savePlace(here.key, c); } }
         } catch (error) {
             status.note(`Map not built: ${error.message}`);
             problems.push(`build_place "${t.build_place.name}" FAILED in the code (${error.message}): the map was not built. The party is where they were. Don't narrate it as built; try a different kind or name, or carry on without it.`);
             toastr.error(String(error?.message || error), 'Dungeon Master');
         }
+    }
+    // A pin only holds while the holder is right there.
+    for (const line of releaseStalePins(c)) status.note(line);
+    // Names the story has said aloud: from now on a companion may use them (till then she knows people by their looks).
+    {
+        const here = currentPlace(c);
+        const said = `${t.narration || ''} ${t.ooc || ''} ${t.directions.map(d => `${d.speaker} ${d.brief || ''} ${d.direction || ''}`).join(' ')} ${lastPlayerMessage()}`;
+        const known = new Set(meta.namesKnown || []);
+        for (const g of Object.values(here?.place.guards || {})) { const f = String(g.name).split(' ')[0]; if (f.length >= 3 && new RegExp(`\\b${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(said)) known.add(nameKey(g.name)); }
+        meta.namesKnown = [...known].slice(-120);
     }
     // The panel shows the clock, HP and hints as they are now.
     refreshMap();

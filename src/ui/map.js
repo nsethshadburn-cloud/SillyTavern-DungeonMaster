@@ -28,6 +28,7 @@ import { setBubbleStage, clearBubbleStage } from './bubbles.js';
 import { sfx, syncAmbient, setAmbient } from './sound.js';
 import { nameKey } from '../core/text.js';
 import { ensureClock, clockText, hhmm, timeIcon, WEATHER_ICON, WEATHER_WORDS } from '../core/clock.js';
+import { sexFromText } from '../core/sprites.js';
 
 let panel = null;
 let selection = { move: '', target: '' };
@@ -908,7 +909,7 @@ function showPerson(ev, c, b, who) {
         place?.state.waiting?.[who] ? 'staying here' : '',
         place?.state.mounts?.[who] ? `riding ${place.state.mounts[who]}` : '',
         Object.entries(place?.state.mounts || {}).find(([, h]) => h === who) ? `ridden by ${Object.entries(place.state.mounts).find(([, h]) => h === who)[0]}` : '',
-        g?.ac ? `AC ${g.ac}` : '',
+        (c.docs.world.combat?.enemies?.[who]?.ac ?? g?.ac) ? `AC ${c.docs.world.combat?.enemies?.[who]?.ac ?? g.ac}` : '',
         (c.docs.world.inventory?.[who] || []).length ? `carries ${c.docs.world.inventory[who].join(', ')}` : '',
         place?.guards[who]?.description || '',
     ].filter(Boolean);
@@ -936,12 +937,12 @@ function showPerson(ev, c, b, who) {
         }
     } else if (companion) {
         // Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
-        actions.push(['Talk to them', 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
+        actions.push([`Talk to ${who.split(' ')[0]}`, 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
         actions.push(['Wait here', 'fa-hand', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.* "Wait here, ${first}. I'll be back."`); }]);
         actions.push(['Come along', 'fa-person-walking', () => { closeMenu(); sendAsPlayer(`*${player} nods to ${who}.* "Come on, ${first}. With me."`); }]);
         actions.push(['Stick with me', 'fa-people-arrows', () => { closeMenu(); sendAsPlayer(`*${player} looks at ${who}.* "${first}, stay close. Right by me."`); }]);
     } else if (npc && npc.state !== 'dead' && npc.state !== 'gone') {
-        actions.push(['Talk to them', 'fa-comment', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); }]);
+        actions.push([`Talk to ${who.split(' ')[0]}`, 'fa-comment', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); }]);
         actions.push(['Attack', 'fa-khanda', async () => { if (!(await near())) return; closeMenu(); setMapAction(`${player} attacks ${who} (${npc.description || 'on the map'}) from the map, right beside them. That starts a fight: start_combat with ${who} in it and ask for initiative; their attack comes in order.`); sendAsPlayer(`*${player} attacks ${who}!*`); }]);
     }
     showMenu(ev, who, lines.join(' · ') || (companion || isPlayer ? 'fine' : ''), actions);
@@ -1120,7 +1121,7 @@ function showEscapeMenu(ev, c) {
     const player = c.meta.persona.name;
     const r = restraintOf(conditionsOf(c.docs.world, player));
     if (!r.locked || r.hurt) return false;
-    const options = escapeOptions(player, r);
+    const options = escapeOptions(player, r, { male: 'his', female: 'her' }[sexFromText(c.meta.persona.description || '') || ''] ?? 'their');
     if (!options.length) return false;
     showMenu(ev, player, lockedLine(player, r).replace(/\s*Tap .*$/, ''), options.map(([label, icon, text]) => [label, icon, () => {
         setMapAction(`${player} tries to get free: ${text} Ask for that roll (DC by how they're held: rope 12, cuffs or a cage lock 15; getting up off the ground: Acrobatics or Athletics, DC 10, or 15 with hands cuffed or someone holding them down). On a success remove the restraint with state_changes.conditions_remove ("prone" for getting up) and say they're up or loose; on a failure they stay as they are.`);

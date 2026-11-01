@@ -152,7 +152,8 @@ export function campFromBrief(brief, seed = 1) {
     for (const s of brief.rooms) {
         const rm = zoneFor(`${s.room} ${s.name}`);
         if (s.name && !rm.role) rm.name = cap(s.name);
-        if (s.note) rm.description = [rm.description, s.note].filter(Boolean).join(' ');
+        // The brief's notes are the DM's plan (what happens here, the way out under the pens): never the room's description the player reads.
+        if (s.note) rm.hint = [rm.hint, s.note].filter(Boolean).join(' ');
         for (const it of s.has) rm.items.push({ name: it, hidden: s.hidden, note: s.note });
     }
     // The objective (an item): in the chief's keeping, far from the gate.
@@ -495,13 +496,13 @@ export function generateCamp(plan, seed = 1) {
     for (const cl of cells) {
         const rm = (pools[cl.role] ??= []).shift() ?? { id: `${cl.role.toUpperCase()}${int(r, 2, 99)}`, name: pick(r, ZONE_NAMES[cl.role] ?? ['Yard']), type: ZONE_TYPES[cl.role] ?? 'room', description: '', items: [], traps: [] };
         cl.roomId = rm.id; cl.room = rm;
-        place.rooms[rm.id] = { id: rm.id, name: rm.name, type: cl.role === 'keep' ? 'courtyard' : rm.type, floor: 'F0', rect: { ...cl.rect }, lit: true, description: rm.description, exit: false, role: cl.role };
+        place.rooms[rm.id] = { id: rm.id, name: rm.name, type: cl.role === 'keep' ? 'courtyard' : rm.type, floor: 'F0', rect: { ...cl.rect }, lit: true, description: rm.description, hint: rm.hint || '', exit: false, role: cl.role };
     }
     const fireRoom = byRole('fire')[0] ?? { id: 'FIRE', name: 'Fire Circle', type: 'courtyard', description: '', items: [], traps: [] };
-    place.rooms[fireRoom.id] = { id: fireRoom.id, name: fireRoom.name, type: 'courtyard', floor: 'F0', rect: { ...fireRect }, lit: true, description: fireRoom.description, exit: false, role: 'fire' };
+    place.rooms[fireRoom.id] = { id: fireRoom.id, name: fireRoom.name, type: 'courtyard', floor: 'F0', rect: { ...fireRect }, lit: true, description: fireRoom.description, hint: fireRoom.hint || '', exit: false, role: 'fire' };
     const approach = plan.rooms.find(rm => rm.id === 'APPROACH') ?? { id: 'APPROACH', name: 'The Approach', type: 'courtyard', description: '', items: [], traps: [] };
     const apRect = gate.out[1] ? { x: gate.x - 3, y: gate.out[1] < 0 ? gate.y - 5 : gate.y + 1, w: 7, h: 5 } : { x: gate.out[0] < 0 ? gate.x - 5 : gate.x + 1, y: gate.y - 3, w: 5, h: 7 };
-    place.rooms[approach.id] = { id: approach.id, name: approach.name, type: 'courtyard', floor: 'F0', rect: { x: clamp(apRect.x, 0, W - apRect.w), y: clamp(apRect.y, 0, H - apRect.h), w: apRect.w, h: apRect.h }, lit: true, description: approach.description, exit: true, role: 'approach' };
+    place.rooms[approach.id] = { id: approach.id, name: approach.name, type: 'courtyard', floor: 'F0', rect: { x: clamp(apRect.x, 0, W - apRect.w), y: clamp(apRect.y, 0, H - apRect.h), w: apRect.w, h: apRect.h }, lit: true, description: approach.description, hint: approach.hint || '', exit: true, role: 'approach' };
     // Fix the gate doors' rooms now the ids are known.
     for (const d of Object.values(place.doors)) {
         if (d.rooms[0] === 'GATE') d.rooms[0] = gateCell.roomId;

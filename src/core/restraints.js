@@ -36,15 +36,15 @@ export function lockedLine(name, r) {
 }
 
 /** Ways to try to get free, for the tap menu on yourself: [label, icon, what the player does]. */
-export function escapeOptions(name, r) {
+export function escapeOptions(name, r, their = 'their') {
     if (!r.locked && r.look !== 'cuffs') return [['Search for traps', 'fa-magnifying-glass', `*${name} carefully searches the room for traps.* (Perception)`]];
     if (r.hurt) return [];
     const out = [];
-    if (r.prone) out.push(['Get up', 'fa-person-walking', `*${name} struggles up to their feet.* (Acrobatics or Athletics)`]);
+    if (r.prone) out.push(['Get up', 'fa-person-walking', `*${name} struggles up to ${their} feet.* (Acrobatics or Athletics)`]);
     if (r.prone && r.reason === 'on the ground' && r.look !== 'cuffs') return out;
     if (r.look === 'cage') {
         out.push(['Pick the lock', 'fa-key', `*${name} works at the cage's lock.* (Sleight of Hand with thieves' tools)`]);
-        out.push(['Force the bars', 'fa-hand-fist', `*${name} throws their weight against the cage bars.* (Athletics)`]);
+        out.push(['Force the bars', 'fa-hand-fist', `*${name} throws ${their} weight against the cage bars.* (Athletics)`]);
     } else if (r.look === 'cuffs') {
         out.push(['Slip the cuffs', 'fa-hand', `*${name} twists, trying to slip out of the cuffs.* (Acrobatics)`]);
         out.push(['Pick the cuffs', 'fa-key', `*${name} works at the cuffs' lock.* (Sleight of Hand)`]);

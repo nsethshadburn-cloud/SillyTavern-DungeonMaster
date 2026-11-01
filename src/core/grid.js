@@ -21,7 +21,7 @@ export const TERRAIN = Object.freeze({
     'L': { name: 'lava', walk: false, cover: false },
     'o': { name: 'pit or hole', walk: false, cover: false },
     '#': { name: 'wall', walk: false, cover: true },
-    'T': { name: 'tree outdoors, stone pillar indoors', walk: false, cover: true },
+    'T': { name: 'tree (a pillar indoors)', walk: false, cover: true },
     '+': { name: 'closed door', walk: true, cover: false },
     '/': { name: 'open door', walk: true, cover: false },
     'D': { name: 'locked door', walk: false, cover: true },

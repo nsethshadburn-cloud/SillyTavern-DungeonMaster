@@ -175,10 +175,13 @@ export function animalFigure(name) {
 function wantsAnimalFigure(p) {
     if (!p?.name || animalFigure(p.name)) return false;
     const text = `${p.name} ${p.role || ''} ${p.description || ''}`;
-    const key = LIBRARY[String(p.sprite || '')] ? String(p.sprite) : presetFor(text);
+    // "a grey parrot perched on the jailer's wagon": the head of the description says what it is; the rest is where it sits (a word like "jailer" there is not who it is).
+    const head = `${p.name} ${String(p.description || '').split(/[,;:.]| (?:perched|sitting|standing|lying|on|in|at|by|near|beside|under|behind|with|who|that|which) /i)[0]}`;
+    const animalByWords = (ANIMAL_WORDS.test(head) || ANIMAL_WORDS.test(String(p.sprite || ''))) && !NOT_AN_ANIMAL.test(head);
+    const key = LIBRARY[String(p.sprite || '')] ? String(p.sprite) : presetFor(animalByWords ? head : text);
     if (key && LIBRARY[key]?.beast && key !== 'animal') return false;
-    if (key && !LIBRARY[key]?.beast) return false;
-    return ANIMAL_WORDS.test(`${p.sprite || ''} ${text}`) && !NOT_AN_ANIMAL.test(text);
+    if (key && !LIBRARY[key]?.beast && !animalByWords) return false;
+    return (animalByWords || ANIMAL_WORDS.test(`${p.sprite || ''} ${text}`)) && !NOT_AN_ANIMAL.test(head);
 }
 
 /**
