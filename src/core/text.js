@@ -236,3 +236,20 @@ export function repeatedPhrases(texts, { exclude = [], max = 5 } = {}) {
     }
     return kept.slice(0, max);
 }
+/**
+ * Subjects a character keeps bringing up (the pit, the warrant): a real word of three letters or more
+ * that turns up in three or more of their last four replies, however it's phrased. Names never count.
+ * @param {string[]} texts the character's recent replies, oldest first
+ * @param {{exclude?: string[], max?: number}} [o]
+ */
+export function repeatedTopics(texts, { exclude = [], max = 3 } = {}) {
+    const banned = new Set(exclude.flatMap(n => phraseTokens(n)));
+    const recent = texts.slice(-4);
+    if (recent.length < 3) return [];
+    const seen = new Map();
+    for (const t of recent) for (const w of new Set(phraseTokens(t))) {
+        if (w.length < 3 || STOPWORDS.has(w) || banned.has(w) || /^\d+$/.test(w)) continue;
+        seen.set(w, (seen.get(w) || 0) + 1);
+    }
+    return [...seen.entries()].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).map(([w]) => w).slice(0, max);
+}

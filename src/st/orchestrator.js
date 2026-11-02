@@ -11,8 +11,8 @@ import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
 import { modelLabel } from '../core/models.js';
 import { rotateIdleNpcs, removeNpcsFromGroup, touchNpc } from './npccards.js';
 import { withDmThinking } from '../ui/thinking.js';
-import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart } from './actors.js';
-import { postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
+import { makeSpeak, refreshStandingPrompt, speakerCandidates, markSceneStart, recentRepliesOf } from './actors.js';
+import { DM_NAME, postNarration, postOoc, postPlayerOoc, postDiceCard, postNote, dmType } from './messages.js';
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
@@ -22,7 +22,7 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, keeperTurn, settleTrip, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -35,7 +35,7 @@ import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
-import { matchName, nameKey, trimToTokens, extractJson } from '../core/text.js';
+import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
 import { drainTalk } from './talk.js';
 import { sfx } from '../ui/sound.js';
@@ -240,7 +240,7 @@ async function turnBody(c, opts, status, signal) {
         if (rule.needsHelper && s.useHelper) {
             const step = status.step('Reading your move (local helper)');
             try {
-                const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n }));
+                const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n })).filter(n => talkRange(c, n) === 'near'); // nobody a conversation away chimes in on their own
                 // Companions here, and what's around them on the map, so the helper can spot a task ("Judy, search that crate").
                 const helpers = meta.party.map(p => p.name).filter(n => candidates.includes(n));
                 const onMap = currentPlace(c);
@@ -355,6 +355,9 @@ async function turnBody(c, opts, status, signal) {
         // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
         const hunt = await huntersTurn(c, { still, fleeing: readsAsRunning(playerText) });
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
+        // A companion keeper gets up, or searches for the prisoner who slipped her.
+        const kept = await keeperTurn(c).catch(error => { console.warn('[Dungeon Master] keeper turn failed', error); return ''; });
+        if (kept) placeEvent = [placeEvent, kept].filter(Boolean).join(' ');
         await playMoves(c);
     }
 
@@ -614,6 +617,8 @@ async function movedTurn(c, status, signal) {
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         const hunt = await huntersTurn(c);
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
+        const kept = await keeperTurn(c).catch(error => { console.warn('[Dungeon Master] keeper turn failed', error); return ''; });
+        if (kept) placeEvent = [placeEvent, kept].filter(Boolean).join(' ');
         await playMoves(c);
     }
     refreshMap();
@@ -997,7 +1002,7 @@ function summarizeTurn(t) {
  * else a companion who is with the player. Companions who split off never answer.
  */
 function localSpeakers(c, triage, playerText) {
-    const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n }));
+    const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n })).filter(n => talkRange(c, n) === 'near'); // nobody a conversation away chimes in on their own
     if (!candidates.length) return [];
     if (triage.speakers?.length) return triage.speakers.filter(n => candidates.includes(n));
     if (triage.helperChoseSpeakers) return [];
@@ -1050,7 +1055,23 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
     }
 }
 
-/** After a companion's reply the DM directed: if they said they go somewhere, they walk there on the map. */
+/** "Judy rises from the grass": a companion on the ground whose hands are free gets up by their own words (no roll); cuffed, caged or held, they need the roll. */
+async function companionGetsUp(c, name, status) {
+    const w = c.docs.world;
+    const conds = conditionsOf(w, name);
+    if (!conds.some(x => /^prone\b/i.test(String(x)))) return;
+    const r = restraintOf(conds);
+    if (r.bound || r.caged || /grappled|pinned/i.test(conds.join(' '))) return;
+    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
+    if (!msg?.mes || !/\b(?:rises?|rising|gets? (?:back )?up|getting up|scrambles? (?:up|upright|to (?:her|his|their) feet)|stands? up|standing up|pushes? (?:herself|himself|themselves) up|(?:back )?(?:on|to) (?:her|his|their) feet|hauls? (?:herself|himself|themselves) up(?:right)?)\b/i.test(msg.mes)) return;
+    applyStateChanges(w, { conditions_remove: { [name]: ['prone'] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
+    saveDoc('world');
+    syncDownFromConditions(c);
+    await postNote(`📜 ${name} gets up (−prone, from their own words).`);
+    status.note(`${name} gets up`);
+}
+
+/** After a companion's reply (the DM's brief or their own): if they said they go somewhere, they walk there on the map. */
 async function companionMovesOnMap(c, name, status, signal) {
     const s = settings();
     if (!s.useHelper || c.docs.world.combat || !c.meta.party.some(p => p.name === name)) return;
@@ -1082,6 +1103,8 @@ async function localReplies(c, triage, playerText, status, signal) {
             await makeSpeak(sp, '', { signal });
             step.done();
             await companionDrinks(c, sp, status);
+            await companionGetsUp(c, sp, status);
+            await companionMovesOnMap(c, sp, status, signal);
         } catch (error) {
             step.fail(error);
         }
@@ -1200,6 +1223,10 @@ async function resolvePlayerRoll(c, parsed, status) {
     }
     if (pr.custody) {
         const settled = await settleCustody(c, pr, judged.success === true);
+        if (settled) saveHurt += ` ${settled}`;
+    }
+    if (pr.trip) {
+        const settled = await settleTrip(c, pr, judged.success === true);
         if (settled) saveHurt += ` ${settled}`;
     }
     // Something the DM had break or come open on this roll (the crate, the door): now, and only on a success.
@@ -1374,6 +1401,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const problems = [];
     // Things the DM is told next turn without a warning to the player (the code already did the right thing).
     const dmOnly = [];
+    // The DM's own tics ("wrists still locked behind you", nine turns running): named, so they stop.
+    const dmTics = repeatedPhrases(recentRepliesOf(DM_NAME, 6), { exclude: [meta.persona.name, ...meta.party.map(p => p.name)] });
+    if (dmTics.length) dmOnly.push(`You've repeated these in your last turns: ${dmTics.map(p => `"${p}"`).join(', ')}. Say it differently or leave it out: a standing fact (cuffed hands, the dark, a danger ahead) is stated once, when it changes or matters, not every turn.`);
     // A roll the DM asked the player to make for a companion ("Judy's DEX save"): the code rolls it for
     // the companion, in the open, like any npc roll. The player rolls only their own.
     if (t.player_roll && (t.player_roll.kind === 'save' || t.player_roll.kind === 'check')) {
@@ -2126,6 +2156,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // Caught in a trap: a save or a check that works gets them loose.
         const caughtWho = r.kind === 'save' || r.kind === 'check' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
         if (caughtWho && judged.success === true && trappedIn(c, caughtWho) && freeFromTrap(c, caughtWho)) damageText += ' · gets loose!';
+        // Getting up: a check that works puts them on their feet (the DM forgets conditions_remove, and then they're stuck on the map).
+        if (caughtWho && judged.success === true && /\b(?:get(?:s|ting)? (?:back )?up|stand(?:s|ing)? up|(?:back )?(?:on|to) (?:his|her|their) feet|rises?|scrambles?)\b/i.test(`${r.what} ${r.on_success}`) && conditionsOf(world, caughtWho).some(x => /^prone\b/i.test(String(x)))) { applyStateChanges(world, { conditions_remove: { [caughtWho]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); syncDownFromConditions(c); damageText += ' · up on their feet'; }
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
         const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';
         const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';
@@ -2190,7 +2222,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
-    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard; problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling to slip free of ${k}'s grab (${meta.pendingRoll.skill} against ${k}'s Athletics ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A grab is being rolled: the DM\'s roll request is dropped'); }
+    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody || meta.pendingRoll.trip) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard || meta.pendingRoll.trip?.keeper; problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling ${meta.pendingRoll.trip ? `their ${meta.pendingRoll.trip.what} of ${k}` : `to slip free of ${k}'s grab`} (${meta.pendingRoll.skill} against ${k}'s ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A contest is being rolled: the DM\'s roll request is dropped'); }
     else if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;
@@ -2245,12 +2277,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // A roll the player is about to make: the speaker doesn't settle it or act on them first.
         const pendingLine = t.player_roll && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is about to roll ${t.player_roll.skill || 'a check'}${t.player_roll.reason ? `: ${t.player_roll.reason}` : ''}. Don't settle it and don't do anything to ${meta.persona.name} before it's rolled.)` : '';
         // In a fight, or while just exploring (nobody talking to them): one short line.
-        const length = meta.pacing.inCombat || quiet ? 'short' : d.length;
+        // Out of talking range: a shout of a few words, or nothing.
+        const far = c.meta.party.some(p => p.name === speaker) && talkRange(c, speaker) === 'far';
+        const farLine = far ? `(${meta.persona.name} is far off across the map: only a shout carries. A few words called out, or none: act instead.)` : '';
+        const length = meta.pacing.inCombat || quiet || far ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);
         try {
-            await makeSpeak(speaker, [d.direction, extra, pendingLine].filter(Boolean).join(' '), { signal, length });
+            await makeSpeak(speaker, [d.direction, extra, pendingLine, farLine].filter(Boolean).join(' '), { signal, length });
             step.done();
             await companionDrinks(c, speaker, status);
+            await companionGetsUp(c, speaker, status);
             await companionMovesOnMap(c, speaker, status, signal);
         } catch (error) {
             step.fail(error);

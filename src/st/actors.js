@@ -14,7 +14,7 @@ import { ensureNpcMember, touchNpc, npcForName } from './npccards.js';
 import { pickNpcVoice, voiceLine } from './voices.js';
 import { addNpcs, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '../core/notes.js';
-import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases } from '../core/text.js';
+import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases, repeatedTopics } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
 import { roomBrief, currentPlace, withinEarshot } from './atlas.js';
 import { notAPerson } from '../core/explore.js';
@@ -47,7 +47,7 @@ function partyConditions(w) {
 }
 
 /** A character's recent replies (the shown swipe), newest last. */
-function recentRepliesOf(name, max = 8) {
+export function recentRepliesOf(name, max = 8) {
     const out = [];
     for (let i = ST.chat.length - 1; i >= 0 && out.length < max; i--) {
         const m = ST.chat[i];
@@ -68,8 +68,11 @@ function mapPeople(c) {
 /** What is true right now: the scene card, people met, the timeline (companions only), table rules. */
 function stateVars(c, speaker, { npc = false } = {}) {
     const w = c.docs.world;
+    const names = [speaker, c.meta.persona.name, ...c.meta.party.map(p => p.name)];
+    const recent = speaker ? recentRepliesOf(speaker) : [];
+    // Their tics (the same words), and the subject they keep harping on (the pit, in every reply, however it's put).
     const avoid = speaker
-        ? repeatedPhrases(recentRepliesOf(speaker), { exclude: [speaker, c.meta.persona.name, ...c.meta.party.map(p => p.name)] })
+        ? [...repeatedPhrases(recent, { exclude: names }).map(p => `"${p}"`), ...repeatedTopics(recent, { exclude: names }).map(t => `the subject of "${t}" (brought up in nearly every reply: drop it unless asked, and do or say something else)`)]
         : [];
     return {
         scenecard: renderSceneCard(w.sceneCard, partyConditions(w)),
@@ -77,7 +80,7 @@ function stateVars(c, speaker, { npc = false } = {}) {
         // NPCs don't get the party's timeline: it can hold things only the party knows.
         timeline: npc ? '' : renderTimeline(c.meta.timeline, { day: w.day, time: w.time }, { skipLatest: Boolean(c.meta.happened) }),
         rules: (c.meta.tableRules || []).join(' '),
-        avoid: avoid.map(p => `"${p}"`).join(', '),
+        avoid: avoid.join(', '),
     };
 }
 

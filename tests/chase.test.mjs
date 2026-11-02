@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { saysRun, givesIn } from '../src/core/access.js';
 import { normalizeBrief, wildsFromBrief } from '../src/core/architect.js';
 import { DM_RULES } from '../src/core/protocol.js';
+import { repeatedTopics } from '../src/core/text.js';
 
 test('"I run" is running; a hand run along a wall is not', () => {
     for (const s of ['I run', 'Amber runs for the trees', '*I bolt*', 'I sprint off', 'I keep running', 'I make a break for it', 'I dash into the woods', 'I take off']) assert.ok(saysRun(s), s);
@@ -34,4 +35,19 @@ test('the protocol says the code rolls the chase, and a companion who grabs has 
     assert.ok(/tripping, shoving or striking their keeper is their own contested roll/.test(DM_RULES));
     assert.ok(/A keeper on the ground gets up before she grabs again/.test(DM_RULES));
     assert.ok(/HIDDEN TRAPS are yours alone/.test(DM_RULES));
+    assert.ok(/SAY IT ONCE/.test(DM_RULES));
+    assert.ok(/searches for them by code/.test(DM_RULES));
+});
+test('a subject brought up in nearly every reply is named; names and one-offs never', () => {
+    const replies = [
+        '"Stop! There\'s a pit ahead!" *Judy lunges.*',
+        '"Amber, listen: a covered pit, ten feet on. You\'ll fall!"',
+        '*She hauls on his arm.* "The pit. Right there. Don\'t."',
+        '"AMBER, the pit trap! It\'s covered!"',
+    ];
+    const topics = repeatedTopics(replies, { exclude: ['Amber', 'Judy Hopps'] });
+    assert.ok(topics.includes('pit'), topics.join(', '));
+    assert.ok(!topics.includes('amber'));
+    assert.deepEqual(repeatedTopics(['Hello there.', 'Something else entirely.', 'A third thing.']), []);
+    assert.deepEqual(repeatedTopics(replies.slice(0, 2)), [], 'too few replies to call it a habit');
 });
