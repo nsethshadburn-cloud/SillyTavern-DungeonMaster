@@ -93,3 +93,25 @@ test('drawing a sword "not to attack" is no attack; a stab is', () => {
     assert.ok(attacksSomeone('amber uses his short sword to stab the raider right beside him'));
     assert.ok(/Custody ends by itself when the prisoner's cuffs or ropes come off/.test(DM_RULES));
 });
+test('v0.64: her words in a chase: "back, now" guards; "I\'m coming over" lets nothing go; "lead on" still does', () => {
+    assert.equal(keeperWords('Hands where he can see them, I\'m coming over. Amber. Back. Now.'), 'guard');
+    assert.equal(keeperWords('I\'m coming over there, hold still.'), 'guard');
+    assert.equal(keeperWords('Right, I\'m coming over.', { chase: true }), '');
+    assert.equal(keeperWords('Right, I\'m coming over.'), '');
+    assert.equal(keeperWords('Fine. I\'m coming with you.'), 'companion');
+    assert.equal(keeperWords('Fine. I\'m coming with you.', { chase: true }), '');
+    assert.equal(keeperWords('Lead the way, then.', { chase: true }), 'companion');
+    assert.equal(keeperWords('Get back here!'), 'guard');
+});
+
+test('v0.64: a mountain pass is built as one (its spots, its rock), and the brief\'s hidden pit is a trap in that spot', () => {
+    const brief = normalizeBrief({ name: 'Saltback Pass', kind: 'mountain pass', summary: 'A narrow trail over the pass, a sheer drop on one side; a bandit toll-post up the trail.', rooms: [{ room: 'The path below the toll-post', has: ['hidden pit', 'a three-pebble cairn'] }] });
+    assert.ok(brief.rooms[0].trapped, 'the pit in "has" marks the spot trapped');
+    const plan = wildsFromBrief(brief, 5);
+    assert.ok(plan.rooms.some(x => /Switchback|Scree|Boulder Field|The Drop|Ledge|Rockfall|Cairn|Wind Gap|Goat Track|Cold Spring|Waystone|Shelter|Eagle/.test(x.name)), plan.rooms.map(x => x.name).join(', '));
+    assert.ok(!plan.rooms.some(x => /Ford|Graves|Den|Stream Pool|Shrine|Old Ruin|Edge of the Trees/.test(x.name)), plan.rooms.map(x => x.name).join(', '));
+    const spot = plan.rooms.find(x => /path below/i.test(x.name));
+    assert.ok(spot && spot.traps.length >= 1 && spot.traps[0].hidden, 'the pit is a hidden trap in that spot');
+    assert.ok(/The dice say, and the next turn tells what came of it/.test(DM_RULES));
+    assert.ok(/A companion grabbing for the player .* is the code's contest/.test(DM_RULES));
+});

@@ -296,7 +296,9 @@ function renderMap(center = false) {
     }).join('');
     const exploring = b.kind === 'place';
     const seenSq = b.place && b.floor ? (x, y) => isExplored(b.place, b.floor.id, x, y) : () => true;
-    const props = exploring ? '' : (map.props || []).filter(pr => !pr.hidden && !PROPS[pr.type]?.decal && seenSq(pr.x, pr.y)).map(pr => `<span>${escapeHtml(pr.label || PROPS[pr.type]?.name || pr.type)} <b>${toCoord(pr.x, pr.y)}</b></span>`).join('');
+    const propItems = exploring ? [] : (map.props || []).filter(pr => !pr.hidden && !PROPS[pr.type]?.decal && seenSq(pr.x, pr.y)).map(pr => `<span>${escapeHtml(pr.label || PROPS[pr.type]?.name || pr.type)} <b>${toCoord(pr.x, pr.y)}</b></span>`);
+    // A big outdoor map has hundreds of bushes and logs: folded away, a tap lists them.
+    const props = propItems.length > 12 ? `<details><summary>${propItems.length} things on the map</summary>${propItems.join('')}</details>` : propItems.join('');
     const pending = [selection.move ? `move to ${selection.move}` : '', selection.target ? `target ${selection.target}` : ''].filter(Boolean).join(', ');
     const floors = exploring ? b.place.floors.filter(f => (b.place.state.explored[f.id] || '').includes('1')).sort((x, y) => y.level - x.level) : [];
 
@@ -947,11 +949,22 @@ function showPerson(ev, c, b, who) {
             }
         }
     } else if (companion) {
-        // Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
-        actions.push([`Talk to ${talkName(who)}`, 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
-        actions.push(['Wait here', 'fa-hand', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.* "Wait here, ${first}. I'll be back."`); }]);
-        actions.push(['Come along', 'fa-person-walking', () => { closeMenu(); sendAsPlayer(`*${player} nods to ${who}.* "Come on, ${first}. With me."`); }]);
-        actions.push(['Stick with me', 'fa-people-arrows', () => { closeMenu(); sendAsPlayer(`*${player} looks at ${who}.* "${first}, stay close. Right by me."`); }]);
+        const cc = conditionsOf(c.docs.world, who);
+        const chp = c.docs.world.party?.[who];
+        const out = Boolean(chp?.hp_max && chp.hp <= 0) || /unconscious|knocked out|dead/i.test(cc.join(' '));
+        const prone = !out && cc.some(x => /^prone\b/i.test(String(x)));
+        if (out) {
+            // Out cold: nothing to order; see to them, or try to bring them round (the DM rules on it).
+            actions.push([`Tend to ${first}`, 'fa-hand-holding-medical', () => { closeMenu(); sendAsPlayer(`*${player} kneels by ${who}, checks ${first} is breathing and looks over the hurts.*`); }]);
+            actions.push(['Shake awake', 'fa-bell', () => { closeMenu(); sendAsPlayer(`*${player} shakes ${who} by the shoulder.* "${first}. ${first}! Wake up."`); }]);
+        } else {
+            // On the ground: a hand up (the code stands them up, no roll). Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
+            if (prone) actions.push(['Help up', 'fa-hands-helping', () => { closeMenu(); sendAsPlayer(`*${player} takes ${who} by the arm and hauls ${first} up onto ${first}'s feet.*`); }]);
+            actions.push([`Talk to ${talkName(who)}`, 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
+            actions.push(['Wait here', 'fa-hand', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.* "Wait here, ${first}. I'll be back."`); }]);
+            actions.push(['Come along', 'fa-person-walking', () => { closeMenu(); sendAsPlayer(`*${player} nods to ${who}.* "Come on, ${first}. With me."`); }]);
+            actions.push(['Stick with me', 'fa-people-arrows', () => { closeMenu(); sendAsPlayer(`*${player} looks at ${who}.* "${first}, stay close. Right by me."`); }]);
+        }
     } else if (npc && npc.state !== 'dead' && npc.state !== 'gone') {
         actions.push([`Talk to ${talkName(who)}`, 'fa-comment', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); }]);
         actions.push(['Attack', 'fa-khanda', async () => { if (!(await near())) return; closeMenu(); setMapAction(`${player} attacks ${who} (${npc.description || 'on the map'}) from the map, right beside them. That starts a fight: start_combat with ${who} in it and ask for initiative; their attack comes in order.`); sendAsPlayer(`*${player} attacks ${who}!*`); }]);

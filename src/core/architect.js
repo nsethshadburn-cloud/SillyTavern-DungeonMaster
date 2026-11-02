@@ -543,7 +543,7 @@ export function normalizeBrief(raw, req = {}) {
         summary: str(d.summary || req.why).slice(0, 600),
         objective: str(d.objective ?? req.objective).slice(0, 80),
         objectiveNear: str(d.objective_near ?? d.objectiveNear).slice(0, 120),
-        rooms: arr(d.rooms ?? d.story).filter(x => x && typeof x === 'object').slice(0, 8).map(x => ({ room: str(x.room ?? x.where ?? x.name).slice(0, 60), name: str(x.name && x.room ? x.name : '').slice(0, 60), has: arr(x.has ?? x.items ?? x.item).map(str).filter(Boolean).filter(it => !/\b(?:traps?|snares?|tripwires?|pits?|palisade|walls?|fence|fences|perimeter|cardinal|stakes|ditch|moat|gate|gates|tunnel|path|trail)\b/i.test(it)).slice(0, 3), hidden: x.hidden === true, note: str(x.note ?? x.what).slice(0, 160) })).filter(x => x.room),
+        rooms: arr(d.rooms ?? d.story).filter(x => x && typeof x === 'object').slice(0, 8).map(x => ({ room: str(x.room ?? x.where ?? x.name).slice(0, 60), name: str(x.name && x.room ? x.name : '').slice(0, 60), has: arr(x.has ?? x.items ?? x.item).map(str).filter(Boolean).filter(it => !/\b(?:traps?|snares?|tripwires?|pits?|palisade|walls?|fence|fences|perimeter|cardinal|stakes|ditch|moat|gate|gates|tunnel|path|trail)\b/i.test(it)).slice(0, 3), hidden: x.hidden === true, note: str(x.note ?? x.what).slice(0, 160), trapped: arr(x.has ?? x.items ?? x.item).map(str).some(it => /\b(?:traps?|snares?|tripwires?|pits?|pitfalls?|deadfalls?)\b/i.test(it)) || /\b(?:traps?|snares?|tripwires?|hidden pits?|covered pits?)\b/i.test(str(x.note ?? x.what)) })).filter(x => x.room),
         people: arr(d.people).filter(x => x && typeof x === 'object' && str(x.name)).slice(0, 8).map(x => ({ name: str(x.name).slice(0, 50), what: str(x.what ?? x.description ?? x.role).slice(0, 160), where: str(x.where ?? x.room).slice(0, 60), hostile: x.hostile === true || x.hostile === 'true', carries: arr(x.carries).map(str).filter(Boolean).slice(0, 3) })),
         locked: arr(d.locked).filter(x => x && typeof x === 'object' && str(x.room)).slice(0, 4).map(x => ({ room: str(x.room).slice(0, 60), key: str(x.key).slice(0, 50), keyIn: str(x.key_in ?? x.keyIn ?? x.holder).slice(0, 60) })),
         secrets: arr(d.secrets).filter(x => x && typeof x === 'object' && (str(x.to) || str(x.from))).slice(0, 3).map(x => ({ from: str(x.from).slice(0, 60), to: str(x.to).slice(0, 60), how: str(x.how).slice(0, 120) })),
@@ -1378,14 +1378,15 @@ export function townFromBrief(briefIn, seed = 1) {
 const SPOTS = {
     jungle: ['Overgrown Shrine', 'Waterfall Pool', 'Hunters\' Camp', 'Vine-choked Ruin', 'Great Fig Tree', 'Sunny Clearing', 'Beast Den', 'Stone Idol', 'Muddy Ford', 'Hidden Glade', 'Abandoned Camp', 'Rope Bridge Gorge'],
     forest: ['Woodcutters\' Camp', 'Old Shrine', 'Standing Stones', 'Fallen Giant', 'Wolf Den', 'Charcoal Burners\' Clearing', 'Forest Pool', 'Hollow Oak', 'Ruined Watchtower', 'Mossy Graves', 'Bandit Camp', 'Hunter\'s Blind'],
+    mountain: ['The Switchback', 'Scree Slope', 'Boulder Field', 'The Drop', 'Narrow Ledge', 'Rockfall Scar', 'Old Cairn', 'Wind Gap', 'Goat Track', 'Cold Spring', 'Waystone', 'Shepherd\'s Shelter', 'Eagle\'s Rest'],
     swamp: ['Sunken Shrine', 'Hag\'s Hut Ruin', 'Rotting Jetty', 'Will-o\'-wisp Pool', 'Croc Bank', 'Bog Graves', 'Reed Island', 'Dead Tree Grove', 'Smugglers\' Camp', 'Drowned Statue'],
     camp: ['Campfire Circle', 'Supply Tents', 'Picket Line', 'Lookout Post', 'Latrine Ditch', 'Commander\'s Tent', 'Stream Crossing', 'Wood Pile'],
     other: ['Clearing', 'Old Ruin', 'Stream Pool', 'Shrine', 'Campsite', 'Graves', 'Den', 'Standing Stones', 'Ford', 'Lookout'],
     campsite: ['The Campsite'],
     open: ['Standing Stones', 'Grassy Rise', 'Dry Wash', 'Lone Oak', 'Sheepfold Ruin', 'Old Cairn', 'Hollow Way', 'Wind-bent Thorn', 'Shepherd\'s Hut', 'Boggy Dip', 'The Lookout', 'Rabbit Warren', 'Cart Track'],
 };
-const FAUNA = { forest: ['Deer', 'Stag', 'Red Fox', 'Raven', 'Owl'], campsite: ['Deer', 'Raven', 'Owl', 'Crow'], other: ['Deer', 'Crow', 'Red Fox', 'Hawk'], open: ['Crow', 'Goat', 'Sheep', 'Hawk'], swamp: ['Heron', 'Crow', 'Duck', 'Frog'], jungle: ['Parrot', 'Monkey', 'Lizard'], camp: [] };
-const WILD_CREATURES = { campsite: [], jungle: ['Jungle Cat', 'Giant Snake', 'Ape', 'Poison Frog Swarm', 'Bandit'], forest: ['Wolf', 'Bandit', 'Bear', 'Boar', 'Goblin'], swamp: ['Crocodile', 'Bog Zombie', 'Giant Toad', 'Lizardfolk', 'Bandit'], camp: ['Bandit', 'Sentry', 'Mercenary'], other: ['Wolf', 'Bandit', 'Boar'], open: ['Wolf', 'Bandit', 'Wild Dog', 'Boar'] };
+const FAUNA = { mountain: ['Goat', 'Hawk', 'Raven', 'Marmot'], forest: ['Deer', 'Stag', 'Red Fox', 'Raven', 'Owl'], campsite: ['Deer', 'Raven', 'Owl', 'Crow'], other: ['Deer', 'Crow', 'Red Fox', 'Hawk'], open: ['Crow', 'Goat', 'Sheep', 'Hawk'], swamp: ['Heron', 'Crow', 'Duck', 'Frog'], jungle: ['Parrot', 'Monkey', 'Lizard'], camp: [] };
+const WILD_CREATURES = { campsite: [], mountain: ['Bandit', 'Wolf', 'Mountain Lion', 'Harpy'], jungle: ['Jungle Cat', 'Giant Snake', 'Ape', 'Poison Frog Swarm', 'Bandit'], forest: ['Wolf', 'Bandit', 'Bear', 'Boar', 'Goblin'], swamp: ['Crocodile', 'Bog Zombie', 'Giant Toad', 'Lizardfolk', 'Bandit'], camp: ['Bandit', 'Sentry', 'Mercenary'], other: ['Wolf', 'Bandit', 'Boar'], open: ['Wolf', 'Bandit', 'Wild Dog', 'Boar'] };
 
 /** A wild place's plan from a brief: its spots (clearings), how trails join them, what lives there. */
 export function wildsFromBrief(briefIn, seed = 1) {
@@ -1394,10 +1395,10 @@ export function wildsFromBrief(briefIn, seed = 1) {
     const words = `${brief.kind} ${brief.name}`.toLowerCase();
     // Somebody's own little camp: one clearing with a tent and a fire, the trail in, and the woods about it.
     const campsite = /camp/.test(words) && (OWN_CAMP.test(`${brief.kind} ${brief.name} ${brief.summary}`) || (brief.size === 'small' && !/army|war|bandit|raider|outpost|garrison/.test(words)));
-    const set = campsite ? 'campsite' : /jungle|rainforest/.test(words) ? 'jungle' : /swamp|marsh|bog/.test(words) ? 'swamp' : /camp/.test(words) ? 'camp' : /forest|wood|grove/.test(words) ? 'forest' : OPEN_COUNTRY.test(words) ? 'open' : 'other';
+    const set = campsite ? 'campsite' : /jungle|rainforest/.test(words) ? 'jungle' : /swamp|marsh|bog/.test(words) ? 'swamp' : /camp/.test(words) ? 'camp' : /mountain|\bpass\b|crag|cliff|scree|\bpeaks?\b|summit|\bridge\b|gorge|ravine/.test(words) ? 'mountain' : /forest|wood|grove/.test(words) ? 'forest' : OPEN_COUNTRY.test(words) ? 'open' : 'other';
     const n = campsite ? 2 : brief.size === 'big' ? int(r, 7, 10) : brief.size === 'medium' ? int(r, 5, 7) : int(r, 3, 5);
     const names = shuffle(r, SPOTS[set]);
-    const rooms = [{ id: 'W1', name: pick(r, ['Trailhead', 'Edge of the Trees', 'Where the Path Starts']), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: true }];
+    const rooms = [{ id: 'W1', name: pick(r, set === 'mountain' ? ['Foot of the Pass', 'Where the Trail Climbs', 'The Lower Switchback'] : ['Trailhead', 'Edge of the Trees', 'Where the Path Starts']), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: true }];
     for (let i = 0; i < n - 1; i++) rooms.push({ id: `W${i + 2}`, name: names[i % names.length], type: 'room', floor: 'F0', size: campsite ? 'medium' : pick(r, ['small', 'medium', 'large']), description: '', props: [], marks: [], traps: [], items: [], exit: false });
     for (const s of brief.rooms) {
         const hit = rooms.find(x => nameKey(x.name).includes(nameKey(s.room)) || nameKey(s.room).includes(nameKey(x.name)))
@@ -1405,6 +1406,8 @@ export function wildsFromBrief(briefIn, seed = 1) {
             ?? (campsite && /\b(?:tents?|fire|camp|bedrolls?|lean-to|shelter|clearing|hearth)\b/i.test(`${s.room} ${s.name}`) ? rooms[1] : null);
         const rm = hit ?? (rooms.push({ id: `W${rooms.length + 1}`, name: cap(s.name || s.room), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: false }), rooms.at(-1));
         for (const it of s.has) rm.items.push({ name: it, hidden: s.hidden, note: s.note });
+        // "The path: a hidden pit": the pit the brief put in that spot is a trap there (the item filter drops the word; the trap stays).
+        if (s.trapped) rm.traps.push({ kind: pick(r, ['covered pit', 'covered pit', 'hunter\'s snare', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: '2d6 falling', hidden: true });
     }
     const links = [];
     for (let i = 1; i < rooms.length; i++) links.push({ a: pick(r, rooms.slice(Math.max(0, i - 2), i)).id, b: rooms[i].id, via: 'door' });
@@ -1416,10 +1419,13 @@ export function wildsFromBrief(briefIn, seed = 1) {
     // The land has its animals: a deer, a fox, a raven, nobody's enemy; they wander and never speak.
     for (const w of shuffle(r, FAUNA[set] ?? []).slice(0, campsite ? 1 : int(r, 1, 2))) { const rm = pick(r, rooms.slice(1)); if (!rm) break; guards.push({ name: w, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: false, role: 'animal', sprite: w.toLowerCase().replace(/\s+/g, '_') }); }
     // Snares and pits only where the DM's brief asks for them: the open woods (and the party's own camp) have none by chance.
-    const nT = campsite || !brief.traps || brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 1, 2);
+    // Pits and snares the brief's own words ask for ("hidden pits on the path") count even when the DM left the traps field out.
+    const askedTraps = brief.traps || (/\b(?:traps?|snares?|tripwires?|pits?|pitfalls?|deadfalls?)\b/i.test(`${brief.summary} ${brief.rooms.map(s => s.note).join(' ')}`) || brief.rooms.some(s => s.trapped) ? 'few' : '');
+    const placed = rooms.reduce((k, x) => k + x.traps.length, 0);
+    const nT = Math.max(0, (campsite || !askedTraps || askedTraps === 'none' ? 0 : askedTraps === 'many' ? int(r, 2, 4) : int(r, 1, 2)) - placed);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });
     return {
-        name: brief.name, kind: brief.kind, wild: true, theme: set === 'other' || set === 'open' || set === 'campsite' ? 'forest' : set === 'camp' ? 'camp' : set, condition: 'worn',
+        name: brief.name, kind: brief.kind, wild: true, theme: set === 'other' || set === 'open' || set === 'campsite' || set === 'mountain' ? 'forest' : set === 'camp' ? 'camp' : set, condition: 'worn',
         summary: [brief.summary, `${brief.name}: ${rooms.length} spots joined by trails${brief.mood ? `, ${brief.mood}` : ''}.`].filter(Boolean).join(' '),
         floors: [{ id: 'F0', name: brief.name, level: 0 }],
         rooms, links, guards, people: brief.people.filter(p => !p.hostile).map(p => ({ name: p.name, description: p.what, room: (rooms.find(x => nameKey(x.name).includes(nameKey(p.where))) ?? rooms[1] ?? rooms[0]).id })),

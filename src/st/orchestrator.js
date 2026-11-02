@@ -22,7 +22,7 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, keeperTurn, settleTrip, talkRange, setCustodyMode, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, companionGrabsPlayer, keeperTurn, settleTrip, talkRange, setCustodyMode, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -318,6 +318,12 @@ async function turnBody(c, opts, status, signal) {
         const bolt = await custodyBolt(c, playerText).catch(error => { console.warn('[Dungeon Master] custody chase failed', error); return ''; });
         if (bolt) { events.push(bolt); status.note('The chase is on'); }
     }
+    // "((Judy tries to grab Amber and cuff him again))": a companion taking hold of the player is the code's contest; "Amber hauls Judy to her feet" stands her up (no roll).
+    if (!autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
+        const held = await companionGrabsPlayer(c, playerText).catch(error => { console.warn('[Dungeon Master] companion grab failed', error); return ''; });
+        if (held) { events.push(held); status.note('A grab is being rolled'); }
+        await playerHelpsUp(c, playerText, status).catch(error => console.warn('[Dungeon Master] help up failed', error));
+    }
     if (triage.thing && actsOnThing && !peekMapAction() && !autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
         const actor = triage.task?.who || meta.persona.name;
         const found = targetFor(c, actor, triage.thing);
@@ -467,8 +473,29 @@ async function turnBody(c, opts, status, signal) {
         // The player asked for the map to be done again: a build of the same name replaces it.
         if (triage.mapRequest?.redo && result.turn.build_place) result.turn.build_place.replace = true;
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
-        // The player attacked and the DM neither started a fight nor asked for a roll: say so, to both.
-        const attacked = attacksSomeone(playerText);
+        // A companion taking hold of the player in the narration, with no roll asked: the code's contest (a card), never a narrated outcome.
+        if (!result.turn.player_roll && !result.turn.start_combat && !c.docs.world.combat && mapsOn() && !signal.aborted) {
+            const held = await companionGrabsPlayer(c, result.turn.narration || '').catch(error => { console.warn('[Dungeon Master] companion grab failed', error); return ''; });
+            if (held) { noteMapAction(c, held); status.note('A grab is being rolled'); }
+        }
+        // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
+        if (result.turn.player_roll && !signal.aborted && /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '')) {
+            meta.turnProblems = [...(meta.turnProblems || []), `you asked ${meta.persona.name} to roll and told the outcome in the same narration: stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
+            saveMeta();
+        }
+        // "((Corvin Shale arrives behind us))": someone the DM narrated arriving and never put on the map is put there by the code, on their way in.
+        if (triage.ooc && mapsOn() && !signal.aborted) {
+            const m = String(triage.oocText || '').match(/\b([A-Z][\w'-]+(?: [A-Z][\w'-]+){0,2}) (?:arrives?|shows? up|appears?|turns? up|catches up|comes? (?:up|in|along|round|around|into view)|rides? (?:in|up)|walks? (?:in|up)|closes? in)\b/);
+            const who = (m?.[1] || '').replace(/^(?:The|A|An|Then|Now|Also|Have|Let|Make|And|But|So|If|When|Our|My) /, '').trim();
+            const here = currentPlace(c);
+            if (who && here && !personByName(here.place, who) && !meta.party.some(p => p.name === who || p.name.split(' ')[0] === who.split(' ')[0]) && who.split(' ')[0] !== meta.persona.name.split(' ')[0]) {
+                const lead = here.place.state.positions[meta.persona.name];
+                const g = lead && placePerson(here.place, who, { floor: lead.floor, x: lead.x, y: lead.y }, { floor: lead.floor, info: { description: String(triage.oocText).slice(m.index + m[0].length).replace(/^[\s,.:;]+/, '').slice(0, 120), hostile: /\b(?:hostile|attacks?|kill|hunt(?:s|ing)?|after (?:me|us|him|her)|wants? (?:me|us|him|her))\b/i.test(triage.oocText) }, arrive: true });
+                if (g) { savePlace(here.key, c); refreshMap(); status.note(`${who} is on the map, on the way in (the DM left them off)`); meta.turnProblems = [...(meta.turnProblems || []), `you narrated ${who} arriving and never put them on the map: the code did, at the edge of it, on their way in (place_changes guards moves them from now on; put anyone you bring in on the map yourself).`]; saveMeta(); }
+            }
+        }
+        // The player attacked (in character: an aside in double brackets isn't the player's blow) and the DM neither started a fight nor asked for a roll: say so, to both.
+        const attacked = attacksSomeone(playerText.replace(/\(\([\s\S]*?\)\)/g, ' '));
         if (attacked && !c.docs.world.combat && !result.turn.start_combat && result.turn.player_roll && result.turn.player_roll.kind !== 'attack' && result.turn.player_roll.kind !== 'initiative' && !result.turn.end_combat && !signal.aborted) {
             meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and you asked for a ${result.turn.player_roll.skill} check instead of an attack: an attack on someone is player_roll kind "attack" against their AC with start_combat (the enemies by name), never a skill check.`];
             saveMeta();
@@ -1034,7 +1061,8 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
             continue;
         }
         // Coming along, sticking close, or staying behind: what they said in their reply.
-        if (attempt.stance && !attempt.go) await setStance(c, name, attempt.stance, status);
+        if (askedToWait(c, name)) await setStance(c, name, 'stay', status);
+        else if (attempt.stance && !attempt.go) await setStance(c, name, attempt.stance, status);
         if (attempt.go && !signal.aborted) {
             const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide, pose: attempt.pose });
             if (went) status.note(attempt.hide ? `${name} hides ${went}` : `${name} goes to ${went} and stays there`);
@@ -1066,17 +1094,45 @@ async function companionKeeps(c, name, status, signal) {
     if (!rec || rec.by !== name || c.docs.world.combat) return;
     const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
     if (!msg?.mes) return;
-    let mode = keeperWords(msg.mes);
+    let mode = keeperWords(msg.mes, { chase: Boolean(rec.chase) });
     const s = settings();
-    if (!mode && s.useHelper && !signal?.aborted) {
+    // The helper reads only her relenting (guard to companion), never the other way: a wrong "guard" starts chases out of nothing, and "stay put" is said plainly enough for the words to catch.
+    if (!mode && s.useHelper && (rec.mode ?? 'companion') === 'guard' && !rec.chase && !signal?.aborted) {
         try {
             const { system, user } = keeperStancePrompt({ keeper: name, prisoner: player, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '' });
-            mode = parseKeeperStance(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 40, profileId: s.helperProfileId }));
+            mode = parseKeeperStance(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 40, profileId: s.helperProfileId })) === 'companion' ? 'companion' : '';
         } catch (error) {
             console.warn('[Dungeon Master] keeper stance check failed', error);
         }
     }
     if (mode && await setCustodyMode(c, player, mode, `${name}'s words`)) status.note(`${name}: ${mode === 'guard' ? 'stay put' : 'goes along'}`);
+}
+
+/** "Wait here, Judy. I'll be back" (the player's words, or the map's menu) and no refusal in her reply: she stays. Her own words still rule a refusal. */
+function askedToWait(c, name) {
+    const asked = String(lastPlayerMessage() || '').replace(/[*_~`]/g, ' ');
+    if (!/\b(?:wait|stay) (?:here|there|put|behind|right here|by the \w+)\b|\b(?:wait|stay) for me\b|\bdon'?t (?:follow|come)\b/i.test(asked)) return false;
+    const first = name.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (c.meta.party.length > 1 && !new RegExp(`\\b${first}\\b`, 'i').test(asked)) return false;
+    const reply = String([...ST.chat].reverse().find(m => !m.is_user && m.name === name)?.mes || '').replace(/[*_~`]/g, ' ');
+    return !/\b(?:no\b|not (?:a chance|staying|waiting|leaving you|letting you)|like hell|i'?m (?:coming|with you|not staying|not waiting)|right behind you|wherever you go|not on your life|forget it)\b/i.test(reply);
+}
+
+/** "Amber hauls Judy up onto her feet": a companion on the ground, hands free and awake, is up by the player's own hand (no roll). */
+async function playerHelpsUp(c, text, status) {
+    const w = c.docs.world;
+    const t = String(text || '').replace(/[*_~`]/g, ' ');
+    for (const m of c.meta.party) {
+        const conds = conditionsOf(w, m.name);
+        if (!conds.some(x => /^prone\b/i.test(String(x))) || /unconscious|knocked out|dead/i.test(conds.join(' '))) continue;
+        const first = m.name.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (!new RegExp(`\\b(?:helps?|hauls?|pulls?|drags?|lifts?|hoists?|heaves?|gets?)\\s+${first}\\b[^.!?]{0,30}?\\b(?:up|upright|(?:to|onto) (?:her|his|their) feet)\\b`, 'i').test(t)) continue;
+        applyStateChanges(w, { conditions_remove: { [m.name]: ['prone'] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
+        saveDoc('world');
+        syncDownFromConditions(c);
+        await postNote(`📜 ${m.name} is up (−prone): ${c.meta.persona.name} helped them to their feet.`);
+        status.note(`${m.name} helped up`);
+    }
 }
 
 /** "Judy rises from the grass": a companion on the ground whose hands are free gets up by their own words (no roll); cuffed, caged or held, they need the roll. */
@@ -1106,7 +1162,8 @@ async function companionMovesOnMap(c, name, status, signal) {
     try {
         const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false, player: c.meta.persona.name, askStance: true });
         const { go, hide, pose, stance } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }), places, msg.mes);
-        if (stance && !go) await setStance(c, name, stance, status);
+        if (askedToWait(c, name)) await setStance(c, name, 'stay', status);
+        else if (stance && !go) await setStance(c, name, stance, status);
         if (!go || signal.aborted) return;
         const went = await companionGoTo(c, name, go, { hide, pose });
         if (went) status.note(hide ? `${name} hides ${went}` : `${name} goes to ${went} and stays there`);
@@ -1853,8 +1910,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 for (const [id, v] of Object.entries(t.place_changes.doors || {})) { const st = String((v && typeof v === 'object' ? v.state : v) || '').toLowerCase(); if (/^(broken|smashed|open|opened|unlocked|forced)$/.test(st)) { (held.doors ??= {})[id] = v; delete t.place_changes.doors[id]; } }
                 if (Object.keys(held).length) { t.player_roll.then = { place_changes: held }; status.note('The map waits for the roll before anything breaks open'); }
             }
+            const heldBefore = Object.keys(place.state.custody || {});
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: withAt(stealthOf(meta), place) });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
+            // The DM ended a custody (she's down, she let go): the player sees it, as they see every other change of hands.
+            for (const p of heldBefore) if (!place.state.custody?.[p] && p === meta.persona.name) await postNote(`🔓 Nobody holds you now (the DM's call): walk where you like until someone takes you again.`);
             problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
             syncMounts(place);
         }
@@ -2101,6 +2161,14 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     for (const r of t.npc_rolls) {
         if (signal.aborted) throw new Error('aborted');
+        // Getting up off the ground is no roll (it costs the move): anyone with free hands just stands.
+        if (r.kind !== 'attack' && /\b(?:get|gets|getting|stand|stands|standing|scramble|scrambles|rise|rises|haul|hauls|push|pushes|struggle|struggles|climb|climbs)\b[^.]{0,30}?\b(?:up|feet|upright)\b|\bfrom prone\b/i.test(String(r.what || '')) && !/\b(?:cuff|tied|bound|grappled|pinned|held|caged|trapped|pit|snare|climb out|wall|ledge|rope|slope|bank)\b/i.test(String(r.what || ''))) {
+            const who = matchName(r.who, meta.party.map(p => p.name)) ?? r.who;
+            const conds = conditionsOf(world, who);
+            if (conds.some(x => /^prone\b/i.test(String(x))) && !restraintOf(conds).bound && !/grappled|pinned/i.test(conds.join(' '))) { applyStateChanges(world, { conditions_remove: { [who]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); saveDoc('world'); syncDownFromConditions(c); await postNote(`📜 ${who} gets up (−prone): no roll for that.`); }
+            problems.push(`npc_rolls "${r.what}" for ${r.who} was dropped: standing up is never a roll (it costs the move; the code removed "prone"). Roll only what's contested or uncertain.`);
+            continue;
+        }
         const result = roll(r.notation);
         if (!result) continue;
         // Down earlier this same turn (a companion's blow came first): the dead roll nothing.

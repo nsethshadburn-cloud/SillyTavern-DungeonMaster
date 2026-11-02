@@ -80,7 +80,7 @@
     right: 0;
     width: min(380px, 100vw);
     height: calc(100dvh - var(--topBarBlockSize, 40px));
-    z-index: 3000;
+    z-index: 3002; /* above the map panel: the Cancel button must be reachable */
     display: flex;
     flex-direction: column;
     background: var(--SmartThemeBlurTintColor);

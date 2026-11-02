@@ -354,15 +354,18 @@ export function isEndTurn(text) {
 // ---------- a keeper and her prisoner: guard or companion ----------
 
 /** "Stay put", "sit down", "don't move": the keeper has her prisoner stay. */
-const KEEPER_GUARD = /\b(?:stay (?:put|there|where you are|right there|here|still|down|on the ground)|don'?t (?:you )?(?:move|get up|take another step)|not (?:going|moving) anywhere|you'?re not (?:going|leaving|moving|getting up)|sit (?:down|still|there|tight)|hold still|stop right there|not another step|on your knees|keep still|you stay|stay close|don'?t wander)\b/i;
-/** "I'll follow you", "lead the way", "let's go": the keeper lets her prisoner walk, or goes along. */
-const KEEPER_LET = /\b(?:i'?ll (?:follow|come|go|walk|keep up|be with|be right behind|stick with) (?:with |after |behind |beside )?you|lead (?:the way|on)|after you|let'?s go|come on,? then|go (?:on|ahead)(?:,? i'?m)?|(?:right )?behind you|i'?m (?:coming|following|with you|right here)|we(?:'?ll)? (?:go|walk) together|walk,? then|fine,? (?:go|walk|lead|move|come on)|have it your way)\b/i;
+const KEEPER_GUARD = /\b(?:stay (?:put|there|where you are|right there|here|still|down|on the ground)|don'?t (?:you )?(?:move|get up|take another step)|not (?:going|moving) anywhere|you'?re not (?:going|leaving|moving|getting up)|sit (?:down|still|there|tight)|hold still|stop right there|not another step|on your knees|keep still|you stay|stay close|don'?t wander|(?:get|come) back here|back[.!,]? now|(?:get )?back on the (?:trail|path|road))\b/i;
+/** "I'll follow you", "lead the way", "let's go": the keeper lets her prisoner walk, or goes along (even mid-chase: she's calling it off). */
+const KEEPER_LET = /\b(?:i'?ll (?:follow|come|go|walk|keep up|be with|be right behind|stick with) (?:with |after |behind |beside )?you|lead (?:the way|on)|after you|let'?s go|come on,? then|go (?:on|ahead)(?:,? i'?m)?|we(?:'?ll)? (?:go|walk) together|walk,? then|fine,? (?:go|walk|lead|move|come on)|have it your way)\b/i;
+/** "I'm coming with you", "right behind you": going along, in a quiet moment. In a chase these are her closing in, not letting go. */
+const KEEPER_ALONG = /\b(?:i'?m (?:coming (?:with you|along|too)|following(?: you)?|with you|right behind you)|right behind you)\b/i;
 
 /** What a keeper's own reply means for her prisoner: 'guard' (stay put), 'companion' (she lets them walk, or comes along), or '' (nothing said). */
-export function keeperWords(message) {
+export function keeperWords(message, { chase = false } = {}) {
     const t = String(message ?? '').replace(/[*_~`]/g, ' ');
     if (KEEPER_GUARD.test(t)) return 'guard';
     if (KEEPER_LET.test(t)) return 'companion';
+    if (!chase && KEEPER_ALONG.test(t)) return 'companion';
     return '';
 }
 

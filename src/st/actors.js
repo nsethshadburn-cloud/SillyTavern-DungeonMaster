@@ -308,10 +308,9 @@ async function speakMember(name, chid, brief, { signal, length = 'normal', npc =
     if (signal?.aborted) return;
     await waitUntilIdle();
     const textarea = document.getElementById('send_textarea');
-    if (textarea && textarea.value) {
-        // Never let a group trigger swallow text the user is typing.
-        throw new Error('Clear the message box so the party can reply.');
-    }
+    // Text half-typed in the box (a roll, a reply) is set aside while they speak, never swallowed by the group trigger, and put back after.
+    const stash = textarea?.value || '';
+    if (stash) { textarea.value = ''; textarea.dispatchEvent(new Event('input', { bubbles: true })); }
     injectDirection(brief, length, npc, name);
     const restoreTts = pauseTtsStreamingIfNeeded();
     try {
@@ -321,6 +320,7 @@ async function speakMember(name, chid, brief, { signal, length = 'normal', npc =
     } finally {
         clearDirection();
         restoreTts();
+        if (stash && textarea && !textarea.value) { textarea.value = stash; textarea.dispatchEvent(new Event('input', { bubbles: true })); }
     }
     await stripEchoedName(name);
     rememberBriefOnReply(name, brief, length);
