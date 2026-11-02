@@ -111,6 +111,8 @@ export function applyStateChanges(world, changes, knownNames = [], { turn = null
                 if (turn !== null) { world.condTurns ??= {}; world.condTurns[k] = { turn, add }; }
                 changed.push(c);
             }
+            // Out cold is on the ground: unconscious or knocked out brings prone with it (getting up comes with coming round).
+            if (add && changed.some(x => /unconscious|knocked out/i.test(x)) && !target.ref.conditions.some(x => /^prone\b/i.test(x))) { target.ref.conditions.push('prone'); changed.push('prone'); }
             if (changed.length) log.push(`${target.name}: ${add ? '+' : '−'}${changed.join(', ')}`);
             if (held.length) log.push(`${target.name}: not ${held.join(', ')} again (it only just wore off)`);
         }

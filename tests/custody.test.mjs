@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeRecord, newRecord, onPlayerVerdict, onKeeperVerdict, stepBefore, stepAfter, afterStep, stumbleStep, onSlip, onGrab, onTrip, freed, fromOp, PLAYER_VERDICTS, KEEPER_VERDICTS, STUMBLE_STEPS } from '../src/core/custody.js';
 import { standingRestraints } from '../src/core/restraints.js';
+import { applyStateChanges } from '../src/core/world.js';
 import { REFEREE_MODEL, thinksByDefault, defaultTaskModels } from '../src/core/models.js';
 import { REFEREE_SYSTEM, playerLinePrompt, keeperLinePrompt, grabPrompt, parseWord } from '../src/core/referee.js';
 import { applyPlaceChanges } from '../src/core/explore.js';
@@ -83,6 +84,10 @@ test('a step on the map, before she moves: walking back into her reach mid-chase
     assert.equal(stepBefore(chasing(), { gap: 5, prevGap: 6, keeperProne: false, closing: 3 }), '', 'too far for her to reach this step');
     assert.equal(stepBefore(chasing(), { gap: 4, prevGap: 3, keeperProne: false, closing: 3 }), '', 'a step away is never a catch');
     assert.equal(stepBefore(chasing({ stumble: 2 }), { gap: 2, prevGap: 3, keeperProne: false, closing: 0 }), '', 'off balance, she closes nothing');
+    // The walk's end is beside her: a sideways first step (the gap unchanged) is still walking back to her.
+    assert.equal(stepBefore(chasing(), { gap: 2, prevGap: 2, keeperProne: false, closing: 3, targetGap: 1 }), 'caught');
+    assert.equal(stepBefore(chasing(), { gap: 2, prevGap: 2, keeperProne: false, closing: 3, targetGap: 4 }), '', 'going past her, not to her');
+    assert.equal(stepBefore(chasing(), { gap: 6, prevGap: 6, keeperProne: false, closing: 3, targetGap: 1 }), '', 'heading to her from far off: not yet in her reach');
     assert.deepEqual(afterStep(chasing(), 'caught'), guard());
 });
 
@@ -196,6 +201,14 @@ test('the opening\'s standing restraints: cuffs on your wrists are cuffs; a rope
     assert.deepEqual(standingRestraints('A pair of cuffs hangs from her belt. You rub your wrists.'), []);
     assert.deepEqual(standingRestraints('She rests a hand on your shoulder.'), []);
     assert.deepEqual(standingRestraints(''), []);
+});
+
+test('out cold is on the ground: unconscious brings prone with it', () => {
+    const world = { party: { 'Judy Hopps': { hp: 20, hp_max: 28, conditions: [] } } };
+    const log = applyStateChanges(world, { conditions_add: { 'Judy Hopps': ['unconscious'] } }, ['Judy Hopps'], { turn: 3 });
+    assert.deepEqual(world.party['Judy Hopps'].conditions, ['unconscious', 'prone'], log.join(' | '));
+    applyStateChanges(world, { conditions_remove: { 'Judy Hopps': ['unconscious'] } }, ['Judy Hopps'], { turn: 4 });
+    assert.deepEqual(world.party['Judy Hopps'].conditions, ['prone'], 'coming round, still on the ground');
 });
 
 test('the referee runs on a model that answers without thinking; a Claude 5 model in that slot gets room for the thought', () => {

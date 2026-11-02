@@ -18,7 +18,7 @@ export function playerLinePrompt({ keeper, player, text, mode, chase }) {
         `Which ONE word fits what ${player} does in that line?`,
         `run - ${player} runs, bolts, flees, sprints or breaks away FROM ${keeper} right now, as an action (not a boast, threat or plan about escaping later; not walking with her; not a figure of speech like "runs a hand along")`,
         `along - ${player} asks ${keeper} to come along with him or leads her somewhere he chooses (not a question about where to go, not "lead on", not walking on alone)`,
-        `give - ${player} gives in, surrenders, stops resisting, agrees to go where ${keeper} takes him`,
+        `give - ${player} gives in, surrenders, stops resisting, agrees to go where ${keeper} takes him (an apology, a joke or small talk is none)`,
         `trip - ${player} trips, sweeps, shoves, tackles or throws ${keeper} down (an attempt, not a threat or a thought)`,
         `hide - ${player} hides, ducks behind cover, drops flat or goes still so as not to be seen (not running)`,
         `none - anything else (talk, a question, a threat, a boast or a taunt, an action that isn't about getting away from ${keeper})`,

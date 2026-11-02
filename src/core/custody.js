@@ -72,12 +72,12 @@ export function onKeeperVerdict(rec, verdict) {
 /**
  * The player's step on the map, before the keeper moves.
  * @param {object} rec
- * @param {{gap:number, prevGap:number, keeperProne:boolean, closing?:number}} s gap = squares between them after the step; prevGap = before it;
- *  closing = squares she runs this step (0 when she's on the ground or off balance)
- * @returns {''|'caught'} a step back toward her mid-chase that puts him where she reaches him (the gap closed by his own step, she's on her feet) is being caught: no roll
+ * @param {{gap:number, prevGap:number, keeperProne:boolean, closing?:number, targetGap?:number}} s gap = squares between them after the step; prevGap = before it;
+ *  closing = squares she runs this step (0 when she's on the ground or off balance); targetGap = squares from her to where the walk is going
+ * @returns {''|'caught'} walking back to her mid-chase (the gap closed by his own step, or the walk's end beside her) where she reaches him, she on her feet, is being caught: no roll
  */
-export function stepBefore(rec, { gap, prevGap, keeperProne, closing = 0 }) {
-    return rec.chase && prevGap > gap && gap - closing <= 1 && !keeperProne ? 'caught' : '';
+export function stepBefore(rec, { gap, prevGap, keeperProne, closing = 0, targetGap = Infinity }) {
+    return rec.chase && (prevGap > gap || targetGap <= 1) && gap - closing <= 1 && !keeperProne ? 'caught' : '';
 }
 
 /**

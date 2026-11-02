@@ -87,7 +87,7 @@ export function writeLater(name, producer, delay = 800) {
             if (value === null || value === undefined) return;
             await (typeof value === 'string' ? writeFile(name, value) : writeJson(name, value));
         } catch (error) {
-            console.error('[Dungeon Master] Save failed', name, error);
+            console.error('[Dungeon Master] Save failed', name, String(error?.message || error).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 200));
             toastr.error(`Could not save ${name}. Check the console.`, 'Dungeon Master');
         }
     }, delay);

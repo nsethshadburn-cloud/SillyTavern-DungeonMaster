@@ -42,7 +42,7 @@ test('what the bookkeeper finds is checked: known people and conditions, nothing
     assert.deepEqual(ch.items_add, { Amber: ['silver key', 'torch'] }, 'the key changes hands; NPCs don\'t get party items');
     applyStateChanges(w, ch, ['Judy Hopps']);
     assert.deepEqual(w.inventory, { 'Judy Hopps': [], Amber: ['silver key', 'torch'] });
-    assert.deepEqual(conditionsOf(w, 'Judy Hopps'), ['unconscious']);
+    assert.deepEqual(conditionsOf(w, 'Judy Hopps'), ['unconscious', 'prone'], 'out cold is on the ground (v0.68)');
     assert.deepEqual(conditionsOf(w, 'Warden Pike'), ['restrained (rope)']);
 });
 

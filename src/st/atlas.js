@@ -280,7 +280,7 @@ function peopleWith(c, place, name, pos, rm) {
         // A grab or trip being rolled: she doesn't know yet how it went, and says so (never the outcome).
         if (n === c.meta.persona.name && c.meta.pendingRoll && !c.meta.pendingRoll.autoResult) {
             const pr = c.meta.pendingRoll;
-            if (pr.custody?.keeper === name) bits.push(pr.custody.wrench ? `${n} is wrenching against your hold THIS MOMENT and you don't know yet whether you keep it: say the struggle, never how it ends` : `you have just lunged for ${n} and don't know yet whether you have hold: say the lunge, never that you have them`);
+            if (pr.custody?.keeper === name) bits.push(pr.custody.wrench ? `THE DICE ARE NOT IN: ${n} is wrenching against your hold this moment and you don't know yet whether you keep it; say the struggle, never how it ends` : `THE DICE ARE NOT IN: you have lunged for ${n} and do NOT have hold of them yet; your hand is still closing, so say the lunge and the shout, never that your grip closed or that you have them`);
             else if (pr.trip?.keeper === name) bits.push(`${n} is trying to ${pr.trip.what} you THIS MOMENT and you don't know yet whether you keep your feet: say the stumble, never how it ends`);
             else if (pr.hide?.keeper === name) bits.push(`${n} just ducked behind the ${pr.hide.what} and you don't know yet whether you still see them: say what you shout or do, never whether you have them in sight`);
         }
@@ -1782,7 +1782,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const watched = watchParty(c, cur, quarry);
             if (watched.events.length) { event = watched.events.join(' '); break; }
             // A prisoner walking off from their keeper: seen, chased, grabbed (with rolls).
-            const kept = await custody.onStep(c, cur, keeperStart, { runDown: steps => runDown(keeperStart?.by, steps) });
+            const kept = await custody.onStep(c, cur, keeperStart, { runDown: steps => runDown(keeperStart?.by, steps), target });
             if (kept) { redraw(); event = kept; break; }
             // Hostiles who can see the party, on any land: the DM decides what they do (once per distance band).
             const hostile = hostileNotice(place, floorId, quarry, { stealth: stealthThisTurn(c), player: names[0] });

@@ -981,7 +981,8 @@ function thingAt(b, sq) {
     if (door && (door.state === 'open' || door.state === 'closed') && door.kind !== 'arch' && door.kind !== 'trapdoor' && !door.enter && !door.exit) return { kind: 'door', door, name: `${door.state} door`, spot: { x: door.x, y: door.y } };
     const win = windowAt(b.place, b.floor.id, sq.x, sq.y);
     if (win) return { kind: 'window', win, name: win.state === 'barred' ? 'barred window' : win.state === 'broken' ? 'broken window' : 'window', spot: { x: win.x, y: win.y } };
-    const prop = propAt(b.map, sq.x, sq.y);
+    // Ground cover (tall grass, reeds, ferns) is walked through: a tap there is a walk, not a menu.
+    const prop = [propAt(b.map, sq.x, sq.y)].map(p => p && /^(?:tallgrass|reeds|fern)$/.test(p.type) ? null : p)[0];
     if (prop?.type === 'trap' && !prop.hidden && prop.trap && b.place.traps?.[prop.trap]) { const t = b.place.traps[prop.trap]; return { kind: 'trap', prop, trap: t, name: `${t.kind} (${t.state})`, spot: { x: prop.x, y: prop.y } }; }
     const lying = b.place ? itemsAt(b.place, b.floor.id, sq.x, sq.y) : [];
     if (lying.length && (!prop || (!PROPS[prop.type]?.blocks && !HIDE[prop.type] && !SEATS[prop.type]))) return { kind: 'item', items: lying, name: lying.length > 1 ? `${lying[0].name} and more` : lying[0].name, spot: { x: sq.x, y: sq.y } };

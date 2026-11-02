@@ -22,7 +22,7 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf, standingRestraints } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins, codeRoll } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -478,8 +478,8 @@ async function turnBody(c, opts, status, signal) {
             if (held) { noteMapAction(c, held); status.note('A grab is being rolled'); }
         }
         // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
-        if (result.turn.player_roll && !signal.aborted && /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '')) {
-            meta.turnProblems = [...(meta.turnProblems || []), `you asked ${meta.persona.name} to roll and told the outcome in the same narration: stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
+        if ((result.turn.player_roll || codeRoll(c)) && !signal.aborted && /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '')) {
+            meta.turnProblems = [...(meta.turnProblems || []), `${result.turn.player_roll ? `you asked ${meta.persona.name} to roll` : `the code asked ${meta.persona.name} to roll`} and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
             saveMeta();
         }
         // "((Corvin Shale arrives behind us))": someone the DM narrated arriving and never put on the map is put there by the code, on their way in.
@@ -1888,6 +1888,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 if (Object.keys(held).length) { t.player_roll.then = { place_changes: held }; status.note('The map waits for the roll before anything breaks open'); }
             }
             const me = meta.persona.name;
+            // The opening's prisoner, bound, is under guard: a companion-mode op there would set them free to roam before a word was said.
+            if (reasons.includes('opening') && t.place_changes.custody && restraintOf(conditionsOf(world, me)).bound) for (const [who, spec] of Object.entries(t.place_changes.custody)) if (spec && typeof spec === 'object' && spec.mode === 'companion' && matchName(who, [me])) { spec.mode = 'guard'; dmOnly.push(`custody for ${me} at the opening was set to GUARD mode by the code: they're bound and under guard, and companion mode is for when she lets them walk where they like (her words, theirs or your op can change it later).`); }
             const before = place.state.custody?.[me] ? `${place.state.custody[me].by}|${place.state.custody[me].mode}|${Boolean(place.state.custody[me].chase)}` : '';
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: withAt(stealthOf(meta), place) });
             if (log.length) status.note(`Map: ${log.join(', ')}`);

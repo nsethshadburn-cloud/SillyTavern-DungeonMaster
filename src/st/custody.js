@@ -160,6 +160,7 @@ async function bolt(c, h, rec) {
         if (!h.companion || h.rec.lastGrabTurn === c.meta.turn || keeperOut(c, place, rec.by)) return '';
         if (/\bby\b/i.test(hold) && !new RegExp(`\\b${esc(rec.by.split(' ')[0])}\\b`, 'i').test(hold)) return '';
         store(h, rec);
+        await postNote(`🔒 You run: ${rec.by} has hold of you, so it's a wrench to tear free.`);
         return grabCard(c, h, { wrench: true });
     }
     if (lockedReason(c, player)) return '';
@@ -242,7 +243,7 @@ export function keeperFollows(place, player) {
  * him. In guard mode a step beyond her radius, in her sight, starts the chase. Returns the event
  * for the DM (which ends the walk), or '' to walk on.
  */
-export async function onStep(c, cur, start, { runDown = null } = {}) {
+export async function onStep(c, cur, start, { runDown = null, target = null } = {}) {
     if (!start) return '';
     const h = held(c);
     if (!h || h.rec.by !== start.by) return '';
@@ -258,7 +259,7 @@ export async function onStep(c, cur, start, { runDown = null } = {}) {
     const closing = h.rec.chase && h.companion && !prone && !recovering && runDown ? 3 : 0;
     let ran = false;
     // A step back toward her that puts him where she reaches him is being caught: no roll.
-    if (stepBefore(h.rec, { gap: gap0, prevGap, keeperProne: prone, closing }) === 'caught') {
+    if (stepBefore(h.rec, { gap: gap0, prevGap, keeperProne: prone, closing, targetGap: target ? far(target, kp) : Infinity }) === 'caught') {
         if (closing) { runDown(closing); ran = true; }
         if (far(lead, kp) <= 1) {
             const rec = afterStep(h.rec, 'caught');
@@ -548,8 +549,10 @@ export async function custodyUpkeep(c = campaign()) {
     const { place, rec } = h;
     const w = c.docs.world;
     const conds = conditionsOf(w, rec.by);
-    if (outBy(conds) || lockedReason(c, rec.by) || place.state.pose?.[rec.by]?.pose === 'sleep') return '';
-    if (conds.some(x => /^prone\b/i.test(String(x)))) {
+    const r = restraintOf(conds);
+    // Out cold, asleep, tied or held: nothing she can do. On the ground is no lock on getting up.
+    if (outBy(conds) || place.state.pose?.[rec.by]?.pose === 'sleep' || (r.reason && r.reason !== 'on the ground')) return '';
+    if (r.prone) {
         await standsUp(c, h);
         return `${rec.by} gets up off the ground (no roll: her hands are free; it costs her this turn's move, so no grab this turn). Narrate it in a line and brief her.`;
     }
