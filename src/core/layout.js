@@ -2058,7 +2058,7 @@ export function generateWilds(planIn, seed = 1) {
     // Open country (downs, moors, plains, hills): grass with few trees; the woods only in patches. Dry land (a dusty gully, scrub, bare rock) is browner still, with rocks instead of flowers.
     const kindWords = `${plan.kind} ${plan.name}`.toLowerCase();
     // A mountain pass is open rock: scree and boulders, few trees, no flower meadows.
-    const dryLand = (/\b(dry|dust|dusty|arid|barren|scrub|scrubland|badlands?|bare rock|parched|sun-?baked|drought|gully|ravine|rocky)\b/.test(words) || /\b(?:mountains?|crags?|cliffs?|scree|peaks?|summit|gorge|mountain pass)\b/.test(kindWords)) && !/forest|woods|jungle|swamp|lush/.test(kindWords);
+    const dryLand = (/\b(dry|dust|dusty|arid|barren|scrub|scrubland|badlands?|bare rock|parched|sun-?baked|drought|gully|ravine|rocky)\b/.test(words) || /\b(?:mountains?|crags?|cliffs?|scree|peaks?|summit|gorge|mountain pass|\bpass|ledge|ridge|switchback)\b/.test(kindWords)) && !/forest|woods|jungle|swamp|lush/.test(kindWords);
     const open = (OPEN_COUNTRY.test(kindWords) || dryLand) && !/forest|woods|jungle|swamp/.test(kindWords);
     // Water where it's asked for; by chance only in the woods and jungle, never on open or dry land.
     if (wantsRiver || (!wantsPond && !open && (theme === 'jungle' ? r() < 0.6 : theme === 'forest' ? r() < 0.45 : false))) addWater(c, W, H, r, 'river');

@@ -9,19 +9,19 @@ import { statsForName } from './sheets.js';
 import { postNote, postDiceCard } from './messages.js';
 import { callClaude } from './llm.js';
 import { settings } from './settings.js';
-import { DEFAULT_LIGHT_MODEL } from '../core/models.js';
+import { REFEREE_MODEL, thinksByDefault } from '../core/models.js';
 import { roll } from '../core/dice.js';
-import { lookupModifier, conditionsOf, applyStateChanges } from '../core/world.js';
+import { lookupModifier, conditionsOf, applyStateChanges, isAway } from '../core/world.js';
 import { restraintOf } from '../core/restraints.js';
-import { floorById, computeVisible, hiddenNow, standUp, personByName, setIntent, followSteps, doorAt, setDoorState, GUARD_SIGHT } from '../core/explore.js';
+import { floorById, computeVisible, hiddenNow, standUp, personByName, setIntent, followSteps, doorAt, setDoorState, GUARD_SIGHT, EARSHOT } from '../core/explore.js';
 import { outBy } from '../core/notice.js';
 import { currentPlace, savePlace, lockedReason, setWaiting, codeRoll, droppedRoll, cancelPendingCard, passivePerceptionOf, stealthThisTurn, dangersFor } from './atlas.js';
-import { normalizeRecord, newRecord, onPlayerVerdict, onKeeperVerdict, stepBefore, stepAfter, afterStep, onSlip, onGrab, onTrip, freed, PLAYER_VERDICTS, KEEPER_VERDICTS, DEFAULT_RADIUS } from '../core/custody.js';
+import { normalizeRecord, newRecord, onPlayerVerdict, onKeeperVerdict, stepBefore, stepAfter, afterStep, onSlip, onGrab, onTrip, stumbleStep, freed, PLAYER_VERDICTS, KEEPER_VERDICTS, DEFAULT_RADIUS } from '../core/custody.js';
 import { REFEREE_SYSTEM, playerLinePrompt, keeperLinePrompt, grabPrompt, parseWord } from '../core/referee.js';
 
 const far = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 const esc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const KEYS = new Set(['by', 'radius', 'mode', 'attempts', 'chase', 'lastGrabTurn']);
+const KEYS = new Set(['by', 'radius', 'mode', 'attempts', 'chase', 'lastGrabTurn', 'stumble']);
 
 async function refresh() {
     const { refreshMap } = await import('../ui/map.js');
@@ -85,13 +85,17 @@ async function referee(kind, args, allowed, status = null) {
     const s = settings();
     if (s.referee === false) return allowed[allowed.length - 1];
     const user = kind === 'player' ? playerLinePrompt(args) : kind === 'keeper' ? keeperLinePrompt(args) : grabPrompt(args);
+    // Haiku 4.5 by default: it answers without thinking first. A Claude 5 model thinks before it answers
+    // and SillyTavern can't tell it not to, so it gets room for the thought (and is slower for it).
+    const model = s.taskModels?.referee || REFEREE_MODEL;
     try {
-        const { text, ms } = await callClaude({ system: REFEREE_SYSTEM, user, model: s.taskModels?.referee || DEFAULT_LIGHT_MODEL, maxTokens: 5, effort: 'low', label: `referee (${kind})` });
+        const { text, ms } = await callClaude({ system: REFEREE_SYSTEM, user, model, maxTokens: thinksByDefault(model) ? 400 : 8, effort: 'auto', label: `referee (${kind})` });
         const word = parseWord(text, allowed);
         status?.note(`Referee: ${word} (${ms} ms)`);
         return word;
     } catch (error) {
         console.warn('[Dungeon Master] referee failed', error);
+        status?.note(`Referee failed (${kind}): ${String(error?.message || error).slice(0, 120)}`);
         return allowed[allowed.length - 1];
     }
 }
@@ -104,11 +108,23 @@ async function referee(kind, args, allowed, status = null) {
  * thing read is a companion grabbing for them. Returns the event for the DM, or ''.
  */
 export async function custodyOnPlayerText(c, text, { ooc = false, status = null } = {}) {
-    if (!text || c.docs.world.combat || codeRoll(c)) return '';
+    if (!text || c.docs.world.combat) return '';
     const h = held(c);
-    if (!h || ooc) return arrestFromText(c, text, status);
+    const card = h ? pendingCustodyCard(c, h.rec.by) : null;
+    if (codeRoll(c) && !card) return '';
+    if (!h || ooc) return card ? '' : arrestFromText(c, text, status);
     const verdict = await referee('player', { keeper: h.rec.by, player: h.player, text, mode: h.rec.mode, chase: Boolean(h.rec.chase) }, PLAYER_VERDICTS, status);
     const { rec, event } = onPlayerVerdict(h.rec, verdict);
+    if (card) {
+        // Her grab (or his trip) is being rolled: giving in calls the roll off and she has him; any other word waits for the dice.
+        if (verdict !== 'give') return '';
+        cancelPendingCard(c);
+        store(h, rec);
+        savePlace(h.key, c);
+        await postNote(`🎲 You give in: that roll is off. 🔒 ${rec.by} has you (stay within ${rec.radius} squares).`);
+        refresh();
+        return `${h.player} gives in to ${rec.by} (in their own words) while ${card.trip ? `their ${card.trip.what}` : 'her grab'} was being rolled: that roll is off, the chase is over and ${rec.by} has them. Narrate ${rec.by} taking hold of them and brief her; no roll.`;
+    }
     if (event === 'trip') return tripKeeper(c, h, text);
     if (event === 'along') { await setMode(c, h, 'companion', `${h.player} asked ${h.rec.by} along`); return ''; }
     const wasChase = Boolean(h.rec.chase), wasMode = h.rec.mode;
@@ -122,13 +138,33 @@ export async function custodyOnPlayerText(c, text, { ooc = false, status = null 
     return '';
 }
 
-/** "I run": the chase starts now, by code. A keeper beside them grabs at once (a card); one further off runs after them. */
+/** A grab or trip card of this keeper's still waiting for the player's roll, or null. */
+function pendingCustodyCard(c, by) {
+    const pr = c.meta.pendingRoll;
+    return pr && !pr.autoResult && (pr.custody?.keeper === by || pr.trip?.keeper === by) ? pr : null;
+}
+
+/**
+ * "I run": the chase starts now, by code. In her hands (grappled, pinned) it's wrenching against her
+ * hold: the same card as a grab, and torn free the chase is on. A keeper beside them grabs at once (a
+ * card); one further off runs after them.
+ */
 async function bolt(c, h, rec) {
     const { place, key, player, kp, lead } = h;
-    if (lockedReason(c, player) || !lead || !kp || kp.floor !== lead.floor) return '';
+    if (!lead || !kp || kp.floor !== lead.floor) return '';
+    const hold = conditionsOf(c.docs.world, player).find(x => /^(?:grappled|pinned)\b/i.test(String(x)));
+    if (hold) {
+        // Held by someone else, by a jailer, or a grab already rolled this turn: nothing to run from here.
+        if (!h.companion || h.rec.lastGrabTurn === c.meta.turn || keeperOut(c, place, rec.by)) return '';
+        if (/\bby\b/i.test(hold) && !new RegExp(`\\b${esc(rec.by.split(' ')[0])}\\b`, 'i').test(hold)) return '';
+        store(h, rec);
+        return grabCard(c, h, { wrench: true });
+    }
+    if (lockedReason(c, player)) return '';
     if (keeperOut(c, place, rec.by)) return `${player} makes a break while ${rec.by} is out of it: ${rec.by} notices nothing yet. Narrate the break; the map lets them go.`;
-    if (!h.companion) { store(h, rec); jailer(place, rec.by, player, rec.attempts); savePlace(key, c); return `${player} says they run from ${rec.by}: the code runs the chase (${rec.by} follows and grabs when they reach them, with rolls). Narrate the break and ${rec.by}'s reaction; don't resolve it.`; }
+    if (!h.companion) { store(h, rec); jailer(place, rec.by, player, rec.attempts); savePlace(key, c); await postNote(`🔒 You run: ${rec.by} is after you.`); return `${player} says they run from ${rec.by}: the code runs the chase (${rec.by} follows and grabs when they reach them, with rolls). Narrate the break and ${rec.by}'s reaction; don't resolve it.`; }
     store(h, rec);
+    await postNote(`🔒 You run: ${rec.by} is after you.`);
     if (place.state.waiting?.[rec.by]) await setWaiting(rec.by, false, { quiet: true });
     c.meta.stance ??= {}; c.meta.stance[rec.by] = 'close'; saveMeta();
     if (keeperProne(c, rec.by)) { await standsUp(c, h); return `${player} runs while ${rec.by} is on the ground: she gets up (no roll: her hands are free, but it costs her the turn) and ${player} gains ground. Narrate the break and brief ${rec.by}; the code runs the chase from here, don't ask for a roll.`; }
@@ -221,13 +257,16 @@ export async function onStep(c, cur, start, { runDown = null } = {}) {
         refresh();
         return `${player} walked back up to ${rec.by} mid-chase: caught, by the code (no roll); the chase is over and ${rec.by} has them again (GUARD mode). Narrate ${rec.by} taking hold of them and brief ${rec.by}.`;
     }
-    // Mid-chase she runs: a few squares for each of his, so the chase can be seen.
-    if (h.rec.chase && h.companion && !prone && runDown) runDown(3);
+    // Mid-chase she runs: a few squares for each of his, so the chase can be seen. Off balance after a
+    // missed grab, she stands for a few of his steps instead: that's the gap a slip buys.
+    const recovering = Boolean(h.rec.chase && h.rec.stumble);
+    if (recovering) store(h, stumbleStep(h.rec));
+    if (h.rec.chase && h.companion && !prone && !recovering && runDown) runDown(3);
     const gap = far(lead, kp);
     start.prevGap = gap;
     const sees = seesPlayer(c, place, lead, kp, player, h.rec.by, { stealth: !h.rec.chase });
-    const verdict = stepAfter(h.rec, { gap, fromStart: far(lead, start), sees, keeperProne: prone, turn: c.meta.turn });
-    if (!verdict) return '';
+    const verdict = stepAfter(h.rec, { gap, fromStart: far(lead, start), sees, keeperProne: prone, turn: c.meta.turn, recovering });
+    if (!verdict) { if (recovering) savePlace(key, c); return ''; }
     if (!h.companion) {
         if (verdict !== 'start') return '';
         const rec = afterStep(h.rec, 'start');
@@ -246,6 +285,7 @@ export async function onStep(c, cur, start, { runDown = null } = {}) {
             return `${player} got out of ${by}'s sight (${gap} squares off${place.state.night ? ', in the dark' : ''}): the chase is off, and ${by} stands where she lost them. Decide what she does (calls out, searches: move her with place_changes guards, or lets it go) and brief her; she doesn't see, find or hold them unless you put her where they are.`;
         case 'start': {
             store(h, afterStep(h.rec, 'start'));
+            await postNote(`🔒 You stepped beyond ${by}'s ring: she's after you.`);
             if (place.state.waiting?.[by]) await setWaiting(by, false, { quiet: true });
             c.meta.stance ??= {}; c.meta.stance[by] = 'close'; saveMeta();
             if (prone) { await standsUp(c, h); return `${player} (${by}'s prisoner${bound}) is making off while ${by} is on the ground: she gets up (no roll: her hands are free, but it costs her the turn) and ${player} gains ground. Narrate it and brief ${by}; the code runs the chase from here, don't ask for a roll.`; }
@@ -299,8 +339,12 @@ async function standsUp(c, h) {
 
 // ---------- the cards ----------
 
-/** The keeper within reach grabs: her Athletics from her sheet against the player's roll to slip free (a card asks for it). An arrest (no custody yet) makes them her prisoner if it lands. */
-async function grabCard(c, h, { arrest = false } = {}) {
+/**
+ * The keeper within reach grabs: her Athletics from her sheet against the player's roll to slip free
+ * (a card asks for it). An arrest (no custody yet) makes them her prisoner if it lands. A wrench
+ * (they're in her hands and run) is the same contest the other way about: torn free, the chase is on.
+ */
+async function grabCard(c, h, { arrest = false, wrench = false } = {}) {
     const { key, player } = h;
     const by = h.rec.by;
     let attempts = 1;
@@ -309,15 +353,18 @@ async function grabCard(c, h, { arrest = false } = {}) {
     const mod = stats ? lookupModifier(stats, { kind: 'check', skill: 'Athletics', ability: 'STR' }).mod : 2;
     const theirs = roll(`1d20${mod >= 0 ? '+' : ''}${mod}`);
     const cuffs = restraintOf(conditionsOf(c.docs.world, player)).look;
-    const pr = { kind: 'check', skill: 'Acrobatics', ability: 'DEX', die: 20, dc: theirs.total, advantage: cuffs ? 'disadvantage' : 'none', reason: `${by} grabs for you${arrest ? '' : ' as you make off'} (Athletics ${theirs.total}). Slip free!`, damage: '', half: false, bonus: null, spot: null, turn: c.meta.turn, custody: { keeper: by, attempt: attempts, ...(arrest ? { arrest: true } : {}) } };
+    const pr = { kind: 'check', skill: 'Acrobatics', ability: 'DEX', die: 20, dc: theirs.total, advantage: cuffs ? 'disadvantage' : 'none', reason: wrench ? `${by} has hold of you; you wrench against it (her Athletics ${theirs.total}). Tear free!` : `${by} grabs for you${arrest ? '' : ' as you make off'} (Athletics ${theirs.total}). Slip free!`, damage: '', half: false, bonus: null, spot: null, turn: c.meta.turn, custody: { keeper: by, attempt: attempts, ...(arrest ? { arrest: true } : {}), ...(wrench ? { wrench: true } : {}) } };
     const dropped = droppedRoll(c);
     c.meta.pendingRoll = pr;
     const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
-    await postDiceCard(`🎲 **${by}** grabs for **${player}**${arrest ? '' : ' as they make off'}: Athletics d20 ${theirs.detail} = **${theirs.total}**.\n**${player}**, roll a **d20** for **Acrobatics (DEX)**${cuffs ? ' at **disadvantage** (two dice, the lower counts)' : ''} to slip free and type the number you rolled${auto}.`, { request: pr });
+    await postDiceCard(wrench
+        ? `🎲 **${player}** wrenches against **${by}**'s hold: she rolls Athletics d20 ${theirs.detail} = **${theirs.total}** to keep it.\n**${player}**, roll a **d20** for **Acrobatics (DEX)**${cuffs ? ' at **disadvantage** (two dice, the lower counts)' : ''} to tear free and type the number you rolled${auto}.`
+        : `🎲 **${by}** grabs for **${player}**${arrest ? '' : ' as they make off'}: Athletics d20 ${theirs.detail} = **${theirs.total}**.\n**${player}**, roll a **d20** for **Acrobatics (DEX)**${cuffs ? ' at **disadvantage** (two dice, the lower counts)' : ''} to slip free and type the number you rolled${auto}.`, { request: pr });
     pr.chatIndex = ST.chat.length;
     saveMeta();
     savePlace(key, c);
     refresh();
+    if (wrench) return `${player} (in ${by}'s hold${boundWord(c, player)}) says they run: the code rolled it as a contest (her Athletics ${theirs.total} to keep hold; the player is rolling Acrobatics${cuffs ? ' at disadvantage, bound' : ''}). Don't resolve it and don't ask for a roll: narrate the struggle in a line, brief ${by} for the moment before it lands, and stop. Torn free, the code runs the chase and tells you.${dropped}`;
     if (arrest) return `${by} grabs for ${player}: the code rolled it as a contest (her Athletics ${theirs.total}; ${player} is rolling Acrobatics${cuffs ? ' at disadvantage, bound' : ''}). Don't resolve it and don't ask for a roll: narrate the lunge in a line, brief ${by} for the moment before it lands, and stop. If she gets hold, the code makes ${player} her prisoner and tells you.${dropped}`;
     return `${player} (${by}'s prisoner${boundWord(c, player)}) is getting away; ${by} reaches them and grabs (grab ${attempts}; the player is rolling to slip free: don't resolve it; narrate ${by}'s lunge and a line from her if she speaks, then stop).${dropped}`;
 }
@@ -384,9 +431,18 @@ export async function settleCustody(c, pr, success) {
         refresh();
         return `${keeper} got hold of ${player} and holds them (condition "grappled"; the map won't let ${player} move until it's removed)${!rec && pr.custody.arrest ? `; ${player} is ${keeper}'s prisoner now (custody by the code, GUARD mode)` : ''}. ${keeper} decides what comes next (tighter cuffs, a rope, a warning): narrate it and brief ${keeper}; remove "grappled" when ${keeper} lets go.`;
     }
-    const tries = rec ? onSlip(rec, true).tries : pr.custody.attempt;
-    if (tries >= 3) return `${player} slipped free of ${keeper} a third time: ${keeper} can't hold them by hand. Decide what ${keeper} does now (keeps after them on foot, calls out, gives up, draws a weapon: then start_combat) and brief ${keeper}.`;
-    return `${player} slipped free of ${keeper}'s grab (${tries} of 3); ${keeper} keeps after them. Narrate it in a line, brief ${keeper} if they speak, and stop: the chase goes on by the code.`;
+    const slip = rec ? onSlip(rec, true) : null;
+    if (slip) place.state.custody[player] = slip.rec;
+    if (pr.custody.wrench) {
+        const holds = (w.party[player]?.conditions || []).filter(x => /^(?:grappled|pinned)\b/i.test(String(x)));
+        if (holds.length) { w.party[player].conditions = w.party[player].conditions.filter(x => !holds.includes(x)); saveDoc('world'); await postNote(`📜 ${player}: −${holds.join(', −')} (torn free).`); }
+    }
+    savePlace(key, c);
+    refresh();
+    const tries = slip ? slip.tries : pr.custody.attempt;
+    const got = pr.custody.wrench ? `tore out of ${keeper}'s hold` : `slipped free of ${keeper}'s grab`;
+    if (tries >= 3) return `${player} ${got} a third time: ${keeper} can't hold them by hand. Decide what ${keeper} does now (keeps after them on foot, calls out, gives up, draws a weapon: then start_combat) and brief ${keeper}.`;
+    return `${player} ${got} (${tries} of 3): ${keeper} is off balance and ${player} has a few steps on her before she runs again; she keeps after them. Narrate it in a line, brief ${keeper} if they speak, and stop: the chase goes on by the code.`;
 }
 
 /** The player's trip or shove came in. Landed: she's down (a trip) or knocked back, her hold broken. Missed: she keeps her feet and has hold of them. */
@@ -426,29 +482,73 @@ export async function settleTrip(c, pr, success) {
 
 // ---------- between turns ----------
 
-/**
- * A turn passes for a companion keeper. Restraints off and nobody holding them: custody is over
- * (the player told). On the ground: she gets up (no roll). Returns the event for the DM, or ''.
- */
+/** A turn passes for a companion keeper. On the ground: she gets up (no roll). Returns the event for the DM, or ''. */
 export async function custodyUpkeep(c = campaign()) {
     const h = held(c);
     if (!h || !h.companion || c.docs.world.combat) return '';
-    const { place, key, player, rec } = h;
+    const { rec } = h;
     const w = c.docs.world;
-    const mine = conditionsOf(w, player);
-    if (freed({ bound: restraintOf(mine).bound, grappled: mine.some(x => /^(?:grappled|pinned)\b/i.test(String(x))) })) {
-        delete place.state.custody[player];
-        savePlace(key, c);
-        await postNote(`🔓 You're out of ${rec.by}'s hands: no cuffs, no rope, nobody holding you. ${rec.by} is a companion again unless she catches you.`);
-        refresh();
-        return `${player}'s restraints are off and nobody holds them: they're nobody's prisoner now (custody ended by the code). ${rec.by} may try to take them again (a grab is a contest the code rolls), or let it be; send custody again only when she has hold of them.`;
-    }
     const conds = conditionsOf(w, rec.by);
     if (outBy(conds) || lockedReason(c, rec.by) || place.state.pose?.[rec.by]?.pose === 'sleep') return '';
     if (conds.some(x => /^prone\b/i.test(String(x)))) {
         await standsUp(c, h);
         return `${rec.by} gets up off the ground (no roll: her hands are free; it costs her this turn's move, so no grab this turn). Narrate it in a line and brief her.`;
     }
+    return '';
+}
+
+/** Is the player bound (cuffs, rope) or in someone's hands (grappled, pinned) right now, by the books? */
+export function boundNow(c) {
+    const mine = conditionsOf(c.docs.world, c.meta.persona.name);
+    return Boolean(restraintOf(mine).bound) || mine.some(x => /^(?:grappled|pinned)\b/i.test(String(x)));
+}
+
+/**
+ * The restraints came off this turn (the DM's conditions_remove, a roll that worked, her letting go)
+ * and nobody holds them: custody is over, the player told. Only the transition counts: a keeper who
+ * holds them by her word alone (no cuffs, no rope) keeps them until the DM ends it. `wasBound` is
+ * what the books said before the turn's changes. Returns the line for the DM, or ''.
+ */
+export async function custodyFreed(c, wasBound) {
+    const h = held(c);
+    if (!h || !h.companion || !wasBound || boundNow(c)) return '';
+    const { place, key, player, rec } = h;
+    delete place.state.custody[player];
+    savePlace(key, c);
+    await postNote(`🔓 You're out of ${rec.by}'s hands: the restraints are off and nobody's holding you. ${rec.by} is a companion again unless she takes you again.`);
+    refresh();
+    return `${player}'s restraints are off and nobody holds them: they're nobody's prisoner now (custody ended by the code). ${rec.by} may try to take them again (a grab is a contest the code rolls), or let it be; send custody again only when she has hold of them.`;
+}
+
+/**
+ * A companion who cuffs or ties the player in the story (the DM's narration, the opening's premise)
+ * has them: custody by the code, guard mode, with the note. With an enemy at hand the cuffs are
+ * theirs and the DM says who holds them. Returns a line for the DM when the player is bound, a
+ * companion is at hand and nobody holds them on the map (no chase can run then), else ''.
+ */
+export async function custodyFromStory(c, text, status = null) {
+    const cur = currentPlace(c);
+    const player = c.meta.persona.name;
+    const w = c.docs.world;
+    if (!cur || !text || w.combat || cur.place.state.custody?.[player] || !restraintOf(conditionsOf(w, player)).bound) return '';
+    const { place, key } = cur;
+    const lead = place.state.positions[player];
+    if (!lead) return '';
+    if (Object.values(place.guards).some(g => (g.hostile === true || g.intent === 'attack') && g.state !== 'dead' && g.state !== 'gone' && !g.down && g.floor === lead.floor && far(g, lead) <= EARSHOT)) return '';
+    const CUFF_WORDS = 'cuff|cuffs|cuffed|handcuff|handcuffs|handcuffed|manacle|manacles|manacled|shackl\\w*|ties|tied|tying|bind|binds|bound|rope|ropes|arrest|arrests|arrested|restrain|restrains|restrained|prisoner|custody';
+    const near = n => { const p = place.state.positions[n]; return p && p.floor === lead.floor && far(p, lead) <= 3 && !isAway(w, n); };
+    const names = c.meta.party.map(p => p.name);
+    const keeper = names.find(n => { const first = esc(n.split(' ')[0]); return near(n) && (new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(?:${CUFF_WORDS})\\b`, 'i').test(text) || new RegExp(`\\b(?:${CUFF_WORDS})\\b[^.!?]{0,80}\\b${first}\\b`, 'i').test(text)); });
+    if (keeper) {
+        place.state.custody ??= {};
+        place.state.custody[player] = newRecord(keeper);
+        savePlace(key, c);
+        status?.note(`${player} is ${keeper}'s prisoner (kept within ${DEFAULT_RADIUS} squares)`);
+        await postNote(`🔒 ${keeper} has you (from the story): a step beyond ${DEFAULT_RADIUS} squares is an escape.`);
+        refresh();
+        return '';
+    }
+    if (names.some(near)) return `${player} is ${restraintOf(conditionsOf(w, player)).look === 'rope' ? 'tied' : 'cuffed'} and nobody's prisoner on the map (no CUSTODY): if a companion has them, send place_changes custody {"${player}": {"by": "<her name>", "radius": 2}} this turn, so the map keeps them together and runs any chase and grab with rolls; if nobody holds them, leave it.`;
     return '';
 }
 

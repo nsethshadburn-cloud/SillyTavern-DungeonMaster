@@ -27,6 +27,18 @@ export function restraintOf(conditions = []) {
     return { locked: Boolean(reason) || prone, look: caged ? 'cage' : bound, bound, caged, prone, reason: reason ?? (prone ? 'on the ground' : null), hurt: Boolean(reason && HURT.test(reason) && !caged && !bound) };
 }
 
+/**
+ * The opening scene says the player is already bound ("the iron cuffs are cold on your wrists", "a
+ * rope round your hands"): the conditions that describes, in the books' words ('cuffed', 'restrained
+ * (rope)'). A standing fact, read once, at the start; during play only an act of cuffing counts.
+ */
+export function standingRestraints(text) {
+    const t = String(text || '').replace(/[*_~`]/g, ' ');
+    if (/\b(?:cuffs?|handcuffs?|manacles?|irons|shackles?)\b[^.!?]{0,40}\byour (?:wrists?|hands?)\b|\byour (?:cuffed|manacled|shackled|handcuffed) (?:wrists?|hands?)\b|\byour (?:wrists?|hands?)\b[^.!?]{0,30}\b(?:cuffed|manacled|shackled|handcuffed|in irons)\b/i.test(t)) return ['cuffed'];
+    if (/\b(?:rope|cord|bonds|bindings|twine)\b[^.!?]{0,40}\byour (?:wrists?|hands?)\b|\byour (?:wrists?|hands?)\b[^.!?]{0,30}\b(?:tied|bound|roped|lashed)\b|\byour (?:tied|bound) (?:wrists?|hands?)\b/i.test(t)) return ['restrained (rope)'];
+    return [];
+}
+
 /** A short "why you can't move" line for the player. */
 export function lockedLine(name, r) {
     if (r.hurt) return `${name} is ${r.reason} and can't walk. Someone can carry them: tell the DM.`;

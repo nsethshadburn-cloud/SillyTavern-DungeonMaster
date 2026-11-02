@@ -9,6 +9,7 @@
 //   attempts grabs she has made this chase (three slips and she can't hold them by hand)
 //   radius   how far they may wander in guard mode (squares)
 //   lastGrabTurn  one grab per turn, so a card never doubles
+//   stumble  she lunged and missed: off balance for his next few steps (no run, no grab), so a slip opens a gap
 //
 // Judgement about words (did he run? did she tell him to stay?) is not here: a one-word referee
 // reads the line (core/referee.js) and the verdict comes in. Everything here is a table.
@@ -17,6 +18,8 @@ export const MODES = Object.freeze(['guard', 'companion']);
 export const PLAYER_VERDICTS = Object.freeze(['run', 'along', 'give', 'trip', 'none']);
 export const KEEPER_VERDICTS = Object.freeze(['stay', 'along', 'none']);
 export const DEFAULT_RADIUS = 2;
+/** A missed grab leaves her off balance for this many of his steps: the gap a slip buys. */
+export const STUMBLE_STEPS = 3;
 
 /** A clean record from whatever is stored (older versions kept escorts, searches and grace turns; those are gone). */
 export function normalizeRecord(raw) {
@@ -24,6 +27,7 @@ export function normalizeRecord(raw) {
     const rec = { by: String(raw.by), radius: Math.max(1, Math.min(6, Number(raw.radius) || DEFAULT_RADIUS)), mode: raw.mode === 'companion' ? 'companion' : 'guard', attempts: Number(raw.attempts) || 0 };
     if (raw.chase === true) rec.chase = true;
     if (Number.isInteger(raw.lastGrabTurn)) rec.lastGrabTurn = raw.lastGrabTurn;
+    if (Number.isInteger(raw.stumble) && raw.stumble > 0) rec.stumble = raw.stumble;
     return rec;
 }
 
@@ -44,8 +48,8 @@ export function onPlayerVerdict(rec, verdict) {
     const r = { ...rec };
     switch (verdict) {
         case 'run': r.chase = true; return { rec: r, event: 'bolt' };
-        case 'along': { const was = r.mode === 'companion' && !r.chase; r.mode = 'companion'; delete r.chase; return { rec: r, event: was ? '' : 'along' }; }
-        case 'give': { const was = Boolean(r.chase); delete r.chase; r.mode = 'guard'; r.attempts = 0; return { rec: r, event: was ? 'give' : '' }; }
+        case 'along': { const was = r.mode === 'companion' && !r.chase; r.mode = 'companion'; delete r.chase; delete r.stumble; return { rec: r, event: was ? '' : 'along' }; }
+        case 'give': { const was = Boolean(r.chase); delete r.chase; delete r.stumble; r.mode = 'guard'; r.attempts = 0; return { rec: r, event: was ? 'give' : '' }; }
         case 'trip': return { rec: r, event: 'trip' };
         default: return { rec: r, event: '' };
     }
@@ -59,7 +63,7 @@ export function onPlayerVerdict(rec, verdict) {
 export function onKeeperVerdict(rec, verdict) {
     const r = { ...rec };
     if (verdict === 'stay' && r.mode !== 'guard') { r.mode = 'guard'; return { rec: r, event: 'guard' }; }
-    if (verdict === 'along' && (r.mode !== 'companion' || r.chase)) { r.mode = 'companion'; delete r.chase; r.attempts = 0; return { rec: r, event: 'companion' }; }
+    if (verdict === 'along' && (r.mode !== 'companion' || r.chase)) { r.mode = 'companion'; delete r.chase; delete r.stumble; r.attempts = 0; return { rec: r, event: 'companion' }; }
     return { rec: r, event: '' };
 }
 
@@ -76,18 +80,20 @@ export function stepBefore(rec, { gap, prevGap, keeperProne }) {
 /**
  * The player's step on the map, after the keeper has had her move.
  * @param {object} rec
- * @param {{gap:number, fromStart:number, sees:boolean, keeperProne:boolean, turn:number}} s
+ * @param {{gap:number, fromStart:number, sees:boolean, keeperProne:boolean, turn:number, recovering?:boolean}} s
  *  gap = squares between them now; fromStart = squares from where she stood when the walk began;
- *  sees = she can see them (sight, light, stealth); keeperProne = she's on the ground
+ *  sees = she can see them (sight, light, stealth); keeperProne = she's on the ground;
+ *  recovering = she's off balance after a missed grab (she stood still for this step: no grab, but out of her sight is still lost)
  * @returns {''|'grab'|'standup'|'start'|'lost'}
  *  grab:    she's within reach mid-chase: the slip-free card (one per turn)
  *  standup: she's on the ground mid-chase: she gets up instead (no roll, no grab this turn)
  *  start:   guard mode, beyond her radius, in her sight: the chase begins now
  *  lost:    mid-chase, out of her sight: the chase is off; she stands where she lost them
  */
-export function stepAfter(rec, { gap, fromStart, sees, keeperProne, turn }) {
+export function stepAfter(rec, { gap, fromStart, sees, keeperProne, turn, recovering = false }) {
     if (rec.chase) {
         if (keeperProne) return 'standup';
+        if (recovering) return sees ? '' : 'lost';
         if (gap <= 1) return rec.lastGrabTurn === turn ? '' : 'grab';
         return sees ? '' : 'lost';
     }
@@ -100,29 +106,40 @@ export function stepAfter(rec, { gap, fromStart, sees, keeperProne, turn }) {
 export function afterStep(rec, verdict) {
     const r = { ...rec };
     switch (verdict) {
-        case 'caught': delete r.chase; r.mode = 'guard'; r.attempts = 0; break;
+        case 'caught': delete r.chase; delete r.stumble; r.mode = 'guard'; r.attempts = 0; break;
         case 'start': r.chase = true; break;
-        case 'lost': delete r.chase; break;
+        case 'lost': delete r.chase; delete r.stumble; break;
         default: break;
     }
     return r;
 }
 
+/** One of his steps while she's off balance: one fewer to go before she runs again. */
+export function stumbleStep(rec) {
+    const r = { ...rec };
+    if (r.stumble > 1) r.stumble -= 1; else delete r.stumble;
+    return r;
+}
+
 /**
  * The slip-free roll came in. A miss: she has them (grappled, guard mode, the chase is over).
- * A slip: loose for now, she stays after them; after three slips she can't hold them by hand.
+ * A slip: loose for now, and she's off balance (STUMBLE_STEPS of his steps before she runs again:
+ * the gap a slip buys); she stays after them; after three slips she can't hold them by hand.
  * @returns {{rec: object, held: boolean, tries: number, exhausted: boolean}}
  */
 export function onSlip(rec, success) {
     const r = { ...rec };
-    if (!success) { delete r.chase; r.mode = 'guard'; r.attempts = 0; return { rec: r, held: true, tries: 0, exhausted: false }; }
+    if (!success) { delete r.chase; delete r.stumble; r.mode = 'guard'; r.attempts = 0; return { rec: r, held: true, tries: 0, exhausted: false }; }
     const tries = r.attempts || 0;
+    r.stumble = STUMBLE_STEPS;
     return { rec: r, held: false, tries, exhausted: tries >= 3 };
 }
 
-/** A grab is made: counted, and dated so it can't double in a turn. */
+/** A grab is made: counted, and dated so it can't double in a turn. She's on her feet for it: no stumble left. */
 export function onGrab(rec, turn) {
-    return { ...rec, attempts: (rec.attempts || 0) + 1, lastGrabTurn: turn };
+    const r = { ...rec, attempts: (rec.attempts || 0) + 1, lastGrabTurn: turn };
+    delete r.stumble;
+    return r;
 }
 
 /**
@@ -131,11 +148,11 @@ export function onGrab(rec, turn) {
  */
 export function onTrip(rec, success) {
     const r = { ...rec };
-    if (!success) { delete r.chase; r.mode = 'guard'; r.attempts = 0; }
+    if (!success) { delete r.chase; delete r.stumble; r.mode = 'guard'; r.attempts = 0; }
     return r;
 }
 
-/** Nobody holds them and nothing binds them: custody is over. */
+/** Nobody holds them and nothing binds them: custody is over (checked the moment restraints come off, never while she holds them by her word alone). */
 export function freed({ bound, grappled }) {
     return !bound && !grappled;
 }

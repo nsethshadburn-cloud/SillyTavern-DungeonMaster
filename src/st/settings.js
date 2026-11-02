@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS, OLD_DEFAULTS } from '../core/notes.js';
-import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, LIGHT_V25, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
+import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, REFEREE_MODEL, LIGHT_V24, LIGHT_V25, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -169,6 +169,13 @@ export function settings() {
             for (const k of LIGHT_V25) if (s.taskModels[k] === main) s.taskModels[k] = DEFAULT_LIGHT_MODEL;
         }
         s.lightV25 = true;
+    }
+    // v0.66: the referee's model. v0.65 gave it the light model (Haiku 5.5), which thinks before it
+    // answers and, with five tokens to answer in, came back empty most of the time. A referee left on
+    // that default moves to Haiku 4.5 (no thinking); one someone chose stays.
+    if (!s.refereeV66) {
+        if (s.taskModels?.referee === DEFAULT_LIGHT_MODEL) s.taskModels.referee = REFEREE_MODEL;
+        s.refereeV66 = true;
     }
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();

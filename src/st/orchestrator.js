@@ -19,7 +19,7 @@ import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseC
 import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts, dismountsInText, propById, freeNear, makeNoise } from '../core/explore.js';
 import { isBeast } from '../core/sprites.js';
 import { isWildKind } from '../core/architect.js';
-import { restraintOf } from '../core/restraints.js';
+import { restraintOf, standingRestraints } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
 import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
@@ -34,7 +34,7 @@ import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } 
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
-import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, settleCustody, settleTrip } from './custody.js';
+import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, custodyFreed, custodyFromStory, boundNow, settleCustody, settleTrip } from './custody.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
@@ -1464,6 +1464,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const problems = [];
     // Things the DM is told next turn without a warning to the player (the code already did the right thing).
     const dmOnly = [];
+    // Bound or held before this turn's changes: when the restraints come off, custody ends (custodyFreed).
+    const boundBefore = boundNow(c);
     // The DM's own tics ("wrists still locked behind you", nine turns running): named, so they stop.
     const dmTics = repeatedPhrases(recentRepliesOf(DM_NAME, 6), { exclude: [meta.persona.name, ...meta.party.map(p => p.name)] });
     if (dmTics.length) dmOnly.push(`You've repeated these in your last turns: ${dmTics.map(p => `"${p}"`).join(', ')}. Say it differently or leave it out: a standing fact (cuffed hands, the dark, a danger ahead) is stated once, when it changes or matters, not every turn.`);
@@ -1576,10 +1578,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const text = `${t.narration || ''} ${t.scene_card ? JSON.stringify(t.scene_card.people?.[player] ?? '') : ''}`;
         const have = conditionsOf(world, player).join(' ').toLowerCase();
         const adds = [];
+        const opening = reasons.includes('opening');
         if (!/prone|fallen|on the ground|unconscious|dead/.test(have) && /\b(?:you(?:'re| are)? (?:face ?down|flat on your back|on the ground|sprawl(?:ed|ing)?|knocked (?:down|flat|off your feet)|thrown (?:down|to the ground)|down in the (?:dirt|mud|grass|snow))|(?:tackles?|trips?|knocks?|throws?|slams?|shoves?|drives?|puts?) you (?:down|to the ground|flat|off your feet|into the (?:dirt|mud|ground))|knee in your back|face ?down in the (?:dirt|mud|grass|snow)|you (?:hit|go) (?:the ground|down hard))\b/i.test(text)) adds.push('prone');
         if (!/cuff|manacle|shackl|irons/.test(have) && /\b(?:cuffs? (?:click|snap|close|lock|bite|go) [^.]{0,30}?(?:your|around your) wrists?|cuffs? you\b|cuffed your|(?:puts?|snaps?|locks?|clamps?) (?:the )?(?:cuffs|manacles|irons) (?:on|around) (?:you|your wrists?))\b/i.test(text)) adds.push('cuffed');
+        // The opening says they're already bound ("the cuffs are cold on your wrists"): a standing fact, the books' from the start.
+        if (opening && !/cuff|manacle|shackl|irons|tied|restrained|rope/.test(have)) for (const w of standingRestraints(text)) if (!adds.includes(w)) adds.push(w);
         // Hands free (the cuffs came off) but the narration still has them bound: the DM is reminded, and nothing re-cuffs them but a new arrest.
-        if (!/cuff|manacle|shackl|irons|tied|restrained|rope|grappled|pinned/.test(have) && /\b(?:your (?:cuffed|bound|tied|shackled|manacled) (?:wrists?|hands?|arms?)|your (?:wrists?|hands?|arms?) (?:are |still |remain )*(?:cuffed|bound|tied|shackled|manacled|locked) (?:behind|together|at your back)|(?:cuffs|manacles|irons|ropes?) (?:still )?(?:on|around|at) your (?:wrists?|hands?)|(?:wrists?|hands?) (?:still )?(?:locked|cuffed|bound|tied) behind (?:you|your back))\b/i.test(t.narration || '')) dmOnly.push(`${player}'s hands are FREE: the cuffs (or rope) came off and the state shows no restraint, yet your narration still has them bound. Write them with free hands from now on; nothing you narrate re-cuffs them (that takes a new arrest in the story, sent with conditions_add).`);
+        if (!opening && !/cuff|manacle|shackl|irons|tied|restrained|rope|grappled|pinned/.test(have) && /\b(?:your (?:cuffed|bound|tied|shackled|manacled) (?:wrists?|hands?|arms?)|your (?:wrists?|hands?|arms?) (?:are |still |remain )*(?:cuffed|bound|tied|shackled|manacled|locked) (?:behind|together|at your back)|(?:cuffs|manacles|irons|ropes?) (?:still )?(?:on|around|at) your (?:wrists?|hands?)|(?:wrists?|hands?) (?:still )?(?:locked|cuffed|bound|tied) behind (?:you|your back))\b/i.test(t.narration || '')) dmOnly.push(`${player}'s hands are FREE: the cuffs (or rope) came off and the state shows no restraint, yet your narration still has them bound. Write them with free hands from now on; nothing you narrate re-cuffs them (that takes a new arrest in the story, sent with conditions_add).`);
         if (!/restrain|tied|bound|rope/.test(have) && /\b(?:ties? (?:you(?:r hands| up)|your wrists)|binds? your (?:hands|wrists)|rope (?:around|round) your wrists|you(?:'re| are) (?:tied up|bound hand and foot|trussed))\b/i.test(text)) adds.push('restrained (rope)');
         // Held down: a knee on your back, someone sitting on you, pinning you. Who, when the words say.
         const pinWords = /\b(?:knee (?:in|on|between|against|into) your (?:back|spine|shoulder|shoulders|shoulder blades|neck)|pins? you (?:down|flat|to the ground)?|holds? you (?:down|flat|still)|holding you (?:down|flat)|sits? on (?:you|your back)|sitting on (?:you|your back)|weight (?:on|across|settles on) your back|kneel(?:s|ing)? on (?:you|your back))\b/i;
@@ -1612,23 +1617,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             dmOnly.push(`your story ${adds.includes('prone') ? 'put the player on the ground' : ''}${adds.includes('prone') && adds.length > 1 ? ' and ' : ''}${adds.filter(a => a !== 'prone').length ? `put ${adds.filter(a => a !== 'prone').join(' and ')} on the player` : ''} with no state_changes: the code added ${adds.map(a => `"${a}"`).join(', ')}. Send conditions_add yourself when your narration does it; remove them only when the story frees them (getting up off the ground is a roll when cuffed or held).`);
         }
     }
+    // The restraints came off this turn and nobody holds them: custody is over (both told).
+    { const freedLine = await custodyFreed(c, boundBefore).catch(error => { console.warn('[Dungeon Master] custody end failed', error); return ''; }); if (freedLine) dmOnly.push(freedLine); }
     // A companion who cuffs or ties the player in the story has them in custody: the map keeps them close (the DM can say otherwise with place_changes.custody).
-    {
-        const hereC = currentPlace(c);
-        const player = meta.persona.name;
-        if (hereC && !world.combat && !t.place_changes?.custody && !hereC.place.state.custody?.[player] && restraintOf(conditionsOf(world, player)).bound) {
-            const text = `${t.narration || ''} ${(t.directions || []).map(d => d.brief || '').join(' ')} ${t.scene_card ? JSON.stringify(t.scene_card) : ''}`;
-            const lead = hereC.place.state.positions[player];
-            // With an enemy at hand the cuffs are theirs, not a companion's: the DM says who holds the player.
-            const enemyNear = lead && Object.values(hereC.place.guards).some(g => (g.hostile === true || g.intent === 'attack') && g.state !== 'dead' && g.state !== 'gone' && !g.down && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT);
-            const CUFF_WORDS = 'cuff|cuffs|cuffed|handcuff|handcuffs|handcuffed|manacle|manacles|manacled|shackl\\w*|ties|tied|tying|bind|binds|bound|rope|ropes|arrest|arrests|arrested|restrain|restrains|restrained|prisoner|custody';
-            const near = n => { const p = hereC.place.state.positions[n]; return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n); };
-            const keeper = enemyNear ? null : meta.party.map(p => p.name).find(n => { const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return near(n) && (new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(?:${CUFF_WORDS})\\b`, 'i').test(text) || new RegExp(`\\b(?:${CUFF_WORDS})\\b[^.!?]{0,80}\\b${first}\\b`, 'i').test(text)); });
-            if (keeper) { hereC.place.state.custody ??= {}; hereC.place.state.custody[player] = { by: keeper, radius: 2, attempts: 0, mode: 'guard' }; status.note(`${player} is ${keeper}'s prisoner (kept within 2 squares)`); savePlace(hereC.key, c); }
-            // Cuffed, a companion at hand, nobody holding them on the map: the DM says who does, or no chase can run.
-            else if (!enemyNear && meta.party.map(p => p.name).some(near)) dmOnly.push(`${player} is ${restraintOf(conditionsOf(world, player)).look === 'rope' ? 'tied' : 'cuffed'} and nobody's prisoner on the map (no CUSTODY): if a companion has them, send place_changes custody {"${player}": {"by": "<her name>", "radius": 2}} this turn, so the map keeps them together and runs any chase and grab with rolls; if nobody holds them, leave it.`);
-        }
-    }
+    if (!t.place_changes?.custody) { const nudge = await custodyFromStory(c, `${t.narration || ''} ${(t.directions || []).map(d => d.brief || '').join(' ')} ${t.scene_card ? JSON.stringify(t.scene_card) : ''}`, status).catch(error => { console.warn('[Dungeon Master] custody from the story failed', error); return ''; }); if (nudge) dmOnly.push(nudge); }
     let initiativeCard = '';
     let mapChanged = false;
     // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.
@@ -2301,8 +2293,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
-    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody || meta.pendingRoll.trip) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard || meta.pendingRoll.trip?.keeper; problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling ${meta.pendingRoll.trip ? `their ${meta.pendingRoll.trip.what} of ${k}` : `to slip free of ${k}'s grab`} (${meta.pendingRoll.skill} against ${k}'s ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A contest is being rolled: the DM\'s roll request is dropped'); }
-    else if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
+    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody || meta.pendingRoll.trip) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard || meta.pendingRoll.trip?.keeper; dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling ${meta.pendingRoll.trip ? `their ${meta.pendingRoll.trip.what} of ${k}` : `to slip free of ${k}'s grab`} (${meta.pendingRoll.skill} against ${k}'s ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A contest is being rolled: the DM\'s roll request is dropped'); }
+    else if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;
         if (pr.kind === 'damage') pr.die = 100;
@@ -2444,6 +2436,8 @@ export async function runOpening(openingIn) {
                 } catch (error) { status.note(`First map not built: ${error.message}`); }
             }
         }
+        // The premise's cuffs: a companion the opening has holding the player keeps them, by the code, now that the map is up.
+        if (mapsOn() && currentPlace(c) && !c.docs.world.combat) await custodyFromStory(c, `${opening?.narration || ''} ${(opening?.directions || []).map(d => d.brief || '').join(' ')}`, status).catch(error => console.warn('[Dungeon Master] custody from the opening failed', error));
         status.finish('The adventure begins');
     } catch (error) {
         console.error(error);

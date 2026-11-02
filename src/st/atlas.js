@@ -277,6 +277,12 @@ function peopleWith(c, place, name, pos, rm) {
         if (place.state.held?.[n]) bits.push('held here');
         if (custody[n]?.by === name) bits.push(custody[n].chase ? `YOUR PRISONER ${n} is getting away and you are after them (the map runs the chase: you grab when you reach them; say what a pursuer says, never that you have them)` : custody[n].mode === 'companion' ? `YOUR PRISONER ${n}: you're going along with them, close by, wherever they walk (tell them to stay put, and mean it, to change that)` : `YOUR PRISONER ${n}: you've told them to stay; a step beyond ${custody[n].radius} squares and you go after them (the map does it)`);
         if (custody[name]?.by === n) bits.push(`you are their prisoner`);
+        // A grab or trip being rolled: she doesn't know yet how it went, and says so (never the outcome).
+        if (n === c.meta.persona.name && c.meta.pendingRoll && !c.meta.pendingRoll.autoResult) {
+            const pr = c.meta.pendingRoll;
+            if (pr.custody?.keeper === name) bits.push(pr.custody.wrench ? `${n} is wrenching against your hold THIS MOMENT and you don't know yet whether you keep it: say the struggle, never how it ends` : `you have just lunged for ${n} and don't know yet whether you have hold: say the lunge, never that you have them`);
+            else if (pr.trip?.keeper === name) bits.push(`${n} is trying to ${pr.trip.what} you THIS MOMENT and you don't know yet whether you keep your feet: say the stumble, never how it ends`);
+        }
         const r = restraintOf(conditionsOf(c.docs.world, n));
         if (r.look) bits.push(r.look === 'cage' ? 'in a cage' : r.look === 'rope' ? 'tied up' : 'cuffed');
         out.push(`${n} (${bits.join(', ')})`);
@@ -596,6 +602,9 @@ export function placeHeld(c) {
  */
 export async function setStance(c, name, stance, status = null) {
     if (!['close', 'follow', 'stay'].includes(stance)) return;
+    // The player's keeper, guarding or chasing: the custody machine moves her, and her "stay" is an order to him, not a wait of her own.
+    const rec = currentPlace(c)?.place.state.custody?.[c.meta.persona.name];
+    if (rec?.by === name && (rec.chase || rec.mode !== 'companion')) return;
     c.meta.stance ??= {};
     const before = c.meta.stance[name];
     c.meta.stance[name] = stance;

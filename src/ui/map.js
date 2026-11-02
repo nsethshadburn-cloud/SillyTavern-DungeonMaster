@@ -955,11 +955,11 @@ function showPerson(ev, c, b, who) {
         const prone = !out && cc.some(x => /^prone\b/i.test(String(x)));
         if (out) {
             // Out cold: nothing to order; see to them, or try to bring them round (the DM rules on it).
-            actions.push([`Tend to ${first}`, 'fa-hand-holding-medical', () => { closeMenu(); sendAsPlayer(`*${player} kneels by ${who}, checks ${first} is breathing and looks over the hurts.*`); }]);
-            actions.push(['Shake awake', 'fa-bell', () => { closeMenu(); sendAsPlayer(`*${player} shakes ${who} by the shoulder.* "${first}. ${first}! Wake up."`); }]);
+            actions.push([`Tend to ${first}`, 'fa-hand-holding-medical', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} kneels by ${who}, checks ${first} is breathing and looks over the hurts.*`); }]);
+            actions.push(['Shake awake', 'fa-bell', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} shakes ${who} by the shoulder.* "${first}. ${first}! Wake up."`); }]);
         } else {
-            // On the ground: a hand up (the code stands them up, no roll). Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
-            if (prone) actions.push(['Help up', 'fa-hands-helping', () => { closeMenu(); sendAsPlayer(`*${player} takes ${who} by the arm and hauls ${first} up onto ${first}'s feet.*`); }]);
+            // On the ground: a hand up (the code stands them up, no roll); from across the map, the player walks over first. Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
+            if (prone) actions.push(['Help up', 'fa-hands-helping', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} takes ${who} by the arm and hauls ${first} up onto ${first}'s feet.*`); }]);
             actions.push([`Talk to ${talkName(who)}`, 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
             actions.push(['Wait here', 'fa-hand', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.* "Wait here, ${first}. I'll be back."`); }]);
             actions.push(['Come along', 'fa-person-walking', () => { closeMenu(); sendAsPlayer(`*${player} nods to ${who}.* "Come on, ${first}. With me."`); }]);

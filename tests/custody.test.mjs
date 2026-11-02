@@ -2,7 +2,9 @@
 // its one-word parser. No model, no map: these are the rules the live code enforces.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeRecord, newRecord, onPlayerVerdict, onKeeperVerdict, stepBefore, stepAfter, afterStep, onSlip, onGrab, onTrip, freed, fromOp, PLAYER_VERDICTS, KEEPER_VERDICTS } from '../src/core/custody.js';
+import { normalizeRecord, newRecord, onPlayerVerdict, onKeeperVerdict, stepBefore, stepAfter, afterStep, stumbleStep, onSlip, onGrab, onTrip, freed, fromOp, PLAYER_VERDICTS, KEEPER_VERDICTS, STUMBLE_STEPS } from '../src/core/custody.js';
+import { standingRestraints } from '../src/core/restraints.js';
+import { REFEREE_MODEL, thinksByDefault, defaultTaskModels } from '../src/core/models.js';
 import { REFEREE_SYSTEM, playerLinePrompt, keeperLinePrompt, grabPrompt, parseWord } from '../src/core/referee.js';
 import { applyPlaceChanges } from '../src/core/explore.js';
 import { DM_RULES } from '../src/core/protocol.js';
@@ -14,6 +16,8 @@ const chasing = (extra = {}) => guard({ chase: true, attempts: 1, ...extra });
 test('a record is three facts and a counter; older fields are dropped; no mode reads as guard', () => {
     assert.deepEqual(normalizeRecord({ by: 'Judy Hopps', radius: 2, attempts: 0, mode: 'guard', escortUntil: 4, slipped: true, grace: 3, search: {}, hid: 12, lastSeen: { x: 1, y: 1 } }), guard());
     assert.deepEqual(normalizeRecord({ by: 'Judy Hopps', radius: 9, chase: true, lastGrabTurn: 3 }), guard({ radius: 6, chase: true, lastGrabTurn: 3 }));
+    assert.deepEqual(normalizeRecord({ by: 'Judy Hopps', chase: true, stumble: 2 }), guard({ chase: true, stumble: 2 }), 'off balance is kept');
+    assert.deepEqual(normalizeRecord({ by: 'Judy Hopps', stumble: 0 }), guard(), 'a spent stumble is dropped');
     assert.equal(normalizeRecord({ radius: 2 }), null);
     assert.equal(normalizeRecord(null), null);
     assert.deepEqual(newRecord('Judy Hopps'), guard());
@@ -91,6 +95,13 @@ test('a step on the map, after she moves: the chase starts, grabs, stands her up
     assert.equal(stepAfter(chasing(), { gap: 1, fromStart: 5, sees: true, keeperProne: true, turn: t }), 'standup');
     assert.equal(stepAfter(chasing(), { gap: 4, fromStart: 5, sees: false, keeperProne: false, turn: t }), 'lost');
     assert.equal(stepAfter(chasing(), { gap: 4, fromStart: 5, sees: true, keeperProne: false, turn: t }), '');
+    // Off balance after a missed grab: she stands this step, no grab even within reach; out of her sight is still lost.
+    assert.equal(stepAfter(chasing({ stumble: 2 }), { gap: 1, fromStart: 2, sees: true, keeperProne: false, turn: t, recovering: true }), '');
+    assert.equal(stepAfter(chasing({ stumble: 2 }), { gap: 3, fromStart: 3, sees: false, keeperProne: false, turn: t, recovering: true }), 'lost');
+    assert.deepEqual(stumbleStep(chasing({ stumble: 3 })), chasing({ stumble: 2 }));
+    assert.deepEqual(stumbleStep(chasing({ stumble: 1 })), chasing(), 'the last step: she\'s on her feet again');
+    assert.deepEqual(afterStep(chasing({ stumble: 2 }), 'caught'), guard(), 'caught drops it');
+    assert.deepEqual(afterStep(chasing({ stumble: 2 }), 'lost'), guard({ attempts: 1 }), 'lost drops it (the grabs she made still count)');
     assert.equal(afterStep(guard(), 'start').chase, true);
     assert.equal(afterStep(chasing(), 'lost').chase, undefined);
     assert.equal(afterStep(chasing(), 'lost').mode, 'guard', 'lost, she still means him to stay: the next step she sees is an escape again');
@@ -107,6 +118,12 @@ test('the grab and its roll: a miss is held in guard mode, a slip keeps the chas
     assert.equal(slip.held, false);
     assert.equal(slip.tries, 2);
     assert.equal(slip.rec.chase, true, 'she stays after him');
+    assert.equal(slip.rec.stumble, STUMBLE_STEPS, 'a slip leaves her off balance: the gap it buys');
+    assert.equal(onGrab(slip.rec, 9).stumble, undefined, 'the next grab, she is on her feet');
+    assert.equal(onSlip(onGrab(chasing({ stumble: 2 }), 9), false).rec.stumble, undefined);
+    assert.equal(onTrip(chasing({ stumble: 2 }), false).stumble, undefined);
+    assert.equal(onPlayerVerdict(chasing({ stumble: 2 }), 'give').rec.stumble, undefined);
+    assert.equal(onKeeperVerdict(chasing({ stumble: 2 }), 'along').rec.stumble, undefined);
     assert.equal(onSlip(chasing({ attempts: 3 }), true).exhausted, true);
 });
 
@@ -162,6 +179,25 @@ test('the referee: one word, from a short list; anything else is the "nothing" a
     assert.ok(playerLinePrompt({ keeper: 'J', player: 'A', text: 'x'.repeat(2000), mode: 'guard' }).length < 1500, 'a long line is cut');
 });
 
+test('the opening\'s standing restraints: cuffs on your wrists are cuffs; a rope on your hands is a rope; the cuffs on her belt are nothing', () => {
+    assert.deepEqual(standingRestraints('The iron cuffs are cold on your wrists. A rope runs from them to the belt of Judy Hopps.'), ['cuffed']);
+    assert.deepEqual(standingRestraints('*You test your cuffed wrists.*'), ['cuffed']);
+    assert.deepEqual(standingRestraints('Your hands are bound with coarse rope behind you.'), ['restrained (rope)']);
+    assert.deepEqual(standingRestraints('A cord bites into your wrists.'), ['restrained (rope)']);
+    assert.deepEqual(standingRestraints('A pair of cuffs hangs from her belt. You rub your wrists.'), []);
+    assert.deepEqual(standingRestraints('She rests a hand on your shoulder.'), []);
+    assert.deepEqual(standingRestraints(''), []);
+});
+
+test('the referee runs on a model that answers without thinking; a Claude 5 model in that slot gets room for the thought', () => {
+    assert.equal(REFEREE_MODEL, 'claude-haiku-4-5');
+    assert.equal(defaultTaskModels().referee, REFEREE_MODEL);
+    assert.equal(thinksByDefault('claude-haiku-5-5'), true);
+    assert.equal(thinksByDefault('claude-fable-5-1'), true);
+    assert.equal(thinksByDefault('claude-haiku-4-5'), false);
+    assert.equal(thinksByDefault(''), false);
+});
+
 test('the protocol tells the DM the three facts and what is the code\'s', () => {
     assert.ok(/The code keeps three facts and runs everything from them/.test(DM_RULES));
     assert.ok(/a referee reads each line/.test(DM_RULES));
@@ -169,4 +205,7 @@ test('the protocol tells the DM the three facts and what is the code\'s', () => 
     assert.ok(/never ask the player to roll to get away, outrun, dodge, trip, shove or twist free/.test(DM_RULES));
     assert.ok(/Walking back up to her mid-chase is being caught, no roll/.test(DM_RULES));
     assert.ok(/lost to her: the chase is off/.test(DM_RULES));
+    assert.ok(/A slip leaves her off balance/.test(DM_RULES));
+    assert.ok(/wrenching against her hold/.test(DM_RULES));
+    assert.ok(/stays hers until you end it/.test(DM_RULES));
 });
