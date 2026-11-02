@@ -15,7 +15,7 @@
 // reads the line (core/referee.js) and the verdict comes in. Everything here is a table.
 
 export const MODES = Object.freeze(['guard', 'companion']);
-export const PLAYER_VERDICTS = Object.freeze(['run', 'along', 'give', 'trip', 'none']);
+export const PLAYER_VERDICTS = Object.freeze(['run', 'along', 'give', 'trip', 'hide', 'none']);
 export const KEEPER_VERDICTS = Object.freeze(['stay', 'along', 'none']);
 export const DEFAULT_RADIUS = 2;
 /** A missed grab leaves her off balance for this many of his steps: the gap a slip buys. */
@@ -43,6 +43,7 @@ export function newRecord(by, radius = DEFAULT_RADIUS) {
  *  along: she goes along with them (companion mode; any chase is off)
  *  give:  they gave in: a chase ends and she has them (guard mode)
  *  trip:  they try to trip or shove her: the code's contest (the record is untouched until it lands)
+ *  hide:  they duck behind cover mid-chase: the code's Stealth contest (the record is untouched until it lands)
  */
 export function onPlayerVerdict(rec, verdict) {
     const r = { ...rec };
@@ -51,6 +52,7 @@ export function onPlayerVerdict(rec, verdict) {
         case 'along': { const was = r.mode === 'companion' && !r.chase; r.mode = 'companion'; delete r.chase; delete r.stumble; return { rec: r, event: was ? '' : 'along' }; }
         case 'give': { const was = Boolean(r.chase); delete r.chase; delete r.stumble; r.mode = 'guard'; r.attempts = 0; return { rec: r, event: was ? 'give' : '' }; }
         case 'trip': return { rec: r, event: 'trip' };
+        case 'hide': return { rec: r, event: 'hide' };
         default: return { rec: r, event: '' };
     }
 }
@@ -70,11 +72,12 @@ export function onKeeperVerdict(rec, verdict) {
 /**
  * The player's step on the map, before the keeper moves.
  * @param {object} rec
- * @param {{gap:number, prevGap:number, keeperProne:boolean}} s gap = squares between them after the step; prevGap = before it
- * @returns {''|'caught'} walking back into her reach mid-chase (the gap closed by his own step, she's on her feet) is being caught: no roll
+ * @param {{gap:number, prevGap:number, keeperProne:boolean, closing?:number}} s gap = squares between them after the step; prevGap = before it;
+ *  closing = squares she runs this step (0 when she's on the ground or off balance)
+ * @returns {''|'caught'} a step back toward her mid-chase that puts him where she reaches him (the gap closed by his own step, she's on her feet) is being caught: no roll
  */
-export function stepBefore(rec, { gap, prevGap, keeperProne }) {
-    return rec.chase && gap <= 1 && prevGap > gap && !keeperProne ? 'caught' : '';
+export function stepBefore(rec, { gap, prevGap, keeperProne, closing = 0 }) {
+    return rec.chase && prevGap > gap && gap - closing <= 1 && !keeperProne ? 'caught' : '';
 }
 
 /**
@@ -157,10 +160,18 @@ export function freed({ bound, grappled }) {
     return !bound && !grappled;
 }
 
-/** The DM's op: a new keeper or a re-send. Mode from the op, else kept; a chase kept unless the op says. */
+/**
+ * The DM's op: a new keeper or a re-send. Mode from the op, else kept; a chase kept unless the op
+ * says; a re-send mid-chase keeps the chase's books (grabs made, the stumble, the turn of the last
+ * grab), so the DM echoing "chase": true never hands the keeper a fresh grab or her balance back.
+ */
 export function fromOp(prev, { by, radius, mode, chase }) {
     const keep = prev?.by === by ? prev : null;
     const rec = { by, radius: Math.max(1, Math.min(6, Number(radius) || keep?.radius || DEFAULT_RADIUS)), attempts: 0, mode: mode === 'companion' || mode === 'guard' ? mode : keep?.mode === 'companion' ? 'companion' : 'guard' };
     if (chase === true || (chase !== false && keep?.chase)) rec.chase = true;
+    const going = Boolean(keep?.chase) && Boolean(rec.chase);
+    if (going) rec.attempts = keep.attempts || 0;
+    if (keep && Number.isInteger(keep.lastGrabTurn)) rec.lastGrabTurn = keep.lastGrabTurn;
+    if (going && keep.stumble > 0) rec.stumble = keep.stumble;
     return rec;
 }

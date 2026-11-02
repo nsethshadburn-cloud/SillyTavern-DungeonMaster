@@ -8,7 +8,7 @@ const quote = s => `"${String(s || '').replace(/\s+/g, ' ').trim().slice(0, 700)
 
 /**
  * What the player's line does about their keeper.
- * Words: run | along | give | trip | none
+ * Words: run | along | give | trip | hide | none
  */
 export function playerLinePrompt({ keeper, player, text, mode, chase }) {
     return [
@@ -16,11 +16,12 @@ export function playerLinePrompt({ keeper, player, text, mode, chase }) {
         `${player}'s line: ${quote(text)}`,
         '',
         `Which ONE word fits what ${player} does in that line?`,
-        `run - ${player} runs, bolts, flees, sprints or breaks away FROM ${keeper} (not walking with her, not a figure of speech like "runs a hand along")`,
-        `along - ${player} asks ${keeper} to come along, leads her somewhere, or walks on together with her`,
+        `run - ${player} runs, bolts, flees, sprints or breaks away FROM ${keeper} right now, as an action (not a boast, threat or plan about escaping later; not walking with her; not a figure of speech like "runs a hand along")`,
+        `along - ${player} asks ${keeper} to come along with him or leads her somewhere he chooses (not a question about where to go, not "lead on", not walking on alone)`,
         `give - ${player} gives in, surrenders, stops resisting, agrees to go where ${keeper} takes him`,
         `trip - ${player} trips, sweeps, shoves, tackles or throws ${keeper} down (an attempt, not a threat or a thought)`,
-        `none - anything else (talk, questions, a threat, an action that isn't about getting away from ${keeper})`,
+        `hide - ${player} hides, ducks behind cover, drops flat or goes still so as not to be seen (not running)`,
+        `none - anything else (talk, a question, a threat, a boast or a taunt, an action that isn't about getting away from ${keeper})`,
         'Word:',
     ].join('\n');
 }
@@ -35,9 +36,9 @@ export function keeperLinePrompt({ keeper, player, text, chase }) {
         quote(text),
         '',
         'Which ONE word fits what she tells him?',
-        `stay - she tells ${player} to stay put, sit, stop, not move, hold still, come back, or keeps him in place`,
-        `along - she lets ${player} walk where he likes, goes along with him, follows his lead, or calls off chasing him`,
-        'none - neither (talk, questions, feelings, a warning about something else, or "I\'m coming" while chasing him)',
+        `stay - she tells ${player} to stay put, sit, stop, not move, hold still or come back; or keeps him in place, shortens the rope, tightens her hold, or marches him on under her control ("Move.", "Walk.", "Keep up.")`,
+        `along - she lets ${player} walk where HE likes, lets him lead or choose the way, follows him, or calls off chasing him (only when she is clearly giving up control of where they go)`,
+        'none - neither (talk, questions, feelings, a warning, a taunt, a threat, or "I\'m coming" while chasing him)',
         'Word:',
     ].join('\n');
 }

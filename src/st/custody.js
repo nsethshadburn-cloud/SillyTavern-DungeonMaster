@@ -13,7 +13,8 @@ import { REFEREE_MODEL, thinksByDefault } from '../core/models.js';
 import { roll } from '../core/dice.js';
 import { lookupModifier, conditionsOf, applyStateChanges, isAway } from '../core/world.js';
 import { restraintOf } from '../core/restraints.js';
-import { floorById, computeVisible, hiddenNow, standUp, personByName, setIntent, followSteps, doorAt, setDoorState, GUARD_SIGHT, EARSHOT } from '../core/explore.js';
+import { floorById, computeVisible, hiddenNow, hideIn, standUp, personByName, setIntent, followSteps, doorAt, setDoorState, GUARD_SIGHT, EARSHOT } from '../core/explore.js';
+import { PROPS, HIDE } from '../core/grid.js';
 import { outBy } from '../core/notice.js';
 import { currentPlace, savePlace, lockedReason, setWaiting, codeRoll, droppedRoll, cancelPendingCard, passivePerceptionOf, stealthThisTurn, dangersFor } from './atlas.js';
 import { normalizeRecord, newRecord, onPlayerVerdict, onKeeperVerdict, stepBefore, stepAfter, afterStep, onSlip, onGrab, onTrip, stumbleStep, freed, PLAYER_VERDICTS, KEEPER_VERDICTS, DEFAULT_RADIUS } from '../core/custody.js';
@@ -123,9 +124,10 @@ export async function custodyOnPlayerText(c, text, { ooc = false, status = null 
         savePlace(h.key, c);
         await postNote(`🎲 You give in: that roll is off. 🔒 ${rec.by} has you (stay within ${rec.radius} squares).`);
         refresh();
-        return `${h.player} gives in to ${rec.by} (in their own words) while ${card.trip ? `their ${card.trip.what}` : 'her grab'} was being rolled: that roll is off, the chase is over and ${rec.by} has them. Narrate ${rec.by} taking hold of them and brief her; no roll.`;
+        return `${h.player} gives in to ${rec.by} (in their own words) while ${card.trip ? `their ${card.trip.what}` : card.hide ? 'their hiding' : 'her grab'} was being rolled: that roll is off, the chase is over and ${rec.by} has them. Narrate ${rec.by} taking hold of them and brief her; no roll.`;
     }
     if (event === 'trip') return tripKeeper(c, h, text);
+    if (event === 'hide') return hideFromKeeper(c, h);
     if (event === 'along') { await setMode(c, h, 'companion', `${h.player} asked ${h.rec.by} along`); return ''; }
     const wasChase = Boolean(h.rec.chase), wasMode = h.rec.mode;
     if (verdict === 'give') {
@@ -141,7 +143,7 @@ export async function custodyOnPlayerText(c, text, { ooc = false, status = null 
 /** A grab or trip card of this keeper's still waiting for the player's roll, or null. */
 function pendingCustodyCard(c, by) {
     const pr = c.meta.pendingRoll;
-    return pr && !pr.autoResult && (pr.custody?.keeper === by || pr.trip?.keeper === by) ? pr : null;
+    return pr && !pr.autoResult && (pr.custody?.keeper === by || pr.trip?.keeper === by || pr.hide?.keeper === by) ? pr : null;
 }
 
 /**
@@ -250,18 +252,24 @@ export async function onStep(c, cur, start, { runDown = null } = {}) {
     const prone = keeperProne(c, h.rec.by);
     const gap0 = far(lead, kp);
     const prevGap = start.prevGap ?? far(start, kp);
-    if (stepBefore(h.rec, { gap: gap0, prevGap, keeperProne: prone }) === 'caught') {
-        const rec = afterStep(h.rec, 'caught');
-        store(h, rec); start.prevGap = gap0; savePlace(key, c);
-        await postNote(`🔒 You walked back into ${rec.by}'s reach: caught. She has you (stay within ${rec.radius} squares).`);
-        refresh();
-        return `${player} walked back up to ${rec.by} mid-chase: caught, by the code (no roll); the chase is over and ${rec.by} has them again (GUARD mode). Narrate ${rec.by} taking hold of them and brief ${rec.by}.`;
-    }
     // Mid-chase she runs: a few squares for each of his, so the chase can be seen. Off balance after a
     // missed grab, she stands for a few of his steps instead: that's the gap a slip buys.
     const recovering = Boolean(h.rec.chase && h.rec.stumble);
+    const closing = h.rec.chase && h.companion && !prone && !recovering && runDown ? 3 : 0;
+    let ran = false;
+    // A step back toward her that puts him where she reaches him is being caught: no roll.
+    if (stepBefore(h.rec, { gap: gap0, prevGap, keeperProne: prone, closing }) === 'caught') {
+        if (closing) { runDown(closing); ran = true; }
+        if (far(lead, kp) <= 1) {
+            const rec = afterStep(h.rec, 'caught');
+            store(h, rec); start.prevGap = far(lead, kp); savePlace(key, c);
+            await postNote(`🔒 You walked back into ${rec.by}'s reach: caught. She has you (stay within ${rec.radius} squares).`);
+            refresh();
+            return `${player} walked back toward ${rec.by} mid-chase and she had them: caught, by the code (no roll); the chase is over and ${rec.by} has them again (GUARD mode). Narrate ${rec.by} taking hold of them and brief ${rec.by}.`;
+        }
+    }
     if (recovering) store(h, stumbleStep(h.rec));
-    if (h.rec.chase && h.companion && !prone && !recovering && runDown) runDown(3);
+    if (closing && !ran) runDown(closing);
     const gap = far(lead, kp);
     start.prevGap = gap;
     const sees = seesPlayer(c, place, lead, kp, player, h.rec.by, { stealth: !h.rec.chase });
@@ -401,6 +409,57 @@ async function tripKeeper(c, h, text) {
 }
 
 /**
+ * "I duck behind the boulder": mid-chase, with cover at hand, the player's Stealth against her passive
+ * Perception, on a card. Unseen, the chase is off and she stands where she is (settleHide); seen, it
+ * goes on. No chase, no card: hiding from a keeper beside you is nothing. No cover, no card either.
+ */
+async function hideFromKeeper(c, h) {
+    const { place, key, player, kp, lead } = h;
+    const by = h.rec.by;
+    if (!lead || !kp || kp.floor !== lead.floor || !h.rec.chase || !h.companion) return '';
+    if (h.rec.lastGrabTurn === c.meta.turn) return '';
+    const gap = far(lead, kp);
+    if (gap <= 1) return `${player} tries to hide from ${by}, who is right beside them: nothing to hide behind at arm's length. Say so in a line; no roll.`;
+    const props = floorById(place, lead.floor).map.props || [];
+    const cover = props.filter(p => HIDE[p.type] && lead.x >= p.x - 1 && lead.x <= p.x + (p.w || 1) && lead.y >= p.y - 1 && lead.y <= p.y + (p.h || 1)).sort((a, b) => Math.hypot(a.x - lead.x, a.y - lead.y) - Math.hypot(b.x - lead.x, b.y - lead.y))[0];
+    if (!cover) return `${player} tries to hide from ${by} with nothing to hide behind where they stand (open ground), and ${by} can see them plainly. Say so in a line; no roll. (Cover is a boulder, a bush, a tree or the like within a square of them.)`;
+    const what = cover.label || PROPS[cover.type]?.name || cover.type;
+    const dc = passivePerceptionOf(c, by);
+    const pr = { kind: 'check', skill: 'Stealth', ability: 'DEX', die: 20, dc, advantage: 'none', reason: `You duck behind the ${what} to lose ${by} (her passive Perception ${dc}). Stay unseen!`, damage: '', half: false, bonus: null, spot: null, turn: c.meta.turn, hide: { keeper: by, prop: cover.id, what } };
+    const dropped = droppedRoll(c);
+    c.meta.pendingRoll = pr;
+    store(h, { ...h.rec, lastGrabTurn: c.meta.turn });
+    const auto = settings().autoReadDice !== false ? ' (or roll with SillyTavern\'s dice: it\'s read automatically)' : '';
+    await postDiceCard(`🎲 **${player}** ducks behind the ${what} to lose **${by}** (her passive Perception **${dc}**).\n**${player}**, roll a **d20** for **Stealth (DEX)** and type the number you rolled${auto}.`, { request: pr });
+    pr.chatIndex = ST.chat.length;
+    saveMeta();
+    savePlace(key, c);
+    return `${player} ducks behind the ${what} to lose ${by} (${gap} squares off): the code rolled it as a contest (Stealth against ${by}'s passive Perception ${dc}). Don't resolve it and don't ask for a roll: narrate the dive for cover in a line, brief ${by} for the moment before she knows, and stop. Unseen, the chase is off and she stands; seen, she's still on them.${dropped}`;
+}
+
+/** The Stealth roll behind cover came in. Unseen: hidden there, the chase off, she stands where she is. Seen: the chase goes on. */
+export async function settleHide(c, pr, success) {
+    const cur = currentPlace(c);
+    if (!cur || !pr?.hide) return '';
+    const { key, place } = cur;
+    const player = c.meta.persona.name;
+    const keeper = pr.hide.keeper;
+    const raw = place.state.custody?.[player];
+    const rec = raw?.by === keeper ? normalizeRecord(raw) : null;
+    if (success) {
+        hideIn(place, player, pr.hide.prop);
+        if (rec) place.state.custody[player] = afterStep(rec, 'lost');
+        savePlace(key, c);
+        await postNote(`🔒 ${keeper} lost sight of you behind the ${pr.hide.what}: the chase is off. She stands where she is; a step out in her view and she has you in sight again.`);
+        refresh();
+        return `${player} got behind the ${pr.hide.what} and ${keeper} lost sight of them (Stealth beat her passive Perception): the chase is off, by the code, and ${keeper} stands where she is, not knowing where they went. Decide what she does (calls out, searches: move her with place_changes guards, or waits) and brief her; she doesn't see, find or hold them unless you put her where they are.`;
+    }
+    savePlace(key, c);
+    refresh();
+    return `${player} tried to hide behind the ${pr.hide.what} and ${keeper} saw exactly where they went (Stealth under her passive Perception): the chase goes on by the code. Narrate it in a line, brief ${keeper}, and stop.`;
+}
+
+/**
  * The player's roll against a grab came in. A miss: held (condition "grappled"), hers again in
  * guard mode (an arrest makes them her prisoner). A slip: loose for now; she stays after them,
  * and after three slips she can't hold them by hand. Returns the text for the DM.
@@ -486,7 +545,7 @@ export async function settleTrip(c, pr, success) {
 export async function custodyUpkeep(c = campaign()) {
     const h = held(c);
     if (!h || !h.companion || c.docs.world.combat) return '';
-    const { rec } = h;
+    const { place, rec } = h;
     const w = c.docs.world;
     const conds = conditionsOf(w, rec.by);
     if (outBy(conds) || lockedReason(c, rec.by) || place.state.pose?.[rec.by]?.pose === 'sleep') return '';

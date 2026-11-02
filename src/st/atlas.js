@@ -275,13 +275,14 @@ function peopleWith(c, place, name, pos, rm) {
         const bits = [`${dist(p)} squares ${dir(p)}`];
         if (n === c.meta.persona.name && dist(p) > 1) bits.push(dist(p) > TALK_RANGE ? 'too far for talk: only a shout carries that far, and not every turn; mostly you act, you don\'t speak' : 'too far to touch, hold, hand anything to or whisper to: you would have to go over first');
         if (place.state.held?.[n]) bits.push('held here');
-        if (custody[n]?.by === name) bits.push(custody[n].chase ? `YOUR PRISONER ${n} is getting away and you are after them (the map runs the chase: you grab when you reach them; say what a pursuer says, never that you have them)` : custody[n].mode === 'companion' ? `YOUR PRISONER ${n}: you're going along with them, close by, wherever they walk (tell them to stay put, and mean it, to change that)` : `YOUR PRISONER ${n}: you've told them to stay; a step beyond ${custody[n].radius} squares and you go after them (the map does it)`);
+        if (custody[n]?.by === name) bits.push(custody[n].chase ? custody[n].stumble ? `YOUR PRISONER ${n} just slipped your grab and you are OFF BALANCE, catching your footing: you are NOT running this moment and they have a few steps on you (the map runs the chase from here; say what a pursuer says, never that you have them)` : `YOUR PRISONER ${n} is getting away and you are after them (the map runs the chase: you grab when you reach them; say what a pursuer says, never that you have them)` : custody[n].mode === 'companion' ? `YOUR PRISONER ${n}: you're going along with them, close by, wherever they walk (tell them to stay put, and mean it, to change that)` : `YOUR PRISONER ${n}: you've told them to stay; a step beyond ${custody[n].radius} squares and you go after them (the map does it)`);
         if (custody[name]?.by === n) bits.push(`you are their prisoner`);
         // A grab or trip being rolled: she doesn't know yet how it went, and says so (never the outcome).
         if (n === c.meta.persona.name && c.meta.pendingRoll && !c.meta.pendingRoll.autoResult) {
             const pr = c.meta.pendingRoll;
             if (pr.custody?.keeper === name) bits.push(pr.custody.wrench ? `${n} is wrenching against your hold THIS MOMENT and you don't know yet whether you keep it: say the struggle, never how it ends` : `you have just lunged for ${n} and don't know yet whether you have hold: say the lunge, never that you have them`);
             else if (pr.trip?.keeper === name) bits.push(`${n} is trying to ${pr.trip.what} you THIS MOMENT and you don't know yet whether you keep your feet: say the stumble, never how it ends`);
+            else if (pr.hide?.keeper === name) bits.push(`${n} just ducked behind the ${pr.hide.what} and you don't know yet whether you still see them: say what you shout or do, never whether you have them in sight`);
         }
         const r = restraintOf(conditionsOf(c.docs.world, n));
         if (r.look) bits.push(r.look === 'cage' ? 'in a cage' : r.look === 'rope' ? 'tied up' : 'cuffed');
@@ -1663,7 +1664,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     if (!lead) return;
     if (stuck(c)) return;
     // Someone's grab is being rolled: they slip free first, or they don't; nobody walks out of a grab.
-    if (livePendingContest(c)) { toastr.info(c.meta.pendingRoll.trip ? 'Roll first: your trip or shove (type your d20, or Cancel it on the DM screen).' : 'Roll first: slip free of the grab (type your d20, or Cancel it on the DM screen).', 'Map', { timeOut: 3500 }); return; }
+    if (livePendingContest(c)) { toastr.info(c.meta.pendingRoll.trip ? 'Roll first: your trip or shove (type your d20, or Cancel it on the DM screen).' : c.meta.pendingRoll.hide ? 'Roll first: your Stealth behind cover (type your d20, or Cancel it on the DM screen).' : 'Roll first: slip free of the grab (type your d20, or Cancel it on the DM screen).', 'Map', { timeOut: 3500 }); return; }
     if (place.state.hidden?.[names[0]]) delete place.state.hidden[names[0]];
     standUp(place, names[0]);
     const { isRunning } = await import('./orchestrator.js');
@@ -2369,7 +2370,7 @@ export function cancelPendingCard(c) {
  */
 export function livePendingContest(c) {
     const pr = c.meta.pendingRoll;
-    if (!pr || !(pr.grab || pr.custody || pr.trip)) return false;
+    if (!pr || !(pr.grab || pr.custody || pr.trip || pr.hide)) return false;
     const chat = ST.chat;
     let seen = false;
     for (let i = chat.length - 1; i >= 0 && i >= chat.length - 40; i--) {
@@ -2386,7 +2387,7 @@ export function livePendingContest(c) {
 /** A roll the code itself asked for (a grab, a death save): nothing of the code's asks over it. The DM's own request doesn't stop a grab. */
 export function codeRoll(c) {
     const pr = c.meta.pendingRoll;
-    return Boolean(pr && (pr.grab || pr.custody || pr.trip || pr.death));
+    return Boolean(pr && (pr.grab || pr.custody || pr.trip || pr.hide || pr.death));
 }
 
 /** The DM's own roll request, still open when the code asks for a grab's: dropped (the grab's card takes its place), and the DM told why. */

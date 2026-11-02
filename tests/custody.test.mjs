@@ -37,6 +37,8 @@ test('the player\'s line: every verdict against every state', () => {
         [chasing(), 'give', 'guard', false, 'give'],
         [guard(), 'trip', 'guard', false, 'trip'],
         [chasing(), 'trip', 'guard', true, 'trip'],
+        [chasing(), 'hide', 'guard', true, 'hide'],
+        [guard(), 'hide', 'guard', false, 'hide'],
         [guard(), 'none', 'guard', false, ''],
         [chasing(), 'none', 'guard', true, ''],
     ];
@@ -47,7 +49,7 @@ test('the player\'s line: every verdict against every state', () => {
         assert.equal(Boolean(out.rec.chase), chase, `${state.mode}${state.chase ? '+chase' : ''} / ${verdict}: chase`);
         assert.notEqual(out.rec, state, 'never mutates the record it was given');
     }
-    assert.deepEqual(PLAYER_VERDICTS, ['run', 'along', 'give', 'trip', 'none']);
+    assert.deepEqual(PLAYER_VERDICTS, ['run', 'along', 'give', 'trip', 'hide', 'none']);
 });
 
 test('the keeper\'s line: "stay" guards, "along" lets go (a chase too), talk changes nothing', () => {
@@ -76,6 +78,11 @@ test('a step on the map, before she moves: walking back into her reach mid-chase
     assert.equal(stepBefore(chasing(), { gap: 1, prevGap: 2, keeperProne: true }), '', 'she is on the ground: nobody to walk into');
     assert.equal(stepBefore(guard(), { gap: 1, prevGap: 3, keeperProne: false }), '', 'no chase: walking up to her is just walking');
     assert.equal(stepBefore(chasing(), { gap: 2, prevGap: 3, keeperProne: false }), '');
+    // She runs three this step: a step back toward her from five squares puts him where she reaches him.
+    assert.equal(stepBefore(chasing(), { gap: 4, prevGap: 5, keeperProne: false, closing: 3 }), 'caught');
+    assert.equal(stepBefore(chasing(), { gap: 5, prevGap: 6, keeperProne: false, closing: 3 }), '', 'too far for her to reach this step');
+    assert.equal(stepBefore(chasing(), { gap: 4, prevGap: 3, keeperProne: false, closing: 3 }), '', 'a step away is never a catch');
+    assert.equal(stepBefore(chasing({ stumble: 2 }), { gap: 2, prevGap: 3, keeperProne: false, closing: 0 }), '', 'off balance, she closes nothing');
     assert.deepEqual(afterStep(chasing(), 'caught'), guard());
 });
 
@@ -138,7 +145,9 @@ test('free hands end custody; the DM\'s op keeps a chase and the mode unless it 
     assert.equal(freed({ bound: true, grappled: false }), false);
     assert.equal(freed({ bound: false, grappled: true }), false);
     assert.deepEqual(fromOp(null, { by: 'Judy Hopps' }), guard());
-    assert.deepEqual(fromOp(chasing({ radius: 3 }), { by: 'Judy Hopps' }), guard({ radius: 3, chase: true }));
+    assert.deepEqual(fromOp(chasing({ radius: 3 }), { by: 'Judy Hopps' }), guard({ radius: 3, chase: true, attempts: 1 }), 'a re-send mid-chase keeps the grabs made');
+    assert.deepEqual(fromOp(chasing({ stumble: 2, lastGrabTurn: 4 }), { by: 'Judy Hopps', chase: true }), chasing({ stumble: 2, lastGrabTurn: 4 }), 'the DM echoing the chase keeps her off balance and the grab dated');
+    assert.deepEqual(fromOp(chasing({ stumble: 2, lastGrabTurn: 4 }), { by: 'Judy Hopps', chase: false }), guard({ lastGrabTurn: 4 }), 'calling it off drops the chase\'s books, not the grab\'s date');
     assert.deepEqual(fromOp(chasing(), { by: 'Judy Hopps', mode: 'companion', chase: false }), companion());
     assert.deepEqual(fromOp(guard(), { by: 'Judy Hopps', chase: true }), guard({ chase: true }));
     assert.deepEqual(fromOp(chasing(), { by: 'Hobb' }), { by: 'Hobb', radius: 2, attempts: 0, mode: 'guard' }, 'a new keeper starts fresh');
@@ -170,13 +179,13 @@ test('the referee: one word, from a short list; anything else is the "nothing" a
     assert.equal(parseWord('nope', ['yes', 'no']), 'no');
     assert.match(REFEREE_SYSTEM, /ONE word/);
     const p = playerLinePrompt({ keeper: 'Judy Hopps', player: 'Amber', text: '*Amber bolts for the trees*', mode: 'guard', chase: false });
-    for (const w of ['run -', 'along -', 'give -', 'trip -', 'none -', 'Amber bolts for the trees', 'told Amber to stay close']) assert.ok(p.includes(w), w);
+    for (const w of ['run -', 'along -', 'give -', 'trip -', 'hide -', 'none -', 'Amber bolts for the trees', 'told Amber to stay close', 'not a boast', 'not a question about where to go']) assert.ok(p.includes(w), w);
     assert.ok(playerLinePrompt({ keeper: 'Judy Hopps', player: 'Amber', text: 'x', mode: 'companion', chase: true }).includes('is chasing Amber'));
     const k = keeperLinePrompt({ keeper: 'Judy Hopps', player: 'Amber', text: '"Stay put."', chase: false });
-    for (const w of ['stay -', 'along -', 'none -', 'Stay put']) assert.ok(k.includes(w), w);
+    for (const w of ['stay -', 'along -', 'none -', 'Stay put', 'shortens the rope', 'giving up control']) assert.ok(k.includes(w), w);
     const g = grabPrompt({ keeper: 'Judy Hopps', player: 'Amber', text: 'Judy grabs for his wrists' });
     for (const w of ['yes -', 'no -', 'grabs for his wrists']) assert.ok(g.includes(w), w);
-    assert.ok(playerLinePrompt({ keeper: 'J', player: 'A', text: 'x'.repeat(2000), mode: 'guard' }).length < 1500, 'a long line is cut');
+    assert.ok(playerLinePrompt({ keeper: 'J', player: 'A', text: 'x'.repeat(2000), mode: 'guard' }).length < 1900, 'a long line is cut');
 });
 
 test('the opening\'s standing restraints: cuffs on your wrists are cuffs; a rope on your hands is a rope; the cuffs on her belt are nothing', () => {
@@ -203,9 +212,10 @@ test('the protocol tells the DM the three facts and what is the code\'s', () => 
     assert.ok(/a referee reads each line/.test(DM_RULES));
     assert.ok(/"chase": true when she notices them gone/.test(DM_RULES));
     assert.ok(/never ask the player to roll to get away, outrun, dodge, trip, shove or twist free/.test(DM_RULES));
-    assert.ok(/Walking back up to her mid-chase is being caught, no roll/.test(DM_RULES));
     assert.ok(/lost to her: the chase is off/.test(DM_RULES));
     assert.ok(/A slip leaves her off balance/.test(DM_RULES));
     assert.ok(/wrenching against her hold/.test(DM_RULES));
     assert.ok(/stays hers until you end it/.test(DM_RULES));
+    assert.ok(/ducks behind cover mid-chase rolls Stealth/.test(DM_RULES));
+    assert.ok(/A step back toward her mid-chase that puts them where she reaches them is being caught/.test(DM_RULES));
 });

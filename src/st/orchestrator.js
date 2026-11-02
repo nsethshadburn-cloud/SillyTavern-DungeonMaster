@@ -34,7 +34,7 @@ import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } 
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
-import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, custodyFreed, custodyFromStory, boundNow, settleCustody, settleTrip } from './custody.js';
+import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, custodyFreed, custodyFromStory, boundNow, settleCustody, settleTrip, settleHide } from './custody.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
@@ -1292,6 +1292,10 @@ async function resolvePlayerRoll(c, parsed, status) {
         const settled = await settleTrip(c, pr, judged.success === true);
         if (settled) saveHurt += ` ${settled}`;
     }
+    if (pr.hide) {
+        const settled = await settleHide(c, pr, judged.success === true);
+        if (settled) saveHurt += ` ${settled}`;
+    }
     // Something the DM had break or come open on this roll (the crate, the door): now, and only on a success.
     if (pr.then?.place_changes) {
         const here = currentPlace(c);
@@ -1618,7 +1622,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
     }
     // The restraints came off this turn and nobody holds them: custody is over (both told).
-    { const freedLine = await custodyFreed(c, boundBefore).catch(error => { console.warn('[Dungeon Master] custody end failed', error); return ''; }); if (freedLine) dmOnly.push(freedLine); }
+    if (!t.place_changes?.custody) { const freedLine = await custodyFreed(c, boundBefore).catch(error => { console.warn('[Dungeon Master] custody end failed', error); return ''; }); if (freedLine) dmOnly.push(freedLine); }
     // A companion who cuffs or ties the player in the story has them in custody: the map keeps them close (the DM can say otherwise with place_changes.custody).
     if (!t.place_changes?.custody) { const nudge = await custodyFromStory(c, `${t.narration || ''} ${(t.directions || []).map(d => d.brief || '').join(' ')} ${t.scene_card ? JSON.stringify(t.scene_card) : ''}`, status).catch(error => { console.warn('[Dungeon Master] custody from the story failed', error); return ''; }); if (nudge) dmOnly.push(nudge); }
     let initiativeCard = '';
@@ -2293,7 +2297,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
-    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody || meta.pendingRoll.trip) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard || meta.pendingRoll.trip?.keeper; dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling ${meta.pendingRoll.trip ? `their ${meta.pendingRoll.trip.what} of ${k}` : `to slip free of ${k}'s grab`} (${meta.pendingRoll.skill} against ${k}'s ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A contest is being rolled: the DM\'s roll request is dropped'); }
+    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody || meta.pendingRoll.trip || meta.pendingRoll.hide) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard || meta.pendingRoll.trip?.keeper || meta.pendingRoll.hide?.keeper; dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling ${meta.pendingRoll.trip ? `their ${meta.pendingRoll.trip.what} of ${k}` : meta.pendingRoll.hide ? `Stealth to hide from ${k}` : `to slip free of ${k}'s grab`} (${meta.pendingRoll.skill} against ${k}'s ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A contest is being rolled: the DM\'s roll request is dropped'); }
     else if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;

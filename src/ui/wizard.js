@@ -236,9 +236,15 @@ async function buildCampaign(form) {
             `Combat frequency: ${form.combat}. Rules: ${form.strictness === 'loose' ? 'loose, rule of cool' : 'standard 5e'}.`,
             'The player usually plays 1-2 hours a night; a campaign may run for weeks. Plan accordingly.',
         ].filter(Boolean).join('\n');
-        const reply = await callClaude({ system: BIBLE_INSTRUCTIONS, user, task: 'campaign_design', label: 'campaign design', maxTokens: 12000, effort: 'medium' });
+        // Room for the design and for the model's thinking, which shares the same budget on the Claude 5 family.
+        const reply = await callClaude({ system: BIBLE_INSTRUCTIONS, user, task: 'campaign_design', label: 'campaign design', maxTokens: 20000, effort: 'medium' });
         const json = extractJson(reply.text);
-        if (!json?.bible || !json?.plot) throw new Error('Claude did not return a usable campaign. Try again.');
+        if (!json?.bible || !json?.plot) {
+            const text = String(reply.text || '');
+            const cut = !/[}\]]\s*$/.test(text.trim());
+            console.warn('[Dungeon Master] campaign design: no usable JSON', { chars: text.length, cutOff: cut, head: text.slice(0, 400), tail: text.slice(-400), fields: json ? Object.keys(json) : null });
+            throw new Error(`Claude did not return a usable campaign (${text.length} characters came back${cut ? ', cut off before the end' : json ? `, with ${Object.keys(json).join(', ') || 'no fields'}` : ', with no JSON in it'}). Try again.`);
+        }
         step.done(json.title || '', reply.usd);
 
         // Create the group chat (manual replies: the extension decides who speaks).
