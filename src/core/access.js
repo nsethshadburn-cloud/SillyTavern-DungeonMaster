@@ -211,3 +211,8 @@ export function accessSummary(place, partyNames, roomAtFn) {
     lines.push('Change a standing with place_changes.access ({"Amber": "public" | "all" | "none" | ["G4", "G5"] | {"allow": ["the kitchen"], "deny": [...]}}; "*" = the whole party): a guard lets them through, the host invites them in, they\'re caught and locked up.');
     return lines.join('\n');
 }
+/** The player's own words say they run (from whoever holds them): "I run", "I bolt", "Amber makes a break for the trees". Not a hand run along a wall. */
+export const RUN_WORDS = /(?<!\b(?:can|could|can't|cannot) )\b(bolts?|bolting|runs?|running|ran|sprints?|sprinting|dash(?:es|ed|ing)?|breaks? (?:free|away|loose|for it)|broke (?:free|away|loose)|makes? a (?:run|break|dash) for|flee[sd]?|fleeing|takes? off|slips? away|escapes?|gets? away|legs? it|makes? a break)\b(?!\s+(?:my|her|his|your|a|the)\s+(?:hands?|fingers?|eyes?|thumb|tongue|palm))/i;
+export function saysRun(text) {
+    return RUN_WORDS.test(String(text ?? ''));
+}

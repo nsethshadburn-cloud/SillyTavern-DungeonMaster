@@ -1526,8 +1526,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const lead = hereC.place.state.positions[player];
             // With an enemy at hand the cuffs are theirs, not a companion's: the DM says who holds the player.
             const enemyNear = lead && Object.values(hereC.place.guards).some(g => (g.hostile === true || g.intent === 'attack') && g.state !== 'dead' && g.state !== 'gone' && !g.down && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= EARSHOT);
-            const keeper = enemyNear ? null : meta.party.map(p => p.name).find(n => { const p = hereC.place.state.positions[n]; const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n) && new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(cuff|handcuff|manacle|shackl|ties|tied|tying|bind|binds|bound|rope|arrest|restrain|prisoner|custody)`, 'i').test(text); });
+            const CUFF_WORDS = 'cuff|cuffs|cuffed|handcuff|handcuffs|handcuffed|manacle|manacles|manacled|shackl\\w*|ties|tied|tying|bind|binds|bound|rope|ropes|arrest|arrests|arrested|restrain|restrains|restrained|prisoner|custody';
+            const near = n => { const p = hereC.place.state.positions[n]; return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n); };
+            const keeper = enemyNear ? null : meta.party.map(p => p.name).find(n => { const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return near(n) && (new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(?:${CUFF_WORDS})\\b`, 'i').test(text) || new RegExp(`\\b(?:${CUFF_WORDS})\\b[^.!?]{0,80}\\b${first}\\b`, 'i').test(text)); });
             if (keeper) { hereC.place.state.custody ??= {}; hereC.place.state.custody[player] = { by: keeper, radius: 2, attempts: 0 }; status.note(`${player} is ${keeper}'s prisoner (kept within 2 squares)`); savePlace(hereC.key, c); }
+            // Cuffed, a companion at hand, nobody holding them on the map: the DM says who does, or no chase can run.
+            else if (!enemyNear && meta.party.map(p => p.name).some(near)) dmOnly.push(`${player} is ${restraintOf(conditionsOf(world, player)).look === 'rope' ? 'tied' : 'cuffed'} and nobody's prisoner on the map (no CUSTODY): if a companion has them, send place_changes custody {"${player}": {"by": "<her name>", "radius": 2}} this turn, so the map keeps them together and runs any chase and grab with rolls; if nobody holds them, leave it.`);
         }
     }
     let initiativeCard = '';
@@ -2186,8 +2190,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
-    if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
-    else if (t.player_roll && meta.pendingRoll?.grab) status.note('A grab is being rolled: the DM\'s roll request waits');
+    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard; problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling to slip free of ${k}'s grab (${meta.pendingRoll.skill} against ${k}'s Athletics ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A grab is being rolled: the DM\'s roll request is dropped'); }
+    else if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { problems.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;
         if (pr.kind === 'damage') pr.die = 100;

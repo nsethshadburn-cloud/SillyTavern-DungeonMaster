@@ -1415,7 +1415,8 @@ export function wildsFromBrief(briefIn, seed = 1) {
     for (let i = 0; i < nG; i++) { const w = bandWord(brief.creatures) || pick(r, WILD_CREATURES[set]); const rm = pick(r, rooms.slice(1)); guards.push({ name: `${w} ${i + 1}`, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: true }); }
     // The land has its animals: a deer, a fox, a raven, nobody's enemy; they wander and never speak.
     for (const w of shuffle(r, FAUNA[set] ?? []).slice(0, campsite ? 1 : int(r, 1, 2))) { const rm = pick(r, rooms.slice(1)); if (!rm) break; guards.push({ name: w, description: `${article(w)} ${w.toLowerCase()}`, room: rm.id, patrol: [rm.id], hostile: false, role: 'animal', sprite: w.toLowerCase().replace(/\s+/g, '_') }); }
-    const nT = brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 0, 2);
+    // Snares and pits only where the DM's brief asks for them: the open woods (and the party's own camp) have none by chance.
+    const nT = campsite || !brief.traps || brief.traps === 'none' ? 0 : brief.traps === 'many' ? int(r, 2, 4) : int(r, 1, 2);
     for (let i = 0; i < nT; i++) pick(r, rooms.slice(1)).traps.push({ kind: pick(r, ['hunter\'s snare', 'covered pit', 'bear trap', 'tripwire (alarm bells)']), dc: int(r, 11, 14), save: 'DEX', effect: pick(r, ['caught by the ankle', '1d6 piercing, held', '2d6 falling']), hidden: true });
     return {
         name: brief.name, kind: brief.kind, wild: true, theme: set === 'other' || set === 'open' || set === 'campsite' ? 'forest' : set === 'camp' ? 'camp' : set, condition: 'worn',
