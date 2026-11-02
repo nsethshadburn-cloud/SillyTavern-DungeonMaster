@@ -1,13 +1,13 @@
-// v0.60: the cuffed chase that never came. A run in words is a run; going along is an escort; the
-// open woods have no snares by chance; the protocol says who rolls.
+// v0.60-v0.64: a run in words is a run; the open woods have no snares by chance; repeated subjects
+// are named; a sword drawn "not to attack" is no attack; a mountain pass is built as one.
+// (The keeper's words and the player's are read by the referee since v0.65: tests/custody.test.mjs.)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { saysRun, givesIn } from '../src/core/access.js';
 import { normalizeBrief, wildsFromBrief } from '../src/core/architect.js';
 import { DM_RULES } from '../src/core/protocol.js';
 import { repeatedTopics } from '../src/core/text.js';
-import { keeperWords, asksAlong, parseKeeperStance, attacksSomeone } from '../src/core/triage.js';
-import { applyPlaceChanges } from '../src/core/explore.js';
+import { attacksSomeone } from '../src/core/triage.js';
 
 test('"I run" is running; a hand run along a wall is not', () => {
     for (const s of ['I run', 'Amber runs for the trees', '*I bolt*', 'I sprint off', 'I keep running', 'I make a break for it', 'I dash into the woods', 'I take off']) assert.ok(saysRun(s), s);
@@ -31,15 +31,15 @@ test('the open woods have no snares by chance; "few" sets at least one', () => {
     assert.equal(wildsFromBrief(camp, 2).rooms.reduce((n, r) => n + r.traps.length, 0), 0, 'the party\'s own camp has no snares');
 });
 
-test('the protocol says the code rolls the chase, and a companion who grabs has custody', () => {
-    assert.ok(/never ask the player to roll to get away, outrun or dodge their keeper/.test(DM_RULES));
-    assert.ok(/when no CUSTODY is set has them: send custody that turn/.test(DM_RULES));
-    assert.ok(/tripping, shoving or striking their keeper is their own contested roll/.test(DM_RULES));
+test('the protocol says what is the code\'s: hidden traps, saying it once, the roll before its outcome', () => {
     assert.ok(/A keeper on the ground gets up before she grabs again/.test(DM_RULES));
     assert.ok(/HIDDEN TRAPS are yours alone/.test(DM_RULES));
     assert.ok(/SAY IT ONCE/.test(DM_RULES));
-    assert.ok(/searches for them by code/.test(DM_RULES));
+    assert.ok(/Custody ends by itself when the restraints are off/.test(DM_RULES));
+    assert.ok(/The dice say, and the next turn tells what came of it/.test(DM_RULES));
+    assert.ok(/A companion grabbing for the player .* is the code's contest/.test(DM_RULES));
 });
+
 test('a subject brought up in nearly every reply is named; names and one-offs never', () => {
     const replies = [
         '"Stop! There\'s a pit ahead!" *Judy lunges.*',
@@ -53,55 +53,11 @@ test('a subject brought up in nearly every reply is named; names and one-offs ne
     assert.deepEqual(repeatedTopics(['Hello there.', 'Something else entirely.', 'A third thing.']), []);
     assert.deepEqual(repeatedTopics(replies.slice(0, 2)), [], 'too few replies to call it a habit');
 });
-const openPlace = () => ({
-    name: 'Camp', kind: 'forest', floors: [{ id: 'F0', name: 'x', level: 0, map: { w: 20, h: 10, rows: Array(10).fill('.'.repeat(20)), theme: 'forest', props: [] } }],
-    rooms: {}, doors: {}, traps: {}, items: {}, guards: {}, stairs: [], exits: [], buildings: {},
-    state: { positions: { Amber: { floor: 'F0', x: 3, y: 3 }, 'Judy Hopps': { floor: 'F0', x: 2, y: 3 } }, party: ['Amber', 'Judy Hopps'], explored: {}, visited: [], floor: 'F0', built: true },
-});
 
-test('a keeper\'s words: "stay put" is guard mode, "I\'ll follow you" is companion mode, talk is neither', () => {
-    for (const s of ['"Sit down and don\'t move."', '*She plants a hand on his shoulder.* "Stay put."', '"You\'re not going anywhere, Amber."', '"Stay right there while I check the fire."']) assert.equal(keeperWords(s), 'guard', s);
-    for (const s of ['"Fine. I\'ll follow you to the fire."', '"Lead the way, then."', '"Have it your way. I\'m right behind you."', '"Let\'s go."']) assert.equal(keeperWords(s), 'companion', s);
-    for (const s of ['"Was anyone else at the counting house?"', '*Her ears droop.* "I didn\'t write the warrant."', '"There\'s a pit ahead."']) assert.equal(keeperWords(s), '', s);
-    assert.equal(parseKeeperStance('{"mode": "guard"}'), 'guard');
-    assert.equal(parseKeeperStance('{"mode": "maybe"}'), '');
-});
-
-test('the player asking their keeper along is walking together, not away', () => {
-    for (const s of ['Judy, come with me to the fire', "let's go back to camp", 'follow me']) assert.ok(asksAlong(s), s);
-    for (const s of ['I run for the trees', 'I sit by the fire', 'where is the fire?']) assert.ok(!asksAlong(s), s);
-});
-
-test('custody starts in guard mode; the DM can set companion; a re-send keeps the mode', () => {
-    const place = openPlace();
-    let log = applyPlaceChanges(place, { custody: { Amber: { by: 'Judy', radius: 2 } } });
-    assert.equal(place.state.custody.Amber.mode, 'guard', log.join(' | '));
-    assert.ok(log.some(l => /GUARD mode/.test(l)), log.join(' | '));
-    applyPlaceChanges(place, { custody: { Amber: { by: 'Judy', mode: 'companion' } } });
-    assert.equal(place.state.custody.Amber.mode, 'companion');
-    place.state.custody.Amber.chase = true;
-    applyPlaceChanges(place, { custody: { Amber: { by: 'Judy Hopps', radius: 3 } } });
-    assert.equal(place.state.custody.Amber.mode, 'companion', 'a re-send without a mode keeps it');
-    assert.equal(place.state.custody.Amber.chase, true, 'and keeps a chase');
-    assert.equal(place.state.custody.Amber.radius, 3);
-    assert.ok(/GUARD \(the keeper has told them to stay/.test(DM_RULES));
-    assert.ok(/COMPANION \(the keeper lets them walk/.test(DM_RULES));
-});
 test('drawing a sword "not to attack" is no attack; a stab is', () => {
     assert.ok(!attacksSomeone('*amber draws his short sword, not to attack, but just to show he will defend himself*'));
     assert.ok(!attacksSomeone('I raise the blade, only to warn her off'));
     assert.ok(attacksSomeone('amber uses his short sword to stab the raider right beside him'));
-    assert.ok(/Custody ends by itself when the prisoner's cuffs or ropes come off/.test(DM_RULES));
-});
-test('v0.64: her words in a chase: "back, now" guards; "I\'m coming over" lets nothing go; "lead on" still does', () => {
-    assert.equal(keeperWords('Hands where he can see them, I\'m coming over. Amber. Back. Now.'), 'guard');
-    assert.equal(keeperWords('I\'m coming over there, hold still.'), 'guard');
-    assert.equal(keeperWords('Right, I\'m coming over.', { chase: true }), '');
-    assert.equal(keeperWords('Right, I\'m coming over.'), '');
-    assert.equal(keeperWords('Fine. I\'m coming with you.'), 'companion');
-    assert.equal(keeperWords('Fine. I\'m coming with you.', { chase: true }), '');
-    assert.equal(keeperWords('Lead the way, then.', { chase: true }), 'companion');
-    assert.equal(keeperWords('Get back here!'), 'guard');
 });
 
 test('v0.64: a mountain pass is built as one (its spots, its rock), and the brief\'s hidden pit is a trap in that spot', () => {
@@ -112,6 +68,4 @@ test('v0.64: a mountain pass is built as one (its spots, its rock), and the brie
     assert.ok(!plan.rooms.some(x => /Ford|Graves|Den|Stream Pool|Shrine|Old Ruin|Edge of the Trees/.test(x.name)), plan.rooms.map(x => x.name).join(', '));
     const spot = plan.rooms.find(x => /path below/i.test(x.name));
     assert.ok(spot && spot.traps.length >= 1 && spot.traps[0].hidden, 'the pit is a hidden trap in that spot');
-    assert.ok(/The dice say, and the next turn tells what came of it/.test(DM_RULES));
-    assert.ok(/A companion grabbing for the player .* is the code's contest/.test(DM_RULES));
 });

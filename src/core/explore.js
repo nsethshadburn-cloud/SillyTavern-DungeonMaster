@@ -3,6 +3,7 @@
 // (doors, traps, items, guards). Pure module.
 
 import { PROPS, TERRAIN, HEAVY, HIDE, SEATS, terrainAt, propsAt, colName, parseCoord } from './grid.js';
+import { fromOp } from './custody.js';
 import { doorChar, ensureIds } from './layout.js';
 import { nameKey, matchName } from './text.js';
 import { lockDc } from './locks.js';
@@ -771,12 +772,10 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         const byName = String(spec.by || '').trim();
         const by = matchName(byName, (place.state.party || []).filter(n => n !== prisoner)) ?? personByName(place, byName)?.name ?? null;
         if (!by) { log.push(`⚠️ custody.${who}: nobody called "${byName}" on the map to hold them`); continue; }
-        const radius = Math.max(1, Math.min(6, Number(spec.radius) || 2));
-        // GUARD: told to stay, a step beyond the radius is an escape. COMPANION: she goes along, a walk is no escape. A re-send keeps a chase and the mode unless the op says.
-        const prev = place.state.custody[prisoner]?.by === by ? place.state.custody[prisoner] : null;
-        const mode = spec.mode === 'companion' || spec.mode === 'guard' ? spec.mode : prev?.mode ?? 'guard';
-        place.state.custody[prisoner] = { ...(prev || {}), by, radius, attempts: 0, mode };
-        log.push(`${prisoner} is ${by}'s prisoner (${mode === 'guard' ? `GUARD mode: kept within ${radius} squares, a step beyond is an escape` : 'COMPANION mode: they walk, she goes along'})`);
+        // GUARD: told to stay, a step beyond the radius is an escape. COMPANION: she goes along, a walk is no escape. A re-send keeps a chase and the mode unless the op says (core/custody.js).
+        const rec = fromOp(place.state.custody[prisoner], { by, radius: spec.radius, mode: spec.mode, chase: spec.chase });
+        place.state.custody[prisoner] = rec;
+        log.push(`${prisoner} is ${by}'s prisoner (${rec.mode === 'guard' ? `GUARD mode: kept within ${rec.radius} squares, a step beyond is an escape` : 'COMPANION mode: they walk, she goes along'}${rec.chase ? '; a chase is on' : ''})`);
     }
     // The DM's own tripwires: "when anyone comes within 4 squares of Wolf 1, tell me". Each fires once.
     if (c.triggers_clear === true) { place.state.triggers = []; log.push('triggers cleared'); }
@@ -1718,7 +1717,7 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     const room = lead ? roomAt(place, floor.id, lead.x, lead.y) : null;
     const lines = [`Current: ${floor.name} (floor ${floor.id}), ${room ? `in ${room.id} ${room.name}` : lead ? `${OUTDOOR.has(floor.map.theme) ? 'in the open' : 'in a corridor'} at ${coord(lead.x, lead.y)}` : 'position unknown'}.`];
     if (OUTDOOR.has(floor.map.theme) && st.weather && st.weather !== 'clear') lines.push(`Weather here: ${WEATHER_WORDS[st.weather] ?? st.weather}${st.weather === 'fog' ? ` (nobody sees past ${FOG_SIGHT} squares)` : st.weather === 'storm' ? ' (sound carries half as far; tracks wash out)' : st.weather === 'snow' ? ' (tracks show; slow going)' : st.weather === 'rain' ? ' (tracks wash out; torches gutter)' : ''}.`);
-    for (const [p, rec] of Object.entries(st.custody || {})) lines.push(`CUSTODY: ${p} is ${rec.by}'s prisoner, ${(rec.mode ?? 'companion') === 'companion' ? `COMPANION mode: ${rec.by} goes along with ${p} wherever ${p} walks (a walk is no escape; the player's "I run", or ${rec.by} telling ${p} to stay, changes it)` : `GUARD mode: ${rec.by} has ${p} stay within ${rec.radius} squares; a step beyond is an escape the code chases and grabs, with rolls, telling you each time (${rec.by} letting ${p} walk, or going along with ${p}, makes it companion mode)`}${rec.chase ? '. A CHASE IS ON' : ''}${rec.slipped ? `. ${p} has slipped out of ${rec.by}'s sight${(place.state.party || []).includes(rec.by) ? `; ${rec.by} is searching for them by code (don't move her, and don't have her see, find or hold them until the code says so)` : ''}` : ''}. The mode follows ${rec.by}'s own words, the player's and your narration; set it yourself with place_changes custody {"${p}": {"by": "${rec.by}", "mode": "guard" or "companion"}}, end it with {"${p}": ""}.`);
+    for (const [p, rec] of Object.entries(st.custody || {})) lines.push(`CUSTODY: ${p} is ${rec.by}'s prisoner, ${rec.mode === 'companion' ? `COMPANION mode: ${rec.by} goes along with ${p} wherever ${p} walks (a walk is no escape; "I run" from the player, or ${rec.by} telling ${p} to stay, changes it)` : `GUARD mode: ${rec.by} has ${p} stay within ${rec.radius} squares; a step beyond, in her sight, is an escape the code runs (she goes after them and grabs when she reaches them, with rolls; you're told when it starts and at the grab)`}${rec.chase ? '. A CHASE IS ON: the code moves her and rolls the grab; don\'t resolve it' : ''}. The mode follows ${rec.by}'s own words and the player's (a referee reads them) and your op: place_changes custody {"${p}": {"by": "${rec.by}", "mode": "guard" or "companion", "chase": true to set her after them}}; end it with {"${p}": ""}.`);
     for (const [p, k] of Object.entries(st.kept || {})) lines.push(`KEPT: ${p} can't leave ${place.name}: ${k.by}${k.why ? ` (${k.why})` : ''} won't let them (the code stops them at the way out and sends the nearest of the place's people after them, with rolls; you're told). End it with place_changes kept {"${p}": ""}.`);
     if (st.triggers?.length) lines.push(`YOUR TRIGGERS (each tells you once when any party member comes within reach): ${st.triggers.map(t => `${t.id} within ${t.radius} of ${t.near}: "${t.note}"`).join('; ')}.`);
     lines.push(`This floor's map is ${floor.map.w} by ${floor.map.h} squares (a1 to ${coord(floor.map.w - 1, floor.map.h - 1)}); the edge of the map is the edge of this place.`);

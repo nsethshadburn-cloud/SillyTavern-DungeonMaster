@@ -22,18 +22,19 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, companionGrabsPlayer, keeperTurn, settleTrip, talkRange, setCustodyMode, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
-import { keeperWords, keeperStancePrompt, parseKeeperStance, ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
+import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, settleCustody, settleTrip } from './custody.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
@@ -315,14 +316,12 @@ async function turnBody(c, opts, status, signal) {
     if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
         const climbed = peekMapAction() ? '' : await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
         if (climbed) { events.push(climbed); status.note('Climbed into the wagon'); }
-        const bolt = await custodyBolt(c, playerText).catch(error => { console.warn('[Dungeon Master] custody chase failed', error); return ''; });
-        if (bolt) { events.push(bolt); status.note('The chase is on'); }
     }
-    // "((Judy tries to grab Amber and cuff him again))": a companion taking hold of the player is the code's contest; "Amber hauls Judy to her feet" stands her up (no roll).
+    // Held by a companion: the referee reads the line (run, along, give in, trip) and the code does it; "((Judy tries to grab Amber))" is her contest; "Amber hauls Judy to her feet" stands her up.
     if (!autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
-        const held = await companionGrabsPlayer(c, playerText).catch(error => { console.warn('[Dungeon Master] companion grab failed', error); return ''; });
-        if (held) { events.push(held); status.note('A grab is being rolled'); }
-        await playerHelpsUp(c, playerText, status).catch(error => console.warn('[Dungeon Master] help up failed', error));
+        const held = await custodyOnPlayerText(c, playerText, { ooc: Boolean(triage.ooc), status }).catch(error => { console.warn('[Dungeon Master] custody failed', error); return ''; });
+        if (held) events.push(held);
+        if (!triage.ooc) await playerHelpsUp(c, playerText, status).catch(error => console.warn('[Dungeon Master] help up failed', error));
     }
     if (triage.thing && actsOnThing && !peekMapAction() && !autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
         const actor = triage.task?.who || meta.persona.name;
@@ -362,7 +361,7 @@ async function turnBody(c, opts, status, signal) {
         const hunt = await huntersTurn(c, { still, fleeing: readsAsRunning(playerText) });
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
         // A companion keeper gets up, or searches for the prisoner who slipped her.
-        const kept = await keeperTurn(c).catch(error => { console.warn('[Dungeon Master] keeper turn failed', error); return ''; });
+        const kept = await custodyUpkeep(c).catch(error => { console.warn('[Dungeon Master] custody upkeep failed', error); return ''; });
         if (kept) placeEvent = [placeEvent, kept].filter(Boolean).join(' ');
         await playMoves(c);
     }
@@ -475,7 +474,7 @@ async function turnBody(c, opts, status, signal) {
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
         // A companion taking hold of the player in the narration, with no roll asked: the code's contest (a card), never a narrated outcome.
         if (!result.turn.player_roll && !result.turn.start_combat && !c.docs.world.combat && mapsOn() && !signal.aborted) {
-            const held = await companionGrabsPlayer(c, result.turn.narration || '').catch(error => { console.warn('[Dungeon Master] companion grab failed', error); return ''; });
+            const held = await custodyOnNarration(c, result.turn.narration || '', status).catch(error => { console.warn('[Dungeon Master] companion grab failed', error); return ''; });
             if (held) { noteMapAction(c, held); status.note('A grab is being rolled'); }
         }
         // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
@@ -644,7 +643,7 @@ async function movedTurn(c, status, signal) {
         if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
         const hunt = await huntersTurn(c);
         if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
-        const kept = await keeperTurn(c).catch(error => { console.warn('[Dungeon Master] keeper turn failed', error); return ''; });
+        const kept = await custodyUpkeep(c).catch(error => { console.warn('[Dungeon Master] custody upkeep failed', error); return ''; });
         if (kept) placeEvent = [placeEvent, kept].filter(Boolean).join(' ');
         await playMoves(c);
     }
@@ -1083,29 +1082,11 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
     }
 }
 
-/**
- * A keeper's own reply sets how she holds her prisoner: letting them walk or going along (companion
- * mode), or telling them to stay, sit, stop (guard mode). Her words first; the helper when they don't say.
- */
+
+/** A keeper's own reply sets how she holds her prisoner (the referee reads it): "stay put" is guard mode, "lead on" is companion mode. */
 async function companionKeeps(c, name, status, signal) {
-    const here = currentPlace(c);
-    const player = c.meta.persona.name;
-    const rec = here?.place.state.custody?.[player];
-    if (!rec || rec.by !== name || c.docs.world.combat) return;
-    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
-    if (!msg?.mes) return;
-    let mode = keeperWords(msg.mes, { chase: Boolean(rec.chase) });
-    const s = settings();
-    // The helper reads only her relenting (guard to companion), never the other way: a wrong "guard" starts chases out of nothing, and "stay put" is said plainly enough for the words to catch.
-    if (!mode && s.useHelper && (rec.mode ?? 'companion') === 'guard' && !rec.chase && !signal?.aborted) {
-        try {
-            const { system, user } = keeperStancePrompt({ keeper: name, prisoner: player, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '' });
-            mode = parseKeeperStance(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 40, profileId: s.helperProfileId })) === 'companion' ? 'companion' : '';
-        } catch (error) {
-            console.warn('[Dungeon Master] keeper stance check failed', error);
-        }
-    }
-    if (mode && await setCustodyMode(c, player, mode, `${name}'s words`)) status.note(`${name}: ${mode === 'guard' ? 'stay put' : 'goes along'}`);
+    if (signal?.aborted) return;
+    await custodyOnKeeperReply(c, name, status);
 }
 
 /** "Wait here, Judy. I'll be back" (the player's words, or the map's menu) and no refusal in her reply: she stays. Her own words still rule a refusal. */
@@ -1910,25 +1891,24 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 for (const [id, v] of Object.entries(t.place_changes.doors || {})) { const st = String((v && typeof v === 'object' ? v.state : v) || '').toLowerCase(); if (/^(broken|smashed|open|opened|unlocked|forced)$/.test(st)) { (held.doors ??= {})[id] = v; delete t.place_changes.doors[id]; } }
                 if (Object.keys(held).length) { t.player_roll.then = { place_changes: held }; status.note('The map waits for the roll before anything breaks open'); }
             }
-            const heldBefore = Object.keys(place.state.custody || {});
+            const me = meta.persona.name;
+            const before = place.state.custody?.[me] ? `${place.state.custody[me].by}|${place.state.custody[me].mode}|${Boolean(place.state.custody[me].chase)}` : '';
             const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: withAt(stealthOf(meta), place) });
             if (log.length) status.note(`Map: ${log.join(', ')}`);
-            // The DM ended a custody (she's down, she let go): the player sees it, as they see every other change of hands.
-            for (const p of heldBefore) if (!place.state.custody?.[p] && p === meta.persona.name) await postNote(`🔓 Nobody holds you now (the DM's call): walk where you like until someone takes you again.`);
+            // The DM changed who holds the player, or how (she's down, she let go, she's told them to stay): the player sees it, as they see every other change of hands.
+            const now = place.state.custody?.[me];
+            const after = now ? `${now.by}|${now.mode}|${Boolean(now.chase)}` : '';
+            if (before !== after) {
+                if (!now) await postNote(`🔓 Nobody holds you now (the DM's call): walk where you like until someone takes you again.`);
+                else if (now.chase) await postNote(`🔒 ${now.by} is after you (the DM's call): she grabs when she reaches you.`);
+                else if (now.mode === 'companion') await postNote(`🚶 ${now.by} goes along with you (the DM's call): walk where you like; "I run" is the only run.`);
+                else await postNote(`🔒 ${now.by} has you${before ? ' stay put' : ''} (the DM's call): a step beyond ${now.radius} squares is an escape.`);
+            }
             problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
             syncMounts(place);
         }
         // Riders the story got down from their horses without the DM sending ride "".
         for (const who of dismountsInText(place, `${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`)) status.note(`${who} dismounts (from the story)`);
-        // The keeper leading the way in the story (marching, escorting, dragging): a few turns of escort, no challenge for walking with them.
-        for (const [p, rec] of Object.entries(place.state.custody || {})) {
-            const first = rec.by.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const story = `${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`;
-            if (new RegExp(`\\b${first}\\b[^.!?]{0,60}\\b(?:leads?|leading|led|march(?:es|ing|ed)?|escorts?|escorting|walks? (?:him|her|them)|takes? (?:him|her|them)|drags?|hauls?|steers?|guides?|brings? (?:him|her|them))\\b`, 'i').test(story)) { rec.escortUntil = meta.turn + 3; status.note(`${rec.by} leads ${p}: an escort for a few turns`); }
-            // Her telling them to stay, or falling in beside them, in the story: the mode follows.
-            if (new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(?:orders?|tells?|told|warns?|snaps?|makes?)\\b[^.!?]{0,40}\\b(?:stay|sit|stop|not to move|don'?t move|still|down)\\b`, 'i').test(t.narration || '')) await setCustodyMode(c, p, 'guard', `${rec.by}'s order`);
-            else if (new RegExp(`\\b${first}\\b[^.!?]{0,60}\\b(?:falls? in(?:to step)? (?:beside|behind|with)|walks? (?:beside|alongside|with|behind)|follows?|keeps? pace with|lets? (?:him|her|them) (?:walk|go|lead))\\b`, 'i').test(t.narration || '')) await setCustodyMode(c, p, 'companion', `${rec.by} goes along`);
-        }
         // The player gave in: a guard takes them, no guard attacks them for it.
         if (!world.combat && playerGivesIn(lastPlayerMessage())) {
             for (const [n, raw] of Object.entries(t.place_changes?.guards || {})) {

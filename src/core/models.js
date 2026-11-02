@@ -40,6 +40,7 @@ export const TASKS = Object.freeze([
     { key: 'manual', group: 'Everyday play', label: 'When you ask the DM to step in', main: false },
     { key: 'solo', group: 'Everyday play', label: 'Your moments with no companion around', main: false },
     { key: 'explore', group: 'Everyday play', label: 'Exploring a map (traps, guards spotted)', main: false },
+    { key: 'referee', group: 'Everyday play', label: 'The referee: one-word rulings on who holds whom (run, stay, give in; Haiku is plenty)', main: false },
     { key: 'map_sync', group: 'Housekeeping', label: 'Keeping the map in step with the story (when the local helper is off)', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
