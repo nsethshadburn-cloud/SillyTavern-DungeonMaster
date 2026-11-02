@@ -16,7 +16,7 @@ const make = (w = 20, h = 12) => ({
 test('custody: the DM names the keeper (a companion or someone of the place), the view says so, "" ends it', () => {
     const place = make();
     let log = applyPlaceChanges(place, { custody: { Amber: { by: 'Judy', radius: 2 } } });
-    assert.deepEqual(place.state.custody.Amber, { by: 'Judy Hopps', radius: 2, attempts: 0 }, log.join('\n'));
+    assert.deepEqual(place.state.custody.Amber, { by: 'Judy Hopps', radius: 2, attempts: 0, mode: 'guard' }, log.join('\n'));
     assert.ok(/CUSTODY: Amber is Judy Hopps's prisoner/.test(String(placeView(place, ['Amber', 'Judy Hopps']))));
     log = applyPlaceChanges(place, { custody: { Amber: 'Nobody Here' } });
     assert.ok(log.some(l => /⚠️ custody\.Amber/.test(l)) && place.state.custody.Amber.by === 'Judy Hopps', 'an unknown keeper changes nothing');

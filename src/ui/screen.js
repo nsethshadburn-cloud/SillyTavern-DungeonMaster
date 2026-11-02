@@ -151,9 +151,16 @@ export function renderScreen() {
         saveMeta();
         renderScreen();
     });
-    panel.querySelector('#dm-scr-cancel-roll')?.addEventListener('click', () => {
+    panel.querySelector('#dm-scr-cancel-roll')?.addEventListener('click', async () => {
+        // The card in the chat keeps the request too (the dice watcher recovers it from there): mark it cancelled, or it comes straight back.
+        const chat = ST.chat;
+        for (let i = chat.length - 1; i >= 0 && i >= chat.length - 12; i--) {
+            const req = chat[i]?.extra?.dungeon_master?.request;
+            if (req && !req.autoResult) req.cancelled = true;
+        }
         m.pendingRoll = null;
         saveMeta();
+        try { await ST.saveChat(); } catch { /* the chat saves with the next message anyway */ }
         renderScreen();
     });
     panel.querySelectorAll('[data-file]').forEach(el => el.addEventListener('click', () => openDoc(el.getAttribute('data-file'))));

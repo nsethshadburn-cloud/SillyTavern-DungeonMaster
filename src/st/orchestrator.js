@@ -22,13 +22,13 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, keeperTurn, settleTrip, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, settleCustody, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, custodyBolt, keeperTurn, settleTrip, talkRange, setCustodyMode, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
 import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
+import { keeperWords, keeperStancePrompt, parseKeeperStance, ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
@@ -1055,6 +1055,30 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
     }
 }
 
+/**
+ * A keeper's own reply sets how she holds her prisoner: letting them walk or going along (companion
+ * mode), or telling them to stay, sit, stop (guard mode). Her words first; the helper when they don't say.
+ */
+async function companionKeeps(c, name, status, signal) {
+    const here = currentPlace(c);
+    const player = c.meta.persona.name;
+    const rec = here?.place.state.custody?.[player];
+    if (!rec || rec.by !== name || c.docs.world.combat) return;
+    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
+    if (!msg?.mes) return;
+    let mode = keeperWords(msg.mes);
+    const s = settings();
+    if (!mode && s.useHelper && !signal?.aborted) {
+        try {
+            const { system, user } = keeperStancePrompt({ keeper: name, prisoner: player, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '' });
+            mode = parseKeeperStance(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 40, profileId: s.helperProfileId }));
+        } catch (error) {
+            console.warn('[Dungeon Master] keeper stance check failed', error);
+        }
+    }
+    if (mode && await setCustodyMode(c, player, mode, `${name}'s words`)) status.note(`${name}: ${mode === 'guard' ? 'stay put' : 'goes along'}`);
+}
+
 /** "Judy rises from the grass": a companion on the ground whose hands are free gets up by their own words (no roll); cuffed, caged or held, they need the roll. */
 async function companionGetsUp(c, name, status) {
     const w = c.docs.world;
@@ -1104,6 +1128,7 @@ async function localReplies(c, triage, playerText, status, signal) {
             step.done();
             await companionDrinks(c, sp, status);
             await companionGetsUp(c, sp, status);
+            await companionKeeps(c, sp, status, signal);
             await companionMovesOnMap(c, sp, status, signal);
         } catch (error) {
             step.fail(error);
@@ -1559,7 +1584,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const CUFF_WORDS = 'cuff|cuffs|cuffed|handcuff|handcuffs|handcuffed|manacle|manacles|manacled|shackl\\w*|ties|tied|tying|bind|binds|bound|rope|ropes|arrest|arrests|arrested|restrain|restrains|restrained|prisoner|custody';
             const near = n => { const p = hereC.place.state.positions[n]; return p && lead && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 3 && !isAway(world, n); };
             const keeper = enemyNear ? null : meta.party.map(p => p.name).find(n => { const first = n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return near(n) && (new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(?:${CUFF_WORDS})\\b`, 'i').test(text) || new RegExp(`\\b(?:${CUFF_WORDS})\\b[^.!?]{0,80}\\b${first}\\b`, 'i').test(text)); });
-            if (keeper) { hereC.place.state.custody ??= {}; hereC.place.state.custody[player] = { by: keeper, radius: 2, attempts: 0 }; status.note(`${player} is ${keeper}'s prisoner (kept within 2 squares)`); savePlace(hereC.key, c); }
+            if (keeper) { hereC.place.state.custody ??= {}; hereC.place.state.custody[player] = { by: keeper, radius: 2, attempts: 0, mode: 'guard' }; status.note(`${player} is ${keeper}'s prisoner (kept within 2 squares)`); savePlace(hereC.key, c); }
             // Cuffed, a companion at hand, nobody holding them on the map: the DM says who does, or no chase can run.
             else if (!enemyNear && meta.party.map(p => p.name).some(near)) dmOnly.push(`${player} is ${restraintOf(conditionsOf(world, player)).look === 'rope' ? 'tied' : 'cuffed'} and nobody's prisoner on the map (no CUSTODY): if a companion has them, send place_changes custody {"${player}": {"by": "<her name>", "radius": 2}} this turn, so the map keeps them together and runs any chase and grab with rolls; if nobody holds them, leave it.`);
         }
@@ -1836,7 +1861,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // The keeper leading the way in the story (marching, escorting, dragging): a few turns of escort, no challenge for walking with them.
         for (const [p, rec] of Object.entries(place.state.custody || {})) {
             const first = rec.by.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            if (new RegExp(`\\b${first}\\b[^.!?]{0,60}\\b(?:leads?|leading|led|march(?:es|ing|ed)?|escorts?|escorting|walks? (?:him|her|them)|takes? (?:him|her|them)|drags?|hauls?|steers?|guides?|brings? (?:him|her|them))\\b`, 'i').test(`${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`)) { rec.escortUntil = meta.turn + 3; status.note(`${rec.by} leads ${p}: an escort for a few turns`); }
+            const story = `${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`;
+            if (new RegExp(`\\b${first}\\b[^.!?]{0,60}\\b(?:leads?|leading|led|march(?:es|ing|ed)?|escorts?|escorting|walks? (?:him|her|them)|takes? (?:him|her|them)|drags?|hauls?|steers?|guides?|brings? (?:him|her|them))\\b`, 'i').test(story)) { rec.escortUntil = meta.turn + 3; status.note(`${rec.by} leads ${p}: an escort for a few turns`); }
+            // Her telling them to stay, or falling in beside them, in the story: the mode follows.
+            if (new RegExp(`\\b${first}\\b[^.!?]{0,80}\\b(?:orders?|tells?|told|warns?|snaps?|makes?)\\b[^.!?]{0,40}\\b(?:stay|sit|stop|not to move|don'?t move|still|down)\\b`, 'i').test(t.narration || '')) await setCustodyMode(c, p, 'guard', `${rec.by}'s order`);
+            else if (new RegExp(`\\b${first}\\b[^.!?]{0,60}\\b(?:falls? in(?:to step)? (?:beside|behind|with)|walks? (?:beside|alongside|with|behind)|follows?|keeps? pace with|lets? (?:him|her|them) (?:walk|go|lead))\\b`, 'i').test(t.narration || '')) await setCustodyMode(c, p, 'companion', `${rec.by} goes along`);
         }
         // The player gave in: a guard takes them, no guard attacks them for it.
         if (!world.combat && playerGivesIn(lastPlayerMessage())) {
@@ -2287,6 +2316,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             step.done();
             await companionDrinks(c, speaker, status);
             await companionGetsUp(c, speaker, status);
+            await companionKeeps(c, speaker, status, signal);
             await companionMovesOnMap(c, speaker, status, signal);
         } catch (error) {
             step.fail(error);

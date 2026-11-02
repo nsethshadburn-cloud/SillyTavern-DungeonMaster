@@ -349,3 +349,42 @@ export function isEndTurn(text) {
     const s = String(text || '').trim().replace(/^[*_("\s]+|[*_)".!\s]+$/g, '').toLowerCase();
     return /^(?:(?:i|i'll|ill)\s+)?(?:end|pass|finish)(?:\s+my)?\s+turn$|^(?:that'?s|thats)\s+(?:my|it for my|the end of my)\s+turn$|^end of (?:my )?turn$|^(?:done|i'm done|im done|next)$/.test(s);
 }
+// ---------- a keeper and her prisoner: guard or companion ----------
+
+/** "Stay put", "sit down", "don't move": the keeper has her prisoner stay. */
+const KEEPER_GUARD = /\b(?:stay (?:put|there|where you are|right there|here|still|down|on the ground)|don'?t (?:you )?(?:move|get up|take another step)|not (?:going|moving) anywhere|you'?re not (?:going|leaving|moving|getting up)|sit (?:down|still|there|tight)|hold still|stop right there|not another step|on your knees|keep still|you stay|stay close|don'?t wander)\b/i;
+/** "I'll follow you", "lead the way", "let's go": the keeper lets her prisoner walk, or goes along. */
+const KEEPER_LET = /\b(?:i'?ll (?:follow|come|go|walk|keep up|be with|be right behind|stick with) (?:with |after |behind |beside )?you|lead (?:the way|on)|after you|let'?s go|come on,? then|go (?:on|ahead)(?:,? i'?m)?|(?:right )?behind you|i'?m (?:coming|following|with you|right here)|we(?:'?ll)? (?:go|walk) together|walk,? then|fine,? (?:go|walk|lead|move|come on)|have it your way)\b/i;
+
+/** What a keeper's own reply means for her prisoner: 'guard' (stay put), 'companion' (she lets them walk, or comes along), or '' (nothing said). */
+export function keeperWords(message) {
+    const t = String(message ?? '').replace(/[*_~`]/g, ' ');
+    if (KEEPER_GUARD.test(t)) return 'guard';
+    if (KEEPER_LET.test(t)) return 'companion';
+    return '';
+}
+
+/** The player asks their keeper along ("come with me", "follow me", "let's go to the fire"): walking together, not away. */
+export function asksAlong(text) {
+    return /\b(?:come (?:with me|along|on)|follow me|let'?s (?:go|walk|head|move)|walk with me|with me,? (?:now|then|come)|lead the way|you coming\?)\b/i.test(String(text ?? '').replace(/[*_~`]/g, ' '));
+}
+
+/** Ask the helper what the keeper's reply means when her words don't say outright. */
+export function keeperStancePrompt({ keeper, prisoner, message, scene }) {
+    const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
+    const user = [
+        `Scene: ${scene || 'unknown'}`,
+        `${keeper} holds ${prisoner} as a prisoner (cuffed or tied), and goes where ${prisoner} goes only if ${keeper} chooses to. ${keeper} just wrote:`,
+        message,
+        '',
+        `Going by this reply only: does ${keeper} now let ${prisoner} walk about, or agree to go along with ${prisoner} wherever ${prisoner} is going ("companion")? Or does ${keeper} tell ${prisoner} to stay put, sit, stop or not move, or hold ${prisoner} in place ("guard")? If the reply says neither (talk, questions, feelings, a warning about something else), "".`,
+        'JSON: {"mode": "companion, guard or empty"}',
+    ].join('\n');
+    return { system, user };
+}
+
+export function parseKeeperStance(text) {
+    const data = extractJson(text) || {};
+    const m = String(data.mode ?? '').trim().toLowerCase();
+    return m === 'guard' || m === 'companion' ? m : '';
+}

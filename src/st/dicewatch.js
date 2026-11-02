@@ -31,7 +31,7 @@ export function scan() {
             const dm = chat[i]?.extra?.dungeon_master;
             if (!dm) continue;
             if (dm.roll || dm.combat) break;
-            if (dm.request && !dm.request.autoResult && Number.isInteger(dm.request.chatIndex)) { c.meta.pendingRoll = { ...dm.request }; chat[i].extra.dungeon_master.request = c.meta.pendingRoll; console.info('[Dungeon Master] roll request recovered from the chat'); break; }
+            if (dm.request && !dm.request.autoResult && !dm.request.cancelled && Number.isInteger(dm.request.chatIndex)) { c.meta.pendingRoll = { ...dm.request }; chat[i].extra.dungeon_master.request = c.meta.pendingRoll; console.info('[Dungeon Master] roll request recovered from the chat'); break; }
         }
     }
     const pr = c.meta.pendingRoll;
