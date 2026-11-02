@@ -659,7 +659,7 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
     }
     // Things put on the ground on purpose (a knife a few squares off): real items, a pouch on the map, taken with a tap.
     for (const raw of Array.isArray(c.add_items) ? c.add_items : []) {
-        const name = String(raw?.name || '').trim().slice(0, 60);
+        const name = String(raw?.name || '').trim().replace(/^(?:a|an|the|some|one)\s+/i, '').slice(0, 60);
         if (!name) { log.push('⚠️ add_items: each needs a "name"'); continue; }
         let at = null, floorId = floor;
         const where = raw.at ?? raw.square ?? raw.near ?? raw.room;
@@ -689,8 +689,11 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
             const leadPos = place.state?.positions?.[place.state?.party?.[0]];
             const where = raw.at ?? raw.square ?? raw.room ?? (g ? { floor: g.floor, x: g.x, y: g.y } : leadPos ? { floor: leadPos.floor, x: leadPos.x, y: leadPos.y } : null);
             const info = { description: raw.description, hostile: raw.hostile === true };
+            if (!g && atCapacity(place)) { log.push(`⚠️ guards.${name}: ${place.name} can take no more newcomers (${NEWCOMER_MAX} since it was built): nobody else arrives here; escalate through the story (the alarm, time, what waits outside)`); continue; }
             g = where ? placePerson(place, name, where, { floor, info, arrive: true }) : null;
-            if (!g) { log.push(`⚠️ guards.${name}: couldn't place them (no square or room given)`); continue; }
+            if (!g) { log.push(`⚠️ guards.${name}: couldn't place them (${where ? `"${typeof where === 'object' ? coord(where.x, where.y) : where}" is no square or room of this map` : 'no square or room given'})`); continue; }
+            // A wolf, a bandit, a guard with no numbers from the DM: the usual ones, so a tap shows HP and AC and a fight has them.
+            if (!g.hp_max && (g.hostile || /\b(?:guard|warrior|hunter|sentry|soldier|raider|bandit)\b/i.test(g.name))) { const cs = creatureStats(`${g.name} ${g.description || ''}`); if (cs) { g.hp = cs.hp; g.hp_max = cs.hp; g.ac = cs.ac; } }
             if (raw.description) g.description = String(raw.description).slice(0, 240);
             if (typeof raw.hostile === 'boolean') g.hostile = raw.hostile;
             // A horse (or anyone) the DM gives numbers to keeps them for when a fight starts.
@@ -711,6 +714,12 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
             continue;
         }
         const v = String(raw).trim();
+        // An order for someone not on the map yet ("Wolf 1": "stalking", "Grukkin Sentry": "asleep"): they come in from the edge, with that order.
+        if (!g && /^(hunting|chasing|attacking|attack|stalk|stalking|shadowing|following|follow|hold|holding|guarding|alert|fleeing|flee|asleep|sleeping)$/i.test(v) && !looksLikeThing(name) && !matchName(name, place.state?.party || []) && !isFallen(place, name)) {
+            const leadPos = place.state?.positions?.[place.state?.party?.[0]];
+            if (atCapacity(place)) { log.push(`⚠️ guards.${name}: not on the map, and ${place.name} can take no more newcomers (${NEWCOMER_MAX})`); continue; }
+            if (leadPos) { g = placePerson(place, name, { floor: leadPos.floor, x: leadPos.x, y: leadPos.y }, { floor, info: { hostile: /hunt|chas|attack|stalk|shadow/i.test(v) }, arrive: true }); if (g) { log.push(`${g.name} (new) comes in at ${coord(g.x, g.y)}`); const cs = creatureStats(g.name); if (cs && !g.hp_max) { g.hp = cs.hp; g.hp_max = cs.hp; g.ac = cs.ac; } } }
+        }
         const dead = g?.state === 'dead';
         const wake = () => { if (g) { delete g.down; delete g.sleeper; } };
         if (/^(gone|left|removed|vanished|carried (away|off)|taken away)$/i.test(v)) { if (g) g.state = 'gone'; }
@@ -731,8 +740,9 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         else if (/^(calm|patrol|patrolling|stay|staying)$/i.test(v)) { if (g) { g.state = 'patrol'; setIntent(g, /^stay/i.test(v) ? 'stay' : ''); } }
         else {
             // A square or a room: move them there (someone new appears there).
+            if (!g && atCapacity(place)) { log.push(`⚠️ guards.${name}: ${place.name} can take no more newcomers (${NEWCOMER_MAX} since it was built)`); continue; }
             g = placePerson(place, name, v, { floor, arrive: true });
-            if (!g) { log.push(`⚠️ guards.${name}: couldn't place them at ${v}`); continue; }
+            if (!g) { log.push(`⚠️ guards.${name}: couldn't place them at "${v}" (no such square or room on this map)`); continue; }
         }
         if (g) log.push(`${g.name}: ${v}`);
         else log.push(`⚠️ guards.${name}: nobody by that name on the map`);
@@ -1055,7 +1065,7 @@ export function findRoom(place, ref) {
 }
 
 /** Words that name a thing, not a someone: items, furniture, food, light. */
-const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p => p.name), ...Object.keys(PROPS)].flatMap(n => String(n).toLowerCase().split(/[^a-z]+/)).filter(w => w.length > 2 && !['the', 'and', 'wall', 'known', 'great', 'old', 'fallen'].includes(w))), 'tin', 'oil', 'lamp', 'lantern', 'key', 'keys', 'bottle', 'flask', 'vial', 'potion', 'scroll', 'book', 'books', 'coin', 'coins', 'gold', 'sword', 'dagger', 'bow', 'arrow', 'arrows', 'shield', 'bag', 'pouch', 'box', 'ring', 'amulet', 'necklace', 'letter', 'note', 'notes', 'map', 'rope', 'torch', 'candle', 'bread', 'food', 'meat', 'cheese', 'apple', 'wine', 'ale', 'water', 'gem', 'gems', 'jewel', 'jewels', 'ledger', 'journal', 'diary', 'lockpick', 'lockpicks', 'tools', 'kit', 'cloak', 'boots', 'gloves', 'hat', 'coat', 'armor', 'armour', 'helmet', 'blanket', 'pillow', 'plate', 'cup', 'mug', 'bucket', 'shovel', 'pick', 'hammer', 'nails', 'chain', 'chains', 'lock', 'door', 'window', 'floor', 'stairs', 'wall', 'item', 'items', 'thing', 'things', 'supplies', 'rations', 'tinderbox', 'matches', 'crowbar', 'mirror'].join('|')})\\b`, 'i');
+const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p => p.name), ...Object.keys(PROPS)].flatMap(n => String(n).toLowerCase().split(/[^a-z]+/)).filter(w => w.length > 2 && !['the', 'and', 'wall', 'known', 'great', 'old', 'fallen'].includes(w))), 'tin', 'oil', 'lamp', 'lantern', 'key', 'keys', 'bottle', 'flask', 'vial', 'potion', 'scroll', 'book', 'books', 'coin', 'coins', 'gold', 'sword', 'dagger', 'bow', 'arrow', 'arrows', 'shield', 'bag', 'pouch', 'box', 'ring', 'amulet', 'necklace', 'letter', 'note', 'notes', 'map', 'rope', 'torch', 'candle', 'bread', 'food', 'meat', 'cheese', 'apple', 'wine', 'ale', 'water', 'gem', 'gems', 'jewel', 'jewels', 'ledger', 'journal', 'diary', 'lockpick', 'lockpicks', 'tools', 'kit', 'cloak', 'boots', 'gloves', 'hat', 'coat', 'armor', 'armour', 'helmet', 'blanket', 'pillow', 'plate', 'cup', 'mug', 'bucket', 'shovel', 'pick', 'hammer', 'nails', 'chain', 'chains', 'lock', 'door', 'window', 'floor', 'stairs', 'wall', 'item', 'items', 'thing', 'things', 'supplies', 'rations', 'tinderbox', 'matches', 'crowbar', 'mirror', 'knife', 'knives', 'axe', 'hatchet', 'club', 'mace', 'spear', 'javelin', 'crossbow', 'quiver', 'shortbow', 'longbow', 'shortsword', 'longsword', 'whip', 'cudgel', 'sling', 'bolt', 'bolts', 'shiv'].join('|')})\\b`, 'i');
 /** Creature words that win over a thing word ("guard dog", "rat in a barrel"). */
 const BEING_WORDS = /\b(man|woman|men|women|boy|girl|child|guard|guards|soldier|knight|captain|warden|jailer|butler|maid|servant|cook|priest|monk|nun|thief|bandit|cultist|merchant|keeper|lord|lady|king|queen|prince|princess|old|young|dog|hound|wolf|rat|rats|cat|bear|spider|snake|bat|bats|goblin|orc|troll|ogre|skeleton|zombie|ghoul|ghost|wraith|vampire|demon|devil|dragon|beast|creature|monster|golem|elemental|slime|ooze|horse|crow|raven|boar|guardian|sentry|watchman|prisoner|stranger|figure|master|mistress|sergeant|brother|sister|father|mother|smith|innkeeper|owner|hunter|farmer|apprentice|scholar|wizard|witch|mage|sorcerer|cleric|paladin|ranger|rogue|bard|druid|healer|doctor|nurse|steward|chamberlain|noble|baron|duke|count|countess|page|squire|executioner|torturer|inquisitor|assassin|spy|mercenary|pirate|sailor|baby|twin|handler|turnkey|gaoler|dwarf|elf|halfling|gnome|human|hag|imp|kobold|gnoll|minotaur|harpy|wyvern|basilisk|mimic|specter|spectre|lich|mummy|banshee|shade|mastiff|stray|mutt|puppy|kitten|owl|hawk|eagle|toad|frog|crocodile|shark)\b/i;
 
@@ -1183,7 +1193,7 @@ export function placePerson(place, name, where, { floor = place.state?.floor, in
     if (!g) {
         g = place.guards[clean] = { name: clean, description: String(info.description || '').slice(0, 240), hostile: info.hostile === true, room, patrol: room ? [room] : [], step: 0, floor: floorId, x: spot.x, y: spot.y, state: 'patrol' };
         if (info.gender === 'male' || info.gender === 'female') g.gender = info.gender;
-        // "a sentry asleep at his post": asleep on the map too (notices nothing until a noise or the DM wakes him).
+        // "a sentry asleep at his post": asleep on the map too (notices nothing until a loud noise close by, or the DM, wakes him).
         if (/\b(?:asleep|sleeping|dozing|snoring|passed out|fast asleep|sound asleep)\b/i.test(g.description)) g.down = 'asleep';
     }
     Object.assign(g, { floor: floorId, x: spot.x, y: spot.y, room: room ?? g.room ?? null });
@@ -1205,7 +1215,7 @@ export function arrivalSpot(place, floorId, spot, taken = new Set()) {
     const inSight = (x, y) => seen[y * map.w + x] || viewers.some(v => Math.max(Math.abs(v.x - x), Math.abs(v.y - y)) <= 4);
     if (!inSight(spot.x, spot.y)) return null;
     const all = [
-        ...Object.values(place.doors || {}).filter(d => d.floor === floorId && d.state !== 'hidden' && d.state !== 'walled').map(d => ({ x: d.x, y: d.y })),
+        ...Object.values(place.doors || {}).filter(d => d.floor === floorId && d.state !== 'hidden' && d.state !== 'walled' && d.state !== 'locked').map(d => ({ x: d.x, y: d.y })),
         ...(place.stairs || []).flatMap(s => [s.a, s.b]).filter(e => e.floor === floorId),
         ...(place.exits || []).filter(e => e.floor === floorId),
     ];
@@ -1591,7 +1601,7 @@ export function clearBodies(place, { now = Date.now(), ms = BODY_MS } = {}) {
 }
 
 /** How many new people a place takes after it was built (the DM's reinforcements, the story's arrivals). */
-export const NEWCOMER_MAX = 4;
+export const NEWCOMER_MAX = 10;
 
 /** A new turn: hunters who struck may strike again (if their quarry is still in reach after it). */
 export function clearEngaged(place) {
@@ -1707,6 +1717,7 @@ export function placeView(place, partyNames, { away = [] } = {}) {
     for (const [p, rec] of Object.entries(st.custody || {})) lines.push(`CUSTODY: ${p} is ${rec.by}'s prisoner, kept within ${rec.radius} squares (the code stops ${p} walking off: ${rec.by} sees it, goes after them and grabs, with rolls; you're told each time)${rec.slipped ? `. ${p} has slipped out of ${rec.by}'s sight` : ''}. End it with place_changes custody {"${p}": ""}.`);
     for (const [p, k] of Object.entries(st.kept || {})) lines.push(`KEPT: ${p} can't leave ${place.name}: ${k.by}${k.why ? ` (${k.why})` : ''} won't let them (the code stops them at the way out and sends the nearest of the place's people after them, with rolls; you're told). End it with place_changes kept {"${p}": ""}.`);
     if (st.triggers?.length) lines.push(`YOUR TRIGGERS (each tells you once when any party member comes within reach): ${st.triggers.map(t => `${t.id} within ${t.radius} of ${t.near}: "${t.note}"`).join('; ')}.`);
+    lines.push(`This floor's map is ${floor.map.w} by ${floor.map.h} squares (a1 to ${coord(floor.map.w - 1, floor.map.h - 1)}); the edge of the map is the edge of this place.`);
     if (st.night) lines.push(`It is ${st.late ? 'NIGHT' : 'DARK out (evening)'}: outdoors is dark; a room is lit only with someone awake in it or a light burning; ${st.late ? 'residents are asleep and shops and homes are shut (taverns, inns, guardhouses and jails are up); ' : ''}in the dark people see two squares, lantern-bearers three around them.`);
     if (st.visited.length) lines.push(`Rooms the party has been in: ${st.visited.join(', ')}.`);
     const changed = Object.values(place.doors).filter(d => (d.kind === 'locked' && d.state !== 'locked') || (d.kind === 'secret' && d.state !== 'hidden') || d.state === 'open' || d.state === 'broken').map(d => `${d.id} ${d.state === 'closed' && d.kind === 'locked' ? 'unlocked' : d.state === 'closed' && d.kind === 'secret' ? 'found' : d.state}`);
@@ -1733,7 +1744,7 @@ export function placeView(place, partyNames, { away = [] } = {}) {
         const inSight = seen?.[g.y * floor.map.w + g.x];
         return `${d} squares away, ${inSight ? 'IN SIGHT' : d <= ear ? 'out of sight but within earshot (only loud noise or talking carries)' : 'FAR: the party can\'t see, hear or smell them'}`;
     };
-    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name}${g.hostile === true ? '' : g.role === 'guard' ? ' [guard, not an enemy: keeps order, challenges trespassers]' : g.role ? ` [${g.role}, not an enemy]` : ''}${g.lantern ? ' [carries a lantern]' : ''} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.down ? ` (${DOWN_WORDS[g.down].toUpperCase()}: notices nothing and goes nowhere until place_changes.guards says "awake" or "free")` : g.state === 'alert' ? ' (ALERT)' : ''}${g.fought ? ' [fought the party and survived; not an enemy now unless you set an intent]' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
+    const guards = Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead').map(g => `${g.name}${g.hostile === true ? '' : g.role === 'guard' ? ' [guard, not an enemy: keeps order, challenges trespassers]' : g.role ? ` [${g.role}, not an enemy]` : ''}${g.lantern ? ' [carries a lantern]' : ''} in ${g.room ?? 'a corridor'}${g.floor === floor.id ? ` at ${coord(g.x, g.y)}` : ''} (${sense(g)})${g.down ? ` (${DOWN_WORDS[g.down].toUpperCase()}: notices nothing and goes nowhere until ${g.down === 'asleep' ? 'a loud noise close by wakes them or ' : ''}place_changes.guards says "awake" or "free")` : g.state === 'alert' ? ' (ALERT)' : ''}${g.fought ? ' [fought the party and survived; not an enemy now unless you set an intent]' : ''}${g.unaware?.length ? ` (hasn't noticed ${g.unaware.join(', ')})` : ''}${g.intent && g.intent !== 'wander' ? ` [${{ attack: 'going after', follow: 'following', flee: 'running from the party', stay: 'staying put', goto: 'on their way in, now at the edge of where the party can see' }[g.intent]}${g.target && ['attack', 'follow'].includes(g.intent) ? ` ${g.target}` : g.intent === 'attack' || g.intent === 'follow' ? ' the nearest of the party' : ''}]` : ''}`);
     lines.push(guards.length ? `People now (the only ones on the map; put anyone else you narrate here or on their way on it; describe only what the party can sense of each, as noted): ${guards.join('; ')}.` : 'People now: nobody else is on the map (put anyone you narrate here or on their way on it).');
     if (st.fight?.hears?.length) lines.push(`The fight is loud. Within earshot of it but not in it: ${st.fight.hears.join('; ')}. Decide whether they come running (place_changes.guards with intent "attack", or "following" to watch), hide, or raise the alarm.`);
     if (st.said?.length) lines.push(`Said lately by the place's people on their own (their own words, already in the chat): ${st.said.slice(-4).map(s => `${s.name}: "${s.text}"`).join('; ')}.`);
@@ -1846,7 +1857,7 @@ export function hostileNotice(place, floorId, partyNames, { stealth = null, play
 
 /**
  * A noise at a square: a door breaking, a thing smashed, a trap going off. Whoever of the place is
- * within earshot (further for a loud one), awake and not down, hears it and is alert, and remembers
+ * within earshot (further for a loud one; half as far for someone asleep, who wakes), not down, hears it and is alert, and remembers
  * what and where (the DM sees it in the place view). A Stealth roll made for the deed keeps it from
  * anyone whose passive Perception it beats; a natural 20 keeps it from everyone. Returns who heard.
  */
@@ -1857,14 +1868,17 @@ export function makeNoise(place, floorId, x, y, { what = 'a noise', loud = 1, st
     if (stealth?.at && Math.max(Math.abs(stealth.at.x - x), Math.abs(stealth.at.y - y)) > 1) stealth = null;
     if (stealth && stealth.natural === 20) return heard;
     for (const g of Object.values(place.guards)) {
-        if (g.floor !== floorId || g.state === 'gone' || g.state === 'dead' || g.down || isOut(g)) continue;
+        if (g.floor !== floorId || g.state === 'gone' || g.state === 'dead' || (g.down && g.down !== 'asleep')) continue;
+        const asleep = g.down === 'asleep';
         const d = Math.max(Math.abs(g.x - x), Math.abs(g.y - y));
-        if (d > reach) continue;
-        const passive = 10 + (Number(g.perception) || 0) + (g.state === 'alert' ? 2 : 0) + (d <= 2 ? 5 : 0);
+        // Asleep: only a noise close by reaches them, and they're slow to it.
+        if (d > (asleep ? Math.ceil(reach / 2) : reach)) continue;
+        const passive = 10 + (Number(g.perception) || 0) + (g.state === 'alert' ? 2 : 0) + (d <= 2 ? 5 : 0) - (asleep ? 5 : 0);
         if (stealth && Number.isFinite(stealth.total) && stealth.total >= passive) continue;
+        if (asleep) { delete g.down; delete g.sleeper; }
         g.state = 'alert';
         g.heard = { what, at: coord(x, y), turn };
-        heard.push(`${g.name} (${d} squares off)`);
+        heard.push(`${g.name} (${d} squares off${asleep ? ', woken by it' : ''})`);
     }
     return heard;
 }
@@ -1899,4 +1913,21 @@ export function noticeTraps(place, floorId, name, x, y, passive, player = '') {
         return `${name} spots a hidden ${t.kind} (${t.id}) at ${coord(t.x, t.y)} before anyone steps on it (passive Perception ${passive} against DC ${dc}; the code has marked it found on the map). Brief ${name} to warn ${player || 'the party'} in a line; nothing else happens.`;
     }
     return '';
+}
+/** Has this built place taken all the newcomers it will (the DM's reinforcements, the story's arrivals)? */
+export function atCapacity(place) {
+    return Boolean(place.state?.built) && (place.state.newcomers ?? 0) >= NEWCOMER_MAX;
+}
+
+/** The usual numbers for a creature or a fighter named with no HP or AC from the DM (so a tap shows them and a fight has them). */
+const CREATURE_STATS = [
+    [/\bdire wolf\b/i, 37, 14], [/\bwolf|wolves\b/i, 11, 13], [/\b(?:black |brown )?bear\b/i, 34, 11], [/\bboar\b/i, 11, 11], [/\b(?:dog|hound|mastiff)\b/i, 5, 12],
+    [/\bgiant spider\b/i, 26, 14], [/\bspider\b/i, 1, 12], [/\bsnake|viper\b/i, 2, 13], [/\b(?:giant )?rat\b/i, 7, 12], [/\bcrocodile\b/i, 19, 12], [/\bgiant\b/i, 59, 12],
+    [/\bogre\b/i, 59, 11], [/\btroll\b/i, 84, 15], [/\borc\b/i, 15, 13], [/\bgoblin\b/i, 7, 15], [/\bkobold\b/i, 5, 12], [/\bgnoll\b/i, 22, 15], [/\bskeleton\b/i, 13, 13], [/\bzombie\b/i, 22, 8], [/\bghoul\b/i, 22, 12],
+    [/\b(?:guard|watchman|soldier|sergeant|jailer|warden)\b/i, 11, 16], [/\b(?:captain|chief|champion|warlord)\b/i, 30, 15],
+    [/\b(?:bandit|raider|cutthroat|thug|outlaw|cultist|hunter|spearman|netter|warrior|tribesman|cannibal|scout|lookout|sentry|archer|brute|savage|beastman|reaver)\b/i, 11, 12],
+];
+export function creatureStats(words) {
+    const hit = CREATURE_STATS.find(([re]) => re.test(String(words || '')));
+    return hit ? { hp: hit[1], ac: hit[2] } : null;
 }

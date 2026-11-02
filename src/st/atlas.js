@@ -18,7 +18,7 @@ import { isBeast } from '../core/sprites.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate, applyStateChanges } from '../core/world.js';
 import { restraintOf, lockedLine } from '../core/restraints.js';
-import { PROPS, HIDE, colName, toCoord } from '../core/grid.js';
+import { PROPS, HIDE, colName, toCoord, parseCoord } from '../core/grid.js';
 import { generateWagon } from '../core/wagon.js';
 import { BODY_MS, OPEN_TRAP, searchRadius, clearTrails, peopleMentioned, EARSHOT, GUARD_SIGHT, hostileNotice, checkTriggers, ageNotice, noticeTraps, heldRoom, looksLikeThing, personByName, openSquareNear, moveHunters, clearEngaged, setIntent, applyPlaceChanges, clearBodies, isOut, guardSees, DOWN_WORDS, PATROL_STEPS, OUTDOOR } from '../core/explore.js';
 import { ensureClock, weatherAmbience } from '../core/clock.js';
@@ -258,6 +258,7 @@ function peopleWith(c, place, name, pos, rm) {
         if (n === name || (isAway(c.docs.world, n) && !place.state.held?.[n])) continue;
         if (!sees(p)) { if (p && p.floor === pos.floor && dist(p) <= 6) out.push(`${n} (${dist(p)} squares ${dir(p)}, but out of your sight from here: dark, or something in the way)`); continue; }
         const bits = [`${dist(p)} squares ${dir(p)}`];
+        if (n === c.meta.persona.name && dist(p) > 1) bits.push('too far to touch, hold, hand anything to or whisper to: you would have to go over first');
         if (place.state.held?.[n]) bits.push('held here');
         if (custody[n]?.by === name) bits.push(`YOUR PRISONER: keep them within ${custody[n].radius} squares`);
         if (custody[name]?.by === n) bits.push(`you are their prisoner`);
@@ -386,7 +387,7 @@ export async function companionGoTo(c, name, targetId, { hide = false, pose = ''
     savePlace(key, c);
     refreshMap();
     const restingNow = !hide && pose && prop ? poseNow(place, name) : null;
-    const article = s => (/^(?:the|inside|before|behind|under|outside|where)\b/i.test(s) ? s : `the ${s}`);
+    const article = s => (/^(?:the|inside|before|behind|under|outside|where)\b/i.test(s) || /^[A-Z][a-z]+'s?\s/.test(s) ? s : `the ${s}`);
     return prop ? `${hide && HIDE[prop.type] ? `${HIDE[prop.type]} ` : restingNow ? `${restingNow.pose === 'sit' ? 'sit on' : restingNow.pose === 'sleep' ? 'sleep on' : 'lie on'} ` : ''}the ${prop.label || PROPS[prop.type]?.name || prop.type}`
         : room ? article(room.name) : other.name ? other.name : place.doors[targetId] ? 'the door' : 'the window';
 }
@@ -857,7 +858,7 @@ export function scheduleBodyClear(c = campaign()) {
     bodyTimer = setTimeout(() => { bodyTimer = null; clearFallen(c).catch(error => console.warn('[Dungeon Master] could not clear a body', error)); }, BODY_MS + 50);
 }
 
-export async function enterPlace(key, { at = null, quiet = false } = {}) {
+export async function enterPlace(key, { at = null, quiet = false, only = null } = {}) {
     { const c0 = campaign(); const p0 = c0 && atlas(c0)?.places?.[key]; if (p0?.state) p0.state.party = [c0.meta.persona.name, ...c0.meta.party.map(p => p.name)]; }
     const c = campaign();
     const place = await loadPlace(key, c);
@@ -865,7 +866,7 @@ export async function enterPlace(key, { at = null, quiet = false } = {}) {
     const st = place.state;
     st.waiting ??= {};
     // Companions who chose to stay don't come along through stairs or doors to another map.
-    const names = partyOnMap(c).filter((n, i) => i === 0 || !st.waiting[n]);
+    const names = partyOnMap(c).filter((n, i) => i === 0 || (!st.waiting[n] && (!only || only.includes(n))));
     const lead = at ?? (st.positions[names[0]] ?? place.start);
     st.positions[names[0]] = { floor: lead.floor, x: lead.x, y: lead.y };
     const taken = new Set([`${lead.x},${lead.y}`]);
@@ -1516,7 +1517,7 @@ export async function grabAttempts(c, { still = [], from = null } = {}) {
     const dist = x => Math.max(Math.abs(x.x - lead.x), Math.abs(x.y - lead.y));
     // Only a guard the player is getting away from grabs: not one they walked up to, not one their
     // message is about (an attack, a word: the DM rules on that).
-    const g = Object.values(place.guards).find(x => x.seize?.asked && x.seize.target === player && x.intent === 'follow' && !isOut(x) && x.state !== 'gone'
+    const g = Object.values(place.guards).find(x => x.seize?.asked && x.seize.target === player && (x.intent === 'follow' || x.seize.kept) && !isOut(x) && x.state !== 'gone'
         && x.floor === lead.floor && dist(x) <= 1 && x.seize.lastGrabTurn !== c.meta.turn && !stillSet.has(x.name)
         && !(from && from[x.name] !== undefined && dist(x) < from[x.name]));
     if (!g) return '';
@@ -1549,9 +1550,29 @@ export async function settleGrab(c, pr, success) {
     if (!g) return '';
     if (!success) {
         const { room } = cellFor(c, place, player);
-        if (room) {
+        if (room && !g.seize?.kept) {
             const done = await takeToCell(c, g, room, { cuffs: true });
             if (done) return `${g.name} got hold of ${player}. ${done}`;
+        }
+        // Kept here (the tribe's god): brought back to where they were before they made for the way out, and let go there.
+        const lead = place.state.positions[player];
+        const back = place.state.keptBack;
+        if (g.seize?.kept && lead && back && back.floor === lead.floor) {
+            const spot = freeNear(place, back.floor, back.x, back.y) ?? { x: back.x, y: back.y };
+            Object.assign(lead, { x: spot.x, y: spot.y });
+            const taken = new Set([`${spot.x},${spot.y}`]);
+            for (const h of Object.values(place.guards).filter(x => x.seize?.target === player)) {
+                const s = openSquareNear(place, back.floor, spot.x, spot.y, taken, 2);
+                if (s) { taken.add(`${s.x},${s.y}`); Object.assign(h, { floor: back.floor, x: s.x, y: s.y, room: roomAt(place, back.floor, s.x, s.y)?.id ?? h.room }); }
+                delete h.seize; delete h.intent; delete h.target; delete h.goal;
+            }
+            delete place.state.keptBack;
+            savePlace(key, c);
+            const { refreshMap } = await import('../ui/map.js');
+            refreshMap();
+            const by = place.state.kept?.[player]?.by ?? g.name;
+            noteMapAction(c, `${g.name} caught ${player} and brought them back to ${toCoord(spot.x, spot.y)}, where they were let go`);
+            return `${g.name} got hold of ${player} and brought them back, not harmed: the map has moved them to ${toCoord(spot.x, spot.y)}, and nobody holds them now (no "grappled"). Narrate the walk back and what ${by} makes of it.`;
         }
         // Nowhere to take them: held where they stand, and the DM takes it from there.
         const w = c.docs.world;
@@ -1563,6 +1584,12 @@ export async function settleGrab(c, pr, success) {
         return `${g.name} got hold of ${player} and holds them (condition "grappled"); there is no cell here to take them to: you decide what he does with them.`;
     }
     const tries = g.seize?.attempts ?? pr.grab.attempt;
+    if (tries >= GRAB_TRIES && g.seize?.kept) {
+        const by = place.state.kept?.[player]?.by ?? g.name;
+        delete g.seize;
+        savePlace(key, c);
+        return `${player} slipped free of ${g.name} a third time: ${g.name} can't hold them by hand. ${by} won't harm them: decide what comes now (more hands, a net, a plea, letting them go for a while) and brief whoever speaks; set place_changes.guards "following" on anyone who keeps after them.`;
+    }
     if (tries >= GRAB_TRIES) {
         delete g.seize;
         g.fedUp = true;
@@ -1688,6 +1715,22 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         }
         return moved;
     };
+    /** A companion keeper running their prisoner down: straight at the player, a square a step, up to `steps` of them, now. */
+    const runDown = (n, steps) => {
+        const p = n && place.state.positions[n];
+        if (!p || p.floor !== floorId || !c.meta.party.some(m => m.name === n)) return;
+        active.add(n);
+        for (let i = 0; i < steps && gap(p) > 1; i++) {
+            const taken = new Set([...others, ...Object.entries(place.state.positions).filter(([m, q]) => m !== n && m !== names[0] && q.floor === floorId).map(([, q]) => `${q.x},${q.y}`)]);
+            const s = followSteps(place, floorId, p, lead, { taken, steps: 1, avoid: dangersFor(place, floorId, n), keep: 1 });
+            if (!s.length) break;
+            const d = doorAt(place, floorId, s[0][0], s[0][1]);
+            if (d && d.state === 'closed') setDoorState(place, d, 'open');
+            Object.assign(p, { x: s[0][0], y: s[0][1] });
+            if (place.state.hidden?.[n]) delete place.state.hidden[n];
+            standUp(place, n);
+        }
+    };
     const seenGuards = new Set(visibleGuards(place, floorId, look(c, key, place)).map(g => { g.met = true; return g.name; }));
     const keeperStart = custodyStart(c, place, names[0]);
     const startAt = { x: lead.x, y: lead.y };
@@ -1722,8 +1765,8 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
             const watched = watchParty(c, cur, quarry);
             if (watched.events.length) { event = watched.events.join(' '); break; }
             // A prisoner walking off from their keeper: seen, chased, grabbed (with rolls).
-            const kept = await custodyCheck(c, cur, keeperStart);
-            if (kept) { event = kept; break; }
+            const kept = await custodyCheck(c, cur, keeperStart, { catchUp: steps => runDown(keeperStart?.by, steps) });
+            if (kept) { redraw(); event = kept; break; }
             // Hostiles who can see the party, on any land: the DM decides what they do (once per distance band).
             const hostile = hostileNotice(place, floorId, quarry, { stealth: stealthThisTurn(c), player: names[0] });
             if (hostile.length) { event = hostile.join(' '); break; }
@@ -1815,7 +1858,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
                 // Kept here (a captive, a god the tribe won't let go): no walking out. Stopped at the way out, and whoever keeps them comes after them; the DM has it.
                 const back = freeNear(place, lead.floor, lead.x, lead.y);
                 Object.assign(lead, back);
-                event = keptEvent(c, place, names[0]);
+                event = keptEvent(c, place, names[0], { floor: floorId, ...startAt });
                 noteMapAction(c, `${names[0]} made for the way out of ${place.name} and was stopped there: ${keptHere(c, place, names[0]).by} won't let them leave`);
                 toastr.info(`${keptHere(c, place, names[0]).by} won't let you leave`, 'Map', { timeOut: 3000 });
             } else {
@@ -2025,6 +2068,8 @@ export async function applyMapSync(c, ops) {
             // The story breathes after a fight or a capture: nobody new turns up for a few turns. And nobody turns up inside a wagon by a guess.
             if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) continue;
             if (place.parent?.prop) continue;
+            // A knife on the ground is an item, not someone: nothing named like a thing, or like an item lying here, becomes a person.
+            if (looksLikeThing(ch.name) || Object.values(place.items).some(i => i.state !== 'taken' && nameKey(i.name).includes(nameKey(ch.name)))) continue;
             const at = where(ch.near) ?? (lead ? { floor: floorId, x: lead.x, y: lead.y } : null);
             const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile }, arrive: true });
             if (!g) continue;
@@ -2034,7 +2079,8 @@ export async function applyMapSync(c, ops) {
             const isParty = Boolean(place.state.positions[ch.who]);
             if (!isParty) {
                 const g = personByName(place, ch.who), to = where(ch.to);
-                if (g && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to ${thingLabel(place, ch.to)}`);
+                // Someone after the player (a chase the code runs) isn't walked elsewhere by a guess.
+                if (g && !g.seize && to && placePerson(place, g.name, to, { floor: floorId })) log.push(`${g.name} goes to ${thingLabel(place, ch.to)}`);
                 continue;
             }
             if (lockedReason(c, ch.who)) continue;
@@ -2055,6 +2101,9 @@ export async function applyMapSync(c, ops) {
                 log.push(`${player} ${ch.op === 'hide' ? 'hides' : ch.op === 'pose' ? ch.how + 's' : 'goes'} by ${thingLabel(place, to)}`);
                 continue;
             }
+            // A keeper doesn't wander off from her prisoner on the story's say-so (mid-chase least of all): only the player's own OOC word moves her away.
+            const keeps = Object.entries(place.state.custody || {}).find(([, r]) => r.by === ch.who);
+            if (keeps) { const pz = place.state.positions[keeps[0]], tz = where(to); if (pz && (!tz || typeof tz === 'string' || tz.floor !== pz.floor || Math.max(Math.abs(tz.x - pz.x), Math.abs(tz.y - pz.y)) > (keeps[1].radius ?? 2) + 1)) continue; }
             // Walking over to something keeps them following; only hiding or lying down means they stay put.
             const went = await companionGoTo(c, ch.who, to, { hide: ch.op === 'hide', pose: ch.op === 'pose' ? ch.how : '', stay: ch.op !== 'move' });
             if (went) log.push(`${ch.who} → ${went}`);
@@ -2064,8 +2113,9 @@ export async function applyMapSync(c, ops) {
             if (g && g.state !== 'gone' && g.state !== 'dead' && !(c.docs.world.combat?.enemies?.[g.name]?.hp <= 0)) { g.state = 'gone'; log.push(`${g.name} is gone`); }
         } else if (ch.op === 'intent') {
             const g = personByName(place, ch.who);
-            // Someone the DM made no enemy (a tribe that worships him) is never set on the party by a guess of the sync.
+            // Someone the DM made no enemy (a tribe that worships him) is never set on the party by a guess of the sync; a chase the code runs isn't called off by one.
             if (g && ch.intent === 'attack' && g.hostile === false) continue;
+            if (g?.seize) continue;
             if (g && g.intent !== ch.intent) { setIntent(g, ch.intent, ch.target); log.push(`${g.name}: ${ch.intent}${ch.target ? ` ${ch.target}` : ''}`); }
         } else if (ch.op === 'door') {
             const d = place.doors[ch.id];
@@ -2076,7 +2126,7 @@ export async function applyMapSync(c, ops) {
             const it = place.items[ch.id];
             if (!it) continue;
             if (ch.op === 'found') { if (!it.found) { it.found = true; it.hidden = false; log.push(`${it.name} found`); } continue; }
-            if (it.state !== 'taken') { it.state = 'taken'; it.hidden = false; log.push(`${ch.who} took the ${it.name}`); }
+            if (it.state !== 'taken') { it.state = 'taken'; it.hidden = false; log.push(`${ch.who} took the ${plainName(it.name)}`); }
         } else if (ch.op === 'drop') {
             const p = place.state.positions[ch.who];
             if (!p) continue;
@@ -2099,8 +2149,13 @@ function thingLabel(place, id) {
     if (p) return `the ${thingName(p)}`;
     if (place.doors[id]) return 'the door';
     const rm = place.rooms[id];
-    if (rm) return /^(?:the|inside|before|behind|under|outside|where)\b/i.test(rm.name) ? rm.name : `the ${rm.name}`;
+    if (rm) return /^(?:the|inside|before|behind|under|outside|where)\b/i.test(rm.name) || /^[A-Z][a-z]+'s?\s/.test(rm.name) ? rm.name : `the ${rm.name}`;
     return id;
+}
+
+/** An item's name without its article, for "picks up the small knife". */
+function plainName(name) {
+    return String(name || '').replace(/^(?:a|an|the|some|one)\s+/i, '');
 }
 
 /** The nearest thing to hide in, under or behind, in someone's room (or close by). */
@@ -2160,7 +2215,7 @@ export function syncContext(c) {
  * (an open wagon: boards and straw, off on either side; a jailer's wagon: bars and a locked steel
  * door). The party comes out beside the wagon, wherever the story has moved it.
  */
-export async function enterVehicle(propId, { quiet = false } = {}) {
+export async function enterVehicle(propId, { quiet = false, byDm = false } = {}) {
     const c = campaign();
     const here = currentPlace(c);
     if (!c || !here) return false;
@@ -2178,11 +2233,24 @@ export async function enterVehicle(propId, { quiet = false } = {}) {
         await flushWrites();
     }
     const label = prop.label || PROPS[prop.type].name;
+    const labelled = /^(?:the|a|an)\b/i.test(label) ? label : `the ${label}`;
     const lead = here.place.state.positions[c.meta.persona.name];
+    // Climbing in on your own: a locked door (a jail wagon's) stops you, and only companions beside you who can walk come along (one tied up six squares off stays where she is). The DM putting the party in is the DM's call.
+    let only = null;
+    if (!byDm) {
+        const inside = await loadPlace(ikey, c);
+        const locked = inside && Object.values(inside.doors || {}).find(d => d.state === 'locked');
+        if (locked) { toastr.info(`${labelled[0].toUpperCase()}${labelled.slice(1)}'s door is locked (${locked.id}). Tell the DM how you deal with it.`, 'Map', { timeOut: 3500 }); return false; }
+        const near = n => { const p = here.place.state.positions[n]; return lead && p && p.floor === lead.floor && Math.max(Math.abs(p.x - lead.x), Math.abs(p.y - lead.y)) <= 2; };
+        const stays = c.meta.party.map(p => p.name).filter(n => here.place.state.positions[n] && !here.place.state.waiting?.[n] && (!near(n) || lockedReason(c, n)));
+        for (const n of stays) await setWaiting(n, true, { quiet: true });
+        only = [c.meta.persona.name, ...c.meta.party.map(p => p.name).filter(n => !stays.includes(n))];
+    }
     const seenBy = !quiet && lead ? watchersSeeing(c, here.place, lead.floor, c.meta.persona.name) : [];
-    await enterPlace(ikey, { quiet });
+    await enterPlace(ikey, { quiet, only });
     if (!quiet) {
-        await postNote(`🛞 ${c.meta.persona.name} climbs into ${label}${partyOnMap(c).length > 1 ? ' with the party' : ''}.`);
+        const came = partyOnMap(c).filter(n => n !== c.meta.persona.name);
+        await postNote(`🛞 ${c.meta.persona.name} climbs into ${labelled}${came.length ? ` with ${came.join(' and ')}` : ''}.`);
         noteMapAction(c, `the party climbed into ${label} (${prop.id}); they are on its inside map now`);
         if (seenBy.length) await callDm(`${seenBy.join(' and ')} watched the party climb into ${label}. Decide what they make of it and do; brief them if they speak.`);
         else { const { companionSaw } = await import('./orchestrator.js'); await companionSaw(c, `climbed into ${label}`); }
@@ -2272,7 +2340,7 @@ function custodyStart(c, place, player) {
     // On the ground, tied, held: they aren't going anywhere, so nothing they do is an escape (the keeper drags, orders or threatens; the DM's call).
     if (!rec || lockedReason(c, player)) return null;
     const kp = place.state.positions[rec.by] ?? personByName(place, rec.by);
-    if (!kp || kp.state === 'gone' || kp.state === 'dead') return null;
+    if (!kp || kp.state === 'gone' || kp.state === 'dead' || kp.down || outBy(conditionsOf(c.docs.world, rec.by))) return null;
     const companion = c.meta.party.some(p => p.name === rec.by);
     // A keeper walking along is escorting: the prisoner moving with them is no escape.
     const following = companion && !place.state.waiting?.[rec.by] && !lockedReason(c, rec.by);
@@ -2286,7 +2354,7 @@ function custodyStart(c, place, player) {
  * and, when within reach, grabs: the keeper's Athletics against the player's roll to slip free (the
  * card asks for it). Returns the event for the DM, or '' when nothing is amiss.
  */
-async function custodyCheck(c, cur, start) {
+async function custodyCheck(c, cur, start, { catchUp = null } = {}) {
     if (!start) return '';
     const { key, place } = cur;
     const player = c.meta.persona.name;
@@ -2299,7 +2367,9 @@ async function custodyCheck(c, cur, start) {
     if (keeperOut) return '';
     const far = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
     const fromStart = far(lead, start), gap = far(lead, kp);
-    if (fromStart <= rec.radius && gap <= rec.radius) { if (rec.chase) { delete rec.chase; savePlace(key, c); } return ''; }
+    // Mid-chase, a keeper within arm's reach grabs: walking back up to her is being caught, not getting away with it.
+    if (rec.chase && start.companion && gap <= 1 && rec.lastGrabTurn !== c.meta.turn) return custodyGrab(c, cur, rec, restraintOf(conditionsOf(c.docs.world, player)).look);
+    if (fromStart <= rec.radius && gap <= rec.radius) { if (rec.chase && !start.companion) { delete rec.chase; savePlace(key, c); } return ''; }
     // Coming back toward the keeper is never making off: one who had slipped away and walks back into view is met, not chased.
     if (start.from && gap < far(start.from, kp)) {
         if (!rec.slipped) return '';
@@ -2333,13 +2403,15 @@ async function custodyCheck(c, cur, start) {
     const cuffs = restraintOf(conditionsOf(c.docs.world, player)).look;
     const bound = cuffs === 'cuffs' ? ', cuffed' : cuffs === 'rope' ? ', tied' : '';
     // A keeper of the place (a jailer): the guard chase does the rest (he follows, grabs when he reaches them, takes them back).
-    if (!start.companion) { const g = personByName(place, rec.by); if (g) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: rec.attempts ?? 0 }; g.state = 'alert'; } savePlace(key, c); return `${player} (${rec.by}'s prisoner${bound}) is making off: ${gap} squares from ${rec.by}, who sees it and goes after them (the code runs the chase: ${rec.by} grabs when they reach them, with rolls, and takes them back). Narrate ${rec.by}'s reaction, brief ${rec.by} if they speak; don't resolve the chase.`; }
+    if (!start.companion) { const g = personByName(place, rec.by); if (g) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: rec.attempts ?? 0 }; g.state = 'alert'; } savePlace(key, c); return `${player} (${rec.by}'s prisoner${bound}) is walking off on their own: ${gap} squares from ${rec.by}, who sees it and goes after them (the code runs the chase: ${rec.by} grabs when they reach them, with rolls, and takes them back). Narrate ${rec.by}'s reaction, brief ${rec.by} if they speak; don't resolve the chase.`; }
     // The keeper is a companion: she comes along again if she was staying, and sticks to the player from now on.
     if (place.state.waiting?.[rec.by]) await setWaiting(rec.by, false, { quiet: true });
     c.meta.stance ??= {}; c.meta.stance[rec.by] = 'close'; saveMeta();
-    if (gap <= 1 && rec.lastGrabTurn !== c.meta.turn) return custodyGrab(c, cur, rec, cuffs);
+    // The keeper runs them down now (the code walks the keeper up to them) and grabs when within reach.
+    if (catchUp) catchUp(8);
+    if (far(lead, kp) <= 1 && rec.lastGrabTurn !== c.meta.turn) return custodyGrab(c, cur, rec, cuffs);
     savePlace(key, c);
-    return `${player} (${rec.by}'s prisoner${bound}) is making off: ${gap} squares from ${rec.by} now, and ${rec.by} can see it. ${rec.by} goes after them (the code keeps ${rec.by} on their heels and rolls the grab when ${rec.by} reaches them; narrate ${rec.by}'s reaction and brief ${rec.by} if they speak: a shout, a warning, an order to stop). Don't resolve the chase yourself.`;
+    return `${player} (${rec.by}'s prisoner${bound}) is walking off on their own: ${far(lead, kp)} squares from ${rec.by} now, and ${rec.by} can see it. ${rec.by} goes after them (the code keeps ${rec.by} on their heels and rolls the grab when ${rec.by} reaches them; narrate ${rec.by}'s reaction and brief ${rec.by} if they speak: a shout, a warning, an order to stop). Don't resolve the chase yourself, and don't call a walk a bolt: they walked.`;
 }
 
 /**
@@ -2493,7 +2565,7 @@ export async function takeItem(itemId, redraw = () => { }) {
     saveDoc('world');
     savePlace(key, c);
     look(c, key, place);
-    await postNote(`🎒 ${player} picks up the ${item.name}.`);
+    await postNote(`🎒 ${player} picks up the ${plainName(item.name)}.`);
     noteMapAction(c, `${player} picked up the ${item.name} (${item.id}) at ${toCoord(item.x, item.y)}: it's in their pack now`);
     await witnessed(c, `picked up the ${item.name}`);
     return true;
@@ -2570,17 +2642,19 @@ function keptHere(c, place, name) {
     const rec = place.state.custody?.[name];
     if (!rec) return null;
     const kp = place.state.positions[rec.by] ?? personByName(place, rec.by);
-    if (!kp || kp.state === 'gone' || kp.state === 'dead') return null;
+    if (!kp || kp.state === 'gone' || kp.state === 'dead' || kp.down || outBy(conditionsOf(c.docs.world, rec.by))) return null;
     return { by: rec.by, why: 'their prisoner' };
 }
 
 /** Stopped at the way out: the nearest two able people of the place go after them (the guard chase: a grab when they reach them, then back). The event for the DM. */
-function keptEvent(c, place, player) {
+function keptEvent(c, place, player, from = null) {
     const k = keptHere(c, place, player);
     const lead = place.state.positions[player];
+    // Where they were before they made for the way out: where they're brought back to when caught.
+    place.state.keptBack = from && Number.isFinite(from.x) ? { floor: from.floor, x: from.x, y: from.y } : null;
     const d = g => Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y));
     const able = place.state.custody?.[player] ? [] : Object.values(place.guards).filter(g => !isOut(g) && g.role !== 'animal' && g.floor === lead.floor).sort((a, b) => d(a) - d(b)).slice(0, 2);
-    for (const g of able) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: 0 }; g.state = 'alert'; }
+    for (const g of able) { setIntent(g, 'follow', player); g.seize = { target: player, asked: true, attempts: 0, kept: true }; g.state = 'alert'; }
     return `${player} made for the way out of ${place.name}: ${k.by}${k.why ? ` (${k.why})` : ''} won't let them leave, and the map stopped them at it. ${able.length ? `${able.map(g => g.name).join(' and ')} ${able.length > 1 ? 'go' : 'goes'} after them: the code runs the chase (a grab when they reach them, with rolls; then they're brought back, not harmed). ` : ''}Narrate it (who saw them going, the shout, the pursuit) and brief whoever speaks. Don't resolve the chase, and don't move anyone.`;
 }
 
@@ -2596,9 +2670,13 @@ export function releaseStalePins(c = campaign()) {
         const pin = conditionsOf(w, name).find(x => /pinned|grappled/i.test(x));
         const by = pin?.match(/held (?:down )?by ([^)]+)\)?\s*$/i)?.[1]?.trim();
         if (!pin || !by) continue;
-        const me = cur.place.state.positions[name];
-        const holder = cur.place.state.positions[by] ?? personByName(cur.place, by);
-        const gone = !holder || holder.state === 'gone' || holder.state === 'dead' || Boolean(holder.down) || isAway(w, by) || !me || holder.floor !== me.floor || Math.max(Math.abs(holder.x - me.x), Math.abs(holder.y - me.y)) > 1;
+        // In a fight the battle map's squares are the ones that count.
+        const fightPos = n => { if (!w.combat?.map || !w.combat.positions?.[n]) return null; const p = parseCoord(w.combat.positions[n], w.combat.map); return p ? { x: p.x, y: p.y } : null; };
+        const inFight = Boolean(fightPos(name));
+        const me = inFight ? fightPos(name) : cur.place.state.positions[name];
+        const who = personByName(cur.place, by);
+        const holder = inFight ? fightPos(by) : (cur.place.state.positions[by] ?? who);
+        const gone = !holder || who?.state === 'gone' || who?.state === 'dead' || Boolean(who?.down) || w.combat?.enemies?.[by]?.hp <= 0 || isAway(w, by) || !me || (!inFight && holder.floor !== me.floor) || Math.max(Math.abs(holder.x - me.x), Math.abs(holder.y - me.y)) > 1;
         if (!gone) continue;
         applyStateChanges(w, { conditions_remove: { [name]: [pin] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
         out.push(`${name} is no longer ${/pinned/i.test(pin) ? 'pinned' : 'held'}: ${by} isn't on them any more`);

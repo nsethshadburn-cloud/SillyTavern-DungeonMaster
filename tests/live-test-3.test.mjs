@@ -82,11 +82,11 @@ test('C3/C4: kept, everyone, and the place view', () => {
 test('H8: the DM puts a real item on the ground, by a square or near someone', () => {
     const place = make();
     let log = applyPlaceChanges(place, { add_items: [{ name: 'a small knife', at: 'f3' }] });
-    const knife = Object.values(place.items).find(i => i.name === 'a small knife');
+    const knife = Object.values(place.items).find(i => i.name === 'small knife');
     assert.ok(knife && knife.x === 5 && knife.y === 2 && knife.state === 'here' && !knife.hidden, JSON.stringify(knife));
-    assert.ok(log.some(l => /a small knife \(I1a\) on the ground at f3/.test(l)), log.join(' | '));
+    assert.ok(log.some(l => /small knife \(I1a\) on the ground at f3/.test(l)), log.join(' | '));
     log = applyPlaceChanges(place, { add_items: [{ name: 'a coil of rope', near: 'Amber', note: 'frayed' }] });
-    const rope = Object.values(place.items).find(i => i.name === 'a coil of rope');
+    const rope = Object.values(place.items).find(i => i.name === 'coil of rope');
     assert.ok(rope && far(rope, place.state.positions.Amber) <= 3 && far(rope, place.state.positions.Amber) >= 1, JSON.stringify(rope));
     assert.ok(applyPlaceChanges(place, { add_items: [{ name: 'a thing', at: 'nowhere' }] }).some(l => l.startsWith('⚠️')));
     assert.ok(applyPlaceChanges(place, { add_items: [{}] }).some(l => l.startsWith('⚠️')));

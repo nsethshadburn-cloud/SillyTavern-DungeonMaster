@@ -73,7 +73,7 @@ function turnStrip(c) {
     else if (busy) { who = cb.phase === 'others' ? `The DM runs ${others.length ? others.join(', ') : 'the others'}` : 'The DM is resolving your action'; cls = 'wait'; }
     else { who = 'YOUR TURN'; cls = 'you'; }
     const chips = (cb.order || []).map(o => `<span class="dm-turn-chip ${o.name === me ? 'me' : cb.enemies?.[o.name] ? 'foe' : 'friend'}${o.name === me && cls === 'you' ? ' active' : ''}">${escapeHtml(o.name)} <b>${o.init}</b></span>`).join('');
-    return `<span class="dm-turn-round">⚔️ Round ${cb.round ?? 1}</span><span class="dm-turn-who ${cls}">${who}</span>${inOrder ? `<span class="dm-turn-move" title="Squares moved this round / allowed (a Dash doubles it)">Move ${budget.used}/${budget.max}${budget.dashing ? ' · dashing' : ''} · ${budget.left * 5} ft left</span>` : ''}<span class="dm-turn-order">${chips}</span>`;
+    return `<span class="dm-turn-round">⚔️ Round ${cb.round ?? 1}</span><span class="dm-turn-who ${cls}">${who}</span>${inOrder ? `<span class="dm-turn-move" title="Squares moved this round / allowed (a Dash doubles it)">Moved ${budget.used} of ${budget.max}${budget.dashing ? ' (dashing)' : ''} · ${budget.left} left (${budget.left * 5} ft)</span>` : ''}<span class="dm-turn-order">${chips}</span>`;
 }
 
 function ensurePanel() {
@@ -228,16 +228,20 @@ function board(c) {
         // A companion held somewhere (caged in the dungeon) shows only once the party can see them.
         for (const n of names) { const p = place.state.positions[n]; if (p?.floor === floorId && (!place.state.held?.[n] || visible[p.y * floor.map.w + p.x])) positions[n] = toCoord(p.x, p.y); }
         const enemies = new Set(), people = new Set(), guards = new Set();
+        // What the player sees with their own eyes (the map draws what any of the party sees; the chips say who it is that sees).
+        const mine = lead && lead.floor === floorId ? computeVisible(place, floorId, [{ x: lead.x, y: lead.y }], { radius: 12 }) : null;
+        const seenBy = {};
         for (const g of Object.values(place.guards)) {
             if (g.state === 'gone' || g.floor !== floorId || !visible[g.y * floor.map.w + g.x]) continue;
             positions[g.name] = toCoord(g.x, g.y);
+            if (mine && !mine[g.y * floor.map.w + g.x]) seenBy[g.name] = names.slice(1).find(n => { const p = place.state.positions[n]; return p?.floor === floorId && computeVisible(place, floorId, [{ x: p.x, y: p.y }], { radius: 12 })[g.y * floor.map.w + g.x]; }) || 'the party';
             people.add(g.name);
             if (g.hostile !== false && g.state !== 'dead') enemies.add(g.name);
             else if (g.role === 'guard' && g.state !== 'dead') guards.add(g.name);
         }
         const room = lead && lead.floor === floorId ? roomAt(place, floorId, lead.x, lead.y) : null;
         const trespass = trespassOf(place, c.meta.persona.name, roomAt);
-        return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? '', place.state.night ? '🌙 night' : ''].filter(Boolean).join(' · '), trespass, map: floor.map, positions, enemies, people, guards, visible, fog: place.fog !== false, night: place.state.night === true };
+        return { kind: 'place', key, place, floor, title: `🗺️ ${place.name}`, sub: [place.floors.length > 1 ? floor.name : '', room?.name ?? '', place.state.night ? '🌙 night' : ''].filter(Boolean).join(' · '), trespass, map: floor.map, positions, enemies, people, guards, visible, seenBy, fog: place.fog !== false, night: place.state.night === true };
     }
     if (w.sceneMap?.map) return { kind: 'scene', title: `🗺️ ${w.sceneMap.title || 'Map'}`, sub: '', map: w.sceneMap.map, positions: w.sceneMap.positions || {}, enemies: new Set() };
     return null;
@@ -288,7 +292,7 @@ function renderMap(center = false) {
     const roster = Object.entries(b.positions).map(([name, coord]) => {
         const hp = hpOf(c, name);
         const cls = b.enemies.has(name) ? 'foe' : party.has(name) ? 'friend' : b.guards?.has(name) ? 'guard' : 'other';
-        return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} <b>${coord}</b>${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}${b.place?.guards?.[name]?.down ? ` · ${{ asleep: 'asleep', unconscious: 'out cold', bound: 'tied up' }[b.place.guards[name].down]}` : ''}</span>`;
+        return `<span class="dm-map-chip ${cls}">${escapeHtml(name)} ${b.seenBy?.[name] ? `<i>seen by ${escapeHtml(b.seenBy[name].split(' ')[0])}</i>` : `<b>${coord}</b>`}${hp ? ` · ${hp.hp}/${hp.hp_max}` : ''}${waiting[name] ? ' · waiting' : ''}${b.place?.guards?.[name]?.down ? ` · ${{ asleep: 'asleep', unconscious: 'out cold', bound: 'tied up' }[b.place.guards[name].down]}` : ''}</span>`;
     }).join('');
     const exploring = b.kind === 'place';
     const seenSq = b.place && b.floor ? (x, y) => isExplored(b.place, b.floor.id, x, y) : () => true;
@@ -880,6 +884,13 @@ function addToMessage() {
 function closeMenu() {
     panel?.querySelector('.dm-map-menu')?.remove();
 }
+if (typeof document !== 'undefined') document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+
+/** "Talk to Judy", "Talk to Wolf 1": the first name, unless the name is numbered or one word. */
+function talkName(who) {
+    const parts = String(who).split(' ');
+    return parts.length > 1 && !/^\d+$/.test(parts.at(-1)) ? parts[0] : who;
+}
 
 /** Put text in the message box and send it as the player's move (or leave it there if they were typing). */
 function sendAsPlayer(text, { send = true } = {}) {
@@ -937,12 +948,12 @@ function showPerson(ev, c, b, who) {
         }
     } else if (companion) {
         // Orders go through the chat: they answer, and the code reads their answer (follow, stay, stick close).
-        actions.push([`Talk to ${who.split(' ')[0]}`, 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
+        actions.push([`Talk to ${talkName(who)}`, 'fa-comment', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.*`, { send: false }); }]);
         actions.push(['Wait here', 'fa-hand', () => { closeMenu(); sendAsPlayer(`*${player} turns to ${who}.* "Wait here, ${first}. I'll be back."`); }]);
         actions.push(['Come along', 'fa-person-walking', () => { closeMenu(); sendAsPlayer(`*${player} nods to ${who}.* "Come on, ${first}. With me."`); }]);
         actions.push(['Stick with me', 'fa-people-arrows', () => { closeMenu(); sendAsPlayer(`*${player} looks at ${who}.* "${first}, stay close. Right by me."`); }]);
     } else if (npc && npc.state !== 'dead' && npc.state !== 'gone') {
-        actions.push([`Talk to ${who.split(' ')[0]}`, 'fa-comment', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); }]);
+        actions.push([`Talk to ${talkName(who)}`, 'fa-comment', async () => { if (!(await near())) return; closeMenu(); sendAsPlayer(`*${player} walks up to ${who}.*`, { send: false }); }]);
         actions.push(['Attack', 'fa-khanda', async () => { if (!(await near())) return; closeMenu(); setMapAction(`${player} attacks ${who} (${npc.description || 'on the map'}) from the map, right beside them. That starts a fight: start_combat with ${who} in it and ask for initiative; their attack comes in order.`); sendAsPlayer(`*${player} attacks ${who}!*`); }]);
     }
     showMenu(ev, who, lines.join(' · ') || (companion || isPlayer ? 'fine' : ''), actions);

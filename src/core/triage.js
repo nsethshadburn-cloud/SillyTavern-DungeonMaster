@@ -344,3 +344,8 @@ export function attacksSomeone(text) {
         .replace(/\b(?:strikes? (?:a|the|up a) (?:deal|bargain|conversation)|hits? the (?:road|hay|sack|deck|ground)|kicks? (?:off|back|the (?:fire|dirt|dust)))\b/gi, ' ');
     return ATTACK_WORDS.test(t);
 }
+/** "I end my turn.", "end turn", "done": the player hands the round on in words (the same as the End my turn button). */
+export function isEndTurn(text) {
+    const s = String(text || '').trim().replace(/^[*_("\s]+|[*_)".!\s]+$/g, '').toLowerCase();
+    return /^(?:(?:i|i'll|ill)\s+)?(?:end|pass|finish)(?:\s+my)?\s+turn$|^(?:that'?s|thats)\s+(?:my|it for my|the end of my)\s+turn$|^end of (?:my )?turn$|^(?:done|i'm done|im done|next)$/.test(s);
+}

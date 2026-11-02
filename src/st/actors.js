@@ -268,6 +268,7 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
     const partyMatch = partyNames.find(n => nameKey(n) === nameKey(speaker)) ?? (exactNpc ? null : matchName(speaker, partyNames));
     if (partyMatch) {
         await speakPartyMember(partyMatch, brief, { signal, length });
+        c.meta.stats.localTurns = (c.meta.stats.localTurns || 0) + 1;
         return 'party';
     }
     const npcMatch = matchName(speaker, (c.docs.npcs || []).map(n => n.name));
@@ -284,6 +285,7 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
     }
     npc.lastSeen = c.docs.world.location || npc.lastSeen;
     await speakNpcMember(npc, brief, { signal, length });
+    c.meta.stats.localTurns = (c.meta.stats.localTurns || 0) + 1;
     return 'npc';
 }
 

@@ -20,7 +20,7 @@ export function wordFor(minutes) {
 }
 
 const NAMED = {
-    midnight: 0, 'small hours': 180, 'late night': 60, 'dead of night': 120, 'first light': 330, daybreak: 360, dawn: 360, sunrise: 360, 'early morning': 420,
+    midnight: 0, 'small hours': 180, 'late night': 60, 'dead of night': 120, 'middle of the night': 90, 'late at night': 1380, 'deep night': 120, 'first light': 330, daybreak: 360, dawn: 360, sunrise: 360, 'early morning': 420,
     morning: 480, 'mid-morning': 600, midmorning: 600, noon: 720, midday: 720, afternoon: 840, 'late afternoon': 960, 'early evening': 1050,
     dusk: 1140, sunset: 1140, evening: 1140, nightfall: 1200, night: 1320, 'late evening': 1260,
 };

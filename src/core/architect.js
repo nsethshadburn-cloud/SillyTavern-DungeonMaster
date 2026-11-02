@@ -543,7 +543,7 @@ export function normalizeBrief(raw, req = {}) {
         summary: str(d.summary || req.why).slice(0, 600),
         objective: str(d.objective ?? req.objective).slice(0, 80),
         objectiveNear: str(d.objective_near ?? d.objectiveNear).slice(0, 120),
-        rooms: arr(d.rooms ?? d.story).filter(x => x && typeof x === 'object').slice(0, 8).map(x => ({ room: str(x.room ?? x.where ?? x.name).slice(0, 60), name: str(x.name && x.room ? x.name : '').slice(0, 60), has: arr(x.has ?? x.items ?? x.item).map(str).filter(Boolean).slice(0, 3), hidden: x.hidden === true, note: str(x.note ?? x.what).slice(0, 160) })).filter(x => x.room),
+        rooms: arr(d.rooms ?? d.story).filter(x => x && typeof x === 'object').slice(0, 8).map(x => ({ room: str(x.room ?? x.where ?? x.name).slice(0, 60), name: str(x.name && x.room ? x.name : '').slice(0, 60), has: arr(x.has ?? x.items ?? x.item).map(str).filter(Boolean).filter(it => !/\b(?:traps?|snares?|tripwires?|pits?|palisade|walls?|fence|fences|perimeter|cardinal|stakes|ditch|moat|gate|gates|tunnel|path|trail)\b/i.test(it)).slice(0, 3), hidden: x.hidden === true, note: str(x.note ?? x.what).slice(0, 160) })).filter(x => x.room),
         people: arr(d.people).filter(x => x && typeof x === 'object' && str(x.name)).slice(0, 8).map(x => ({ name: str(x.name).slice(0, 50), what: str(x.what ?? x.description ?? x.role).slice(0, 160), where: str(x.where ?? x.room).slice(0, 60), hostile: x.hostile === true || x.hostile === 'true', carries: arr(x.carries).map(str).filter(Boolean).slice(0, 3) })),
         locked: arr(d.locked).filter(x => x && typeof x === 'object' && str(x.room)).slice(0, 4).map(x => ({ room: str(x.room).slice(0, 60), key: str(x.key).slice(0, 50), keyIn: str(x.key_in ?? x.keyIn ?? x.holder).slice(0, 60) })),
         secrets: arr(d.secrets).filter(x => x && typeof x === 'object' && (str(x.to) || str(x.from))).slice(0, 3).map(x => ({ from: str(x.from).slice(0, 60), to: str(x.to).slice(0, 60), how: str(x.how).slice(0, 120) })),
@@ -1400,7 +1400,9 @@ export function wildsFromBrief(briefIn, seed = 1) {
     const rooms = [{ id: 'W1', name: pick(r, ['Trailhead', 'Edge of the Trees', 'Where the Path Starts']), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: true }];
     for (let i = 0; i < n - 1; i++) rooms.push({ id: `W${i + 2}`, name: names[i % names.length], type: 'room', floor: 'F0', size: campsite ? 'medium' : pick(r, ['small', 'medium', 'large']), description: '', props: [], marks: [], traps: [], items: [], exit: false });
     for (const s of brief.rooms) {
-        const hit = rooms.find(x => nameKey(x.name).includes(nameKey(s.room)) || nameKey(s.room).includes(nameKey(x.name)));
+        const hit = rooms.find(x => nameKey(x.name).includes(nameKey(s.room)) || nameKey(s.room).includes(nameKey(x.name)))
+            // Somebody's own camp is one clearing: its tent, its fire and its bedrolls are in it, never spots of their own.
+            ?? (campsite && /\b(?:tents?|fire|camp|bedrolls?|lean-to|shelter|clearing|hearth)\b/i.test(`${s.room} ${s.name}`) ? rooms[1] : null);
         const rm = hit ?? (rooms.push({ id: `W${rooms.length + 1}`, name: cap(s.name || s.room), type: 'room', floor: 'F0', size: 'medium', description: '', props: [], marks: [], traps: [], items: [], exit: false }), rooms.at(-1));
         for (const it of s.has) rm.items.push({ name: it, hidden: s.hidden, note: s.note });
     }

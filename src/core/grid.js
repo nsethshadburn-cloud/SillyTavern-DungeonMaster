@@ -10,7 +10,7 @@ export const MAX_PLACE_SIZE = 64;
 
 /** Terrain characters Claude may use in map rows. "." is the theme's own floor (stone, planks, grass...). */
 export const TERRAIN = Object.freeze({
-    '.': { name: 'floor (the theme\'s usual floor)', walk: true, cover: false },
+    '.': { name: 'open floor', walk: true, cover: false },
     '_': { name: 'wooden planks', walk: true, cover: false },
     '=': { name: 'flagstones or cobbles', walk: true, cover: false },
     ',': { name: 'grass', walk: true, cover: false },
