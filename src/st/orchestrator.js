@@ -2204,7 +2204,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const outcome = r.spot && spotNoticed !== null ? `${r.spot.seer} ${spotNoticed ? 'noticed' : 'did not notice'} ${r.spot.seen}` : judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {
             const key = matchName(r.who, [...meta.party.map(p => p.name), ...c.docs.npcs.map(n => n.name)]) || r.who;
-            outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}Your ${r.what} ${judged.success === false ? 'failed' : 'worked'} (already told by the game master; react to it, don't describe it again): ${outcome}`;
+            outcomesBySpeaker[key] = `${outcomesBySpeaker[key] ? outcomesBySpeaker[key] + ' ' : ''}What you just did (${r.what}) ${judged.success === false ? 'failed' : 'worked'}; it has already happened and been told, so react to it in your own way, don't describe it again, and never call it a roll: ${outcome}`;
         }
     }
     fallenInFight(c);
@@ -2306,7 +2306,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
         // A roll the player is about to make: the speaker doesn't settle it or act on them first.
-        const pendingLine = t.player_roll && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is about to roll ${t.player_roll.skill || 'a check'}${t.player_roll.reason ? `: ${t.player_roll.reason}` : ''}. Don't settle it and don't do anything to ${meta.persona.name} before it's rolled.)` : '';
+        // In her words, not the table's: she doesn't know what a roll is.
+        const pendingLine = t.player_roll && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is in the middle of ${t.player_roll.kind === 'initiative' ? 'the first moment of a fight that is just breaking out; nobody has struck yet' : t.player_roll.kind === 'attack' ? 'a swing at someone, not yet landed' : 'trying something, not yet done'}. Don't settle how it goes, and don't act on ${meta.persona.name} until it has; ${speaker} speaks of what she sees, never of dice, rolls or turns.)` : '';
         // In a fight, or while just exploring (nobody talking to them): one short line.
         // Out of talking range: a shout of a few words, or nothing.
         const far = c.meta.party.some(p => p.name === speaker) && talkRange(c, speaker) === 'far';

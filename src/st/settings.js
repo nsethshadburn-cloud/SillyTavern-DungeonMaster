@@ -140,6 +140,12 @@ export function settings() {
         if (s.templates?.room === OLD_DEFAULTS.roomV33 || s.templates?.room === OLD_DEFAULTS.room) s.templates.room = DEFAULT_TEMPLATES.room;
         s.roomV35 = true;
     }
+    // v0.63.2: a companion never talks dice (untouched old defaults only).
+    if (!s.noDiceV63) {
+        if (s.templates?.brief === OLD_DEFAULTS.briefV63) s.templates.brief = DEFAULT_TEMPLATES.brief;
+        if (s.templates?.combat === OLD_DEFAULTS.combatV63) s.templates.combat = DEFAULT_TEMPLATES.combat;
+        s.noDiceV63 = true;
+    }
     // v0.35.2: English only, and an NPC never narrates a blow landing (untouched old defaults only).
     if (!s.englishV35) {
         if (s.templates?.scene === OLD_DEFAULTS.sceneV31 || s.templates?.scene === OLD_DEFAULTS.sceneV30) s.templates.scene = DEFAULT_TEMPLATES.scene;
