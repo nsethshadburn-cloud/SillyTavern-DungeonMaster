@@ -312,8 +312,8 @@ async function turnBody(c, opts, status, signal) {
     // Only when they DO something to it (open, search, smash, hide behind, climb...); a line about leaning on a log is roleplay. A tap on the map already said which one.
     const actsOnThing = Boolean(triage.task?.who) || /\b(open|close|shut|search|rummage|look (?:in|inside|into|through|under|behind)|check|examine|inspect|read|smash|break|bash|kick|force|pry|push|shove|pull|drag|lift|climb|hide|take|grab|pick (?:up|the|it)|unlock|lock|light|loot|rifle|empty|dig|cut|untie|tap|knock|jam|barricade|wedge|sit|lie down|sleep|rest on|attack|stab|hit|strike|smack)\b/i.test(playerText);
     // "Amber climbs into the wagon": in by code, and the DM told so (never narrated from outside).
-    if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted && !peekMapAction()) {
-        const climbed = await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
+    if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
+        const climbed = peekMapAction() ? '' : await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
         if (climbed) { events.push(climbed); status.note('Climbed into the wagon'); }
         const bolt = await custodyBolt(c, playerText).catch(error => { console.warn('[Dungeon Master] custody chase failed', error); return ''; });
         if (bolt) { events.push(bolt); status.note('The chase is on'); }
@@ -485,7 +485,7 @@ async function turnBody(c, opts, status, signal) {
         }
         // Their action is resolved: done with the turn, or more to do (movement, a bonus action)?
         const cb = c.docs.world.combat;
-        if (cb && turnPromptsOn() && cb.phase === 'player' && !triage.ooc && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0) && !(meta.lastRoll?.kind === 'initiative' && meta.lastRoll.turn === meta.turn)) {
+        if (cb && turnPromptsOn() && cb.phase === 'player' && !opts.force && !triage.ooc && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0) && !(meta.lastRoll?.kind === 'initiative' && meta.lastRoll.turn === meta.turn)) {
             if (await askEndTurn(meta.persona.name)) {
                 cb.phase = 'others';
                 saveDoc('world');

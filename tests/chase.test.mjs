@@ -6,7 +6,7 @@ import { saysRun, givesIn } from '../src/core/access.js';
 import { normalizeBrief, wildsFromBrief } from '../src/core/architect.js';
 import { DM_RULES } from '../src/core/protocol.js';
 import { repeatedTopics } from '../src/core/text.js';
-import { keeperWords, asksAlong, parseKeeperStance } from '../src/core/triage.js';
+import { keeperWords, asksAlong, parseKeeperStance, attacksSomeone } from '../src/core/triage.js';
 import { applyPlaceChanges } from '../src/core/explore.js';
 
 test('"I run" is running; a hand run along a wall is not', () => {
@@ -86,4 +86,10 @@ test('custody starts in guard mode; the DM can set companion; a re-send keeps th
     assert.equal(place.state.custody.Amber.radius, 3);
     assert.ok(/GUARD \(the keeper has told them to stay/.test(DM_RULES));
     assert.ok(/COMPANION \(the keeper lets them walk/.test(DM_RULES));
+});
+test('drawing a sword "not to attack" is no attack; a stab is', () => {
+    assert.ok(!attacksSomeone('*amber draws his short sword, not to attack, but just to show he will defend himself*'));
+    assert.ok(!attacksSomeone('I raise the blade, only to warn her off'));
+    assert.ok(attacksSomeone('amber uses his short sword to stab the raider right beside him'));
+    assert.ok(/Custody ends by itself when the prisoner's cuffs or ropes come off/.test(DM_RULES));
 });

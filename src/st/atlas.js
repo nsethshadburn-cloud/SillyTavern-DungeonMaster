@@ -276,7 +276,7 @@ function peopleWith(c, place, name, pos, rm) {
         const bits = [`${dist(p)} squares ${dir(p)}`];
         if (n === c.meta.persona.name && dist(p) > 1) bits.push(dist(p) > TALK_RANGE ? 'too far for talk: only a shout carries that far, and not every turn; mostly you act, you don\'t speak' : 'too far to touch, hold, hand anything to or whisper to: you would have to go over first');
         if (place.state.held?.[n]) bits.push('held here');
-        if (custody[n]?.by === name) bits.push(custody[n].slipped ? `YOUR PRISONER ${n} got out of your sight: you don't know where they are and you're searching (the map moves you; say and do what a searcher does, call out, listen; never claim to see, hold or catch them: the code says when you find them)` : custody[n].mode === 'companion' ? `YOUR PRISONER ${n}: you're going along with them, close by, wherever they walk (tell them to stay put, and mean it, to change that)` : `YOUR PRISONER ${n}: you've told them to stay; a step beyond ${custody[n].radius} squares and you go after them (the map does it)`);
+        if (custody[n]?.by === name) bits.push(custody[n].slipped ? `YOUR PRISONER ${n} got out of your sight: you don't know where they are and you're searching (the map moves you; say and do what a searcher does, call out, listen; never claim to see, hold or catch them: the code says when you find them)` : (custody[n].mode ?? 'companion') === 'companion' ? `YOUR PRISONER ${n}: you're going along with them, close by, wherever they walk (tell them to stay put, and mean it, to change that)` : `YOUR PRISONER ${n}: you've told them to stay; a step beyond ${custody[n].radius} squares and you go after them (the map does it)`);
         if (custody[name]?.by === n) bits.push(`you are their prisoner`);
         const r = restraintOf(conditionsOf(c.docs.world, n));
         if (r.look) bits.push(r.look === 'cage' ? 'in a cage' : r.look === 'rope' ? 'tied up' : 'cuffed');
@@ -1718,7 +1718,7 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     const deciding = leaving ? onFloor.filter(n => { const p = place.state.positions[n]; return roomAt(place, floorId, p.x, p.y)?.id === fromRoom?.id && !['close', 'follow'].includes(c.meta.stance?.[n]); }) : [];
     const active = new Set(onFloor.filter(n => !deciding.includes(n)));
     // A keeper whose prisoner slipped out of her sight doesn't know where he is: she searches on her own turn (keeperTurn), never trails him.
-    for (const [p, r] of Object.entries(place.state.custody || {})) if (p === names[0] && (r.slipped || (r.mode !== 'companion' && (r.escortUntil ?? -1) < c.meta.turn))) active.delete(r.by);
+    for (const [p, r] of Object.entries(place.state.custody || {})) if (p === names[0] && (r.slipped || ((r.mode ?? 'companion') !== 'companion' && (r.escortUntil ?? -1) < c.meta.turn))) active.delete(r.by);
     const refused = new Set();
     const pending = deciding.map(n => decideFollow(c, n, fromRoom?.name, toRoom?.name).then(d => {
         if (d.follows) { active.add(n); return; }
@@ -2417,7 +2417,7 @@ async function custodyCheck(c, cur, start, { catchUp = null } = {}) {
     // After a challenge the walk is an escort for a few turns, so a prisoner marched somewhere isn't nagged each step.
     // Companion mode (she goes along with him), or an escort for a few turns (she leads, or he gave in): a walk is no escape; only his words make a chase.
     // Guard mode: she's told him to stay, so she isn't on his heels; beyond her radius he's making off, and she sees it (below).
-    if (!rec.chase && (rec.mode === 'companion' || (rec.escortUntil ?? -1) >= c.meta.turn)) return '';
+    if (!rec.chase && ((rec.mode ?? 'companion') === 'companion' || (rec.escortUntil ?? -1) >= c.meta.turn)) return '';
     const map = floorById(place, lead.floor).map;
     const st = stealthThisTurn(c);
     const sees = computeVisible(place, lead.floor, [{ x: kp.x, y: kp.y }], { radius: GUARD_SIGHT })[lead.y * map.w + lead.x] && !hiddenNow(place, player) && !(st && st.total >= passivePerceptionOf(c, rec.by));
@@ -2473,6 +2473,19 @@ export async function settleCustody(c, pr, success) {
     savePlace(key, c);
     if (tries >= 3) return `${player} slipped free of ${keeper} a third time: ${keeper} can't hold them by hand. Decide what ${keeper} does now (keeps after them on foot, calls out, gives up, draws a weapon: then start_combat) and brief ${keeper}.`;
     return `${player} slipped free of ${keeper}'s grab (${tries} of 3); ${keeper} keeps after them. Narrate it in a line, brief ${keeper} if they speak, and stop: the chase goes on by the code.`;
+}
+
+/** Call off the roll the code is waiting for: its card is marked (the dice watcher would recover it otherwise) and the request cleared. */
+function cancelPendingCard(c) {
+    const pr = c.meta.pendingRoll;
+    if (!pr) return;
+    const chat = ST.chat;
+    for (let i = chat.length - 1; i >= 0 && i >= chat.length - 40; i--) {
+        const req = chat[i]?.extra?.dungeon_master?.request;
+        if (req && !req.autoResult && req.reason === pr.reason) { req.cancelled = true; break; }
+    }
+    c.meta.pendingRoll = null;
+    saveMeta();
 }
 
 /**
@@ -2623,6 +2636,16 @@ export async function keeperTurn(c = campaign()) {
         await postNote(`📜 ${rec.by} gets up (−prone).`);
         return `${rec.by} gets up off the ground (no roll: her hands are free; it costs her this turn's move, so no grab this turn). Narrate it in a line and brief her.`;
     }
+    // Cuffs picked, ropes cut, and nobody holding them: they're nobody's prisoner until they're caught again.
+    const mine = conditionsOf(w, player);
+    if (!restraintOf(mine).bound && !mine.some(x => /^(?:grappled|pinned)\b/i.test(String(x)))) {
+        delete place.state.custody[player];
+        savePlace(key, c);
+        await postNote(`🔓 You're out of ${rec.by}'s hands: no cuffs, no rope, nobody holding you. ${rec.by} is a companion again unless she catches you.`);
+        const { refreshMap } = await import('../ui/map.js');
+        refreshMap();
+        return `${player}'s restraints are off and nobody holds them: they're nobody's prisoner now (custody ended by the code). ${rec.by} may try to take them again (a grab is a contested roll, cuffs are a story you tell with conditions_add), or let it be; send custody again only when she has hold of them.`;
+    }
     if (!rec.slipped) return '';
     const lead = place.state.positions[player];
     const kp = place.state.positions[rec.by];
@@ -2687,6 +2710,11 @@ export async function setCustodyMode(c, player, mode, why = '') {
     const rec = cur?.place.state.custody?.[player];
     if (!rec || (mode !== 'guard' && mode !== 'companion') || rec.mode === mode) return false;
     rec.mode = mode;
+    if (mode === 'companion') {
+        // She's going along: the chase is off, and a grab of hers still waiting for the player's roll is let go.
+        delete rec.chase; rec.grace = c.meta.turn + 1;
+        if (c.meta.pendingRoll?.custody?.keeper === rec.by) { cancelPendingCard(c); await postNote(`🎲 ${rec.by} lets go: that roll is off.`); }
+    }
     savePlace(cur.key, c);
     await postNote(mode === 'guard' ? `🔒 ${rec.by} has you stay put${why ? ` (${why})` : ''}: a step beyond ${rec.radius} squares is an escape.` : `🚶 ${rec.by} goes along with you${why ? ` (${why})` : ''}: walk where you like; "I run" is the only run.`);
     const { refreshMap } = await import('../ui/map.js');
@@ -2749,7 +2777,7 @@ export async function custodyBolt(c, text) {
         return wasChase ? `${player} gives in to ${rec.by} (in their own words): the chase is off and ${rec.by} has them. Narrate ${rec.by} taking hold of them and brief ${rec.by}; no roll.` : '';
     }
     // "Come with me", "let's go to the fire": walking together, she goes along (her reply may say otherwise).
-    if (asksAlong(text) && !saysRun(text)) { if (rec.mode !== 'companion') await setCustodyMode(c, player, 'companion', `${player} asked ${rec.by} along`); return ''; }
+    if (asksAlong(text) && !saysRun(text)) { if (rec.mode !== 'companion' && !rec.slipped) await setCustodyMode(c, player, 'companion', `${player} asked ${rec.by} along`); return ''; }
     if (!saysRun(text)) return '';
     if (lockedReason(c, player)) return '';
     const first = rec.by.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

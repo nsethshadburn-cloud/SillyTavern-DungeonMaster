@@ -341,7 +341,9 @@ const ATTACK_WORDS = /\b(attacks?|stabs?|slash(?:es)?|shoots?|swings? (?:at|his|
 export function attacksSomeone(text) {
     const t = String(text || '')
         .replace(/\b(?:strikes?|knocks?|cuts?|breaks?|smash(?:es)?|hits?|kicks?)\b[^.!?]{0,30}\b(?:off|out|loose|free|open|the door|the lock|the chain|the chains|the irons|the cuffs|the bars)\b/gi, ' ')
-        .replace(/\b(?:strikes? (?:a|the|up a) (?:deal|bargain|conversation)|hits? the (?:road|hay|sack|deck|ground)|kicks? (?:off|back|the (?:fire|dirt|dust)))\b/gi, ' ');
+        .replace(/\b(?:strikes? (?:a|the|up a) (?:deal|bargain|conversation)|hits? the (?:road|hay|sack|deck|ground)|kicks? (?:off|back|the (?:fire|dirt|dust)))\b/gi, ' ')
+        // "Draws his sword, not to attack, just to show he'll defend himself": a threat, not a swing.
+        .replace(/\b(?:not (?:to |going to |gonna )?(?:attack|strike|hit|stab|swing|fight)\w*|without (?:attacking|striking|swinging)|(?:just|only) to (?:show|warn|scare|make a point)|no(?:t an?)? attack)\b[^.!?]*/gi, ' ');
     return ATTACK_WORDS.test(t);
 }
 /** "I end my turn.", "end turn", "done": the player hands the round on in words (the same as the End my turn button). */
