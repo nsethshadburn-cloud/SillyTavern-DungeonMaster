@@ -1346,8 +1346,27 @@ export function townFromBrief(briefIn, seed = 1) {
     const n = brief.size === 'big' ? int(r, 11, 14) : brief.size === 'medium' ? int(r, 8, 10) : int(r, 5, 7);
     const buildings = [];
     const add = (kind, name, keeper, description, size) => buildings.push({ id: `B${buildings.length + 1}`, name, kind, sign: kind === 'house' ? '' : name, size: size || pick(r, ['small', 'medium', 'medium', 'large']), keeper, description, enterable: true });
+    // The story's named places first: the brief's "rooms" are, in a town, the places the story needs
+    // (an inn by its name, a fence's shop), and anywhere a person is said to be. They keep their names;
+    // the kind comes from the words; the person said to be there keeps it.
+    const storyKind = words => /\b(?:locksmith|smith|forge|smithy|armou?rer)\b/.test(words) ? 'smithy' : /\b(?:inn|lodging)\b/.test(words) ? 'inn' : /\b(?:tavern|alehouse|pub|taproom|bar)\b/.test(words) ? 'tavern' : /\b(?:temple|chapel|shrine|church)\b/.test(words) ? 'temple' : /\b(?:apothecary|alchemist|herbalist|remedies)\b/.test(words) ? 'alchemist' : /\b(?:bakery|baker)\b/.test(words) ? 'bakery' : /\b(?:stables?|livery)\b/.test(words) ? 'stable' : /\b(?:watch house|guard post|town watch|constable|jail|gaol|barracks)\b/.test(words) ? 'guard post' : /\b(?:tailor|seamstress|clothier)\b/.test(words) ? 'tailor' : /\b(?:bank|counting house|moneylender)\b/.test(words) ? 'bank' : /\bbutcher\b/.test(words) ? 'butcher' : /\b(?:library|archive|scrivener)\b/.test(words) ? 'library' : /\b(?:jewel+ers?|gems?)\b/.test(words) ? 'jeweler' : /\b(?:shop|store|goods|market|emporium|trader|merchant|warehouse|fence)\b/.test(words) ? 'general store' : 'house';
+    const storyName = s => String(s || '').replace(/^\s*(?:inside|in|at|outside|by|near|behind|the inside of)\s+(?:of\s+)?/i, '').replace(/\s*\([^)]*\)\s*$/, '').replace(/\s+/g, ' ').trim();
+    const NOT_A_BUILDING = /^(?:outside|the street|the lane|the road|the square|the market|entrance|the gate|the gates|with the party|town|the town|the village|anywhere|nowhere)$/i;
+    const PLACE_NOUN = /\b(?:inn|tavern|alehouse|shop|store|forge|smithy|house|hall|temple|shrine|chapel|church|stables?|bank|tower|office|post|yard|mill|warehouse|den|bakery|apothecary|archive|library)\b/i;
+    const storyPlaces = [];
+    for (const rm of brief.rooms) { const name = storyName(rm.room); if (name && !NOT_A_BUILDING.test(name)) storyPlaces.push({ name, words: `${rm.room} ${rm.note} ${rm.has.join(' ')}`.toLowerCase() }); }
+    for (const p of brief.people) { const name = storyName(p.where); if (name && !NOT_A_BUILDING.test(name) && PLACE_NOUN.test(name) && !storyPlaces.some(x => nameKey(x.name) === nameKey(name))) storyPlaces.push({ name, words: `${p.where} ${p.what}`.toLowerCase() }); }
+    for (const sp of storyPlaces) {
+        if (buildings.some(b => nameKey(b.name) === nameKey(sp.name))) continue;
+        const kind = storyKind(sp.words);
+        const keeper = brief.people.find(p => !p.hostile && nameKey(storyName(p.where)) === nameKey(sp.name));
+        const name = sp.name.charAt(0).toUpperCase() + sp.name.slice(1);
+        add(kind, name, keeper ? keeper.name : `${pick(r, GIVEN)} ${familyName(r)}`, keeper ? keeper.what : `${pick(r, KEEPER_LOOK)} ${kind === 'temple' ? 'priest' : kind === 'guard post' ? 'watch sergeant' : 'keeper'}.`);
+    }
     for (const [kind, names, p] of TOWN_BUILDINGS) {
         if (buildings.length >= n - 1) break;
+        // The story already has one of these (its inn, its smithy): no second one by chance.
+        if (buildings.some(b => b.kind === kind)) continue;
         if (!chance(r, p)) continue;
         const keeper = `${pick(r, GIVEN)} ${familyName(r)}`;
         add(kind, fill(pick(r, names)), keeper, `${keeper}, ${pick(r, KEEPER_LOOK)} ${kind === 'temple' ? 'priest' : kind === 'guard post' ? 'watch sergeant' : 'keeper'}.`);
@@ -1355,6 +1374,8 @@ export function townFromBrief(briefIn, seed = 1) {
     // The story's places in town: a named home or shop for each person the brief mentions.
     for (const p of brief.people) {
         if (buildings.some(b => nameKey(b.keeper) === nameKey(p.name))) continue;
+        // Someone the story puts at a named place, or out in the street, gets no house of their own.
+        if (p.hostile || (p.where && (NOT_A_BUILDING.test(storyName(p.where)) || storyPlaces.some(x => nameKey(x.name) === nameKey(storyName(p.where)))))) continue;
         const kind = /smith|forge/.test(p.what) ? 'smithy' : /priest|cleric/.test(p.what) ? 'temple' : /merchant|trader|shop/.test(p.what) ? 'general store' : 'house';
         add(kind, kind === 'house' ? `${p.name}'s House` : fill(pick(r, TOWN_BUILDINGS.find(([k]) => k === kind)?.[1] ?? ['{given}\'s Shop'])), p.name, p.what);
     }

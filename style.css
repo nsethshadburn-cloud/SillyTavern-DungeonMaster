@@ -73,6 +73,9 @@
 .dm-wiz-pitch:has(input:checked) { outline: 2px solid var(--SmartThemeQuoteColor); }
 .dm-wiz-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px 12px; }
 
+/* A popup the player must answer: the panels fade back and take no taps until it's gone. */
+body.dm-popup-open .dm-map, body.dm-popup-open .dm-screen { opacity: 0.25; pointer-events: none; }
+
 /* ---------- DM Screen ---------- */
 .dm-screen {
     position: fixed;

@@ -54,7 +54,8 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
         'Which changes does the story say ACTUALLY happened just now that the tracked list does not show yet? Only clear facts the story states, never guesses, plans, threats or things that might happen.',
         `- conditions someone gained, from this list only: ${CONDITIONS.map(([c]) => c).join(', ')}; or lost (woke up, got up, was untied, was cured)`,
         '- items someone picked up, was given or now carries; items someone lost, dropped, handed over or used up',
-        'JSON: {"conditions_add": {"Name": ["condition"]}, "conditions_remove": {"Name": ["condition"]}, "items_add": {"Name": ["item"]}, "items_remove": {"Name": ["item"]}} with empty objects when nothing changed.',
+        '- coin the party paid or was paid: "gold" is the change to the party\'s gold, minus when they paid (10 silver = 1 gold, 100 copper = 1 gold); 0 when no coin changed hands',
+        'JSON: {"conditions_add": {"Name": ["condition"]}, "conditions_remove": {"Name": ["condition"]}, "items_add": {"Name": ["item"]}, "items_remove": {"Name": ["item"]}, "gold": 0} with empty objects and 0 when nothing changed.',
     ].filter(Boolean).join('\n');
     return { system, user };
 }
@@ -132,5 +133,8 @@ export function parseBookkeeping(text, { names, itemNames = names, conditionsOf,
         if (add.length) out.items_add[name] = [...new Set(add)];
     }
     for (const k of Object.keys(out)) if (!Object.keys(out[k]).length) delete out[k];
+    // Coin: only when the story plainly has coin change hands, and never a fortune from a mention.
+    const gold = Number(data.gold);
+    if (Number.isFinite(gold) && gold !== 0 && Math.abs(gold) <= 500 && /\b(?:pays?|paid|paying|coins?|gold|silver|copper|price|costs?|buys?|bought|sells?|sold|purse|hands? over|handed over|counts? out|change)\b/i.test(story)) out.gold = Math.round(gold * 100) / 100;
     return Object.keys(out).length ? out : null;
 }

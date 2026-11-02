@@ -60,6 +60,21 @@ export function parseNotation(notation) {
 }
 
 /**
+ * "1d6+5+3d6+6 Sneak Attack" as one formula the dice can roll: like dice merged, bonuses summed
+ * ("4d6+11"). Empty when there are no dice in it.
+ */
+export function normalizeNotation(formula) {
+    const text = String(formula ?? '');
+    const dice = {};
+    for (const [, n, sides] of text.matchAll(/(\d*)\s*d\s*(\d+)/gi)) dice[Number(sides)] = (dice[Number(sides)] ?? 0) + (Number(n) || 1);
+    let bonus = 0;
+    for (const [, sign, n] of text.replace(/(\d*)\s*d\s*(\d+)/gi, ' ').matchAll(/([+-])\s*(\d+)/g)) bonus += sign === '-' ? -Number(n) : Number(n);
+    const parts = Object.entries(dice).sort((a, b) => Number(b[0]) - Number(a[0])).map(([sides, n]) => `${n}d${sides}`);
+    if (!parts.length) return '';
+    return parts.join('+') + (bonus > 0 ? `+${bonus}` : bonus < 0 ? `${bonus}` : '');
+}
+
+/**
  * Roll dice notation.
  * @param {string} notation e.g. "1d20+5"
  * @param {{advantage?: 'advantage'|'disadvantage'|'none'|string, rng?: (sides:number)=>number}} [options]
@@ -199,6 +214,8 @@ export function diceMax(expr) {
 export function parsePlayerRoll(text, dieSides = 20, { advantage = 'none' } = {}) {
     if (!text) return null;
     const t = String(text).toLowerCase();
+    // "/roll 4d6+11" (or a slip of it) is a command or a formula, never the number that came up.
+    if (/\/roll\b|\b\d*d\d+\b/.test(t) && !/\b(?:total|rolled|result|nat(?:ural)?)\b/.test(t)) return null;
     let natural = null;
     let total = null;
     const nat = t.match(/\bnat(?:ural)?\s*(\d{1,3})\b/);

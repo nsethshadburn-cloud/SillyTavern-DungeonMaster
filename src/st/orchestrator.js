@@ -22,7 +22,7 @@ import { isWildKind } from '../core/architect.js';
 import { restraintOf, standingRestraints } from '../core/restraints.js';
 import { applyMapEffects, fireTurn } from './fire-turn.js';
 import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins, codeRoll } from './atlas.js';
+import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins, codeRoll, enterOrLeaveFromText } from './atlas.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
 import { targetLine } from '../core/targets.js';
@@ -31,7 +31,7 @@ import { beginTurn } from '../ui/status.js';
 import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
-import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax } from '../core/dice.js';
+import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax, normalizeNotation } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, custodyFreed, custodyFromStory, boundNow, settleCustody, settleTrip, settleHide } from './custody.js';
@@ -316,6 +316,11 @@ async function turnBody(c, opts, status, signal) {
     if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
         const climbed = peekMapAction() ? '' : await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
         if (climbed) { events.push(climbed); status.note('Climbed into the wagon'); }
+    }
+    // "Amber goes into the inn", "steps out into the lane": through the door by code, from the words (the DM's enter_place does the same).
+    if (!autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted && !peekMapAction()) {
+        const moved = await enterOrLeaveFromText(c, triage.ooc ? triage.oocText : playerText, refreshMap, { ooc: Boolean(triage.ooc) }).catch(error => { console.warn('[Dungeon Master] door from the words failed', error); return ''; });
+        if (moved) { events.push(moved); status.note('Through the door, from the words'); }
     }
     // Held by a companion: the referee reads the line (run, along, give in, trip) and the code does it; "((Judy tries to grab Amber))" is her contest; "Amber hauls Judy to her feet" stands her up.
     if (!autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
@@ -1276,7 +1281,7 @@ async function resolvePlayerRoll(c, parsed, status) {
     if (pr.kind === 'attack' && judged.success === true) {
         const dice = judged.critical ? (pr.damage ? doubleDice(pr.damage) : attackDamage(statsForName(meta.persona.name, meta), `${pr.reason || ''} ${pr.skill || ''}`, { critical: true })) : pr.damage;
         if (dice) {
-            await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: dice, half: false, bonus: null, spot: null, target: playerTarget(c, pr) });
+            await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: normalizeNotation(dice) || dice, half: false, bonus: null, spot: null, target: playerTarget(c, pr) });
             saveHurt += ` The code has already asked ${meta.persona.name} to roll damage (${dice}): don't ask again; narrate the hit and wait for the total.`;
         }
     }
@@ -1791,9 +1796,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (lines.length) await postDiceCard(`📜 ${lines.join(' · ')}`, { state: true });
     }
     if (t.end_combat && world.combat?.inPlace) {
-        // Back to exploring: the party stays where the fight left them.
+        // Back to exploring: the party stays where the fight left them, on the map the fight was on
+        // (a fight that began inside the shop never puts the shop's squares on the town map).
         const here = currentPlace(c);
-        if (here) {
+        if (here && here.key !== world.combat.inPlace.key) status.note(`The fight was on ${world.combat.inPlace.key}, the party is on ${here.key}: the fight's positions stay there`);
+        if (here && here.key === world.combat.inPlace.key) {
             const floorId = world.combat.inPlace.floor, map = floorById(here.place, floorId).map;
             mergeBurn(world.combat.map, map);
             const party = new Set([meta.persona.name, ...meta.party.map(p => p.name)].map(nameKey));

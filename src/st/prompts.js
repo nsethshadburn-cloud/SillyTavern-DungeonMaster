@@ -49,10 +49,17 @@ export async function askGiveIn(guard, player) {
  * @param {{who: string, what: string, total: number, dc: number|null, damage: number, detail: string}} hit
  * @returns {Promise<{kind: 'take'} | {kind: 'half'} | {kind: 'other', text: string}>}
  */
+/** A popup the player must answer sits in front of the map and the DM screen (they fade and take no taps until it's gone), and a toast says it's there. */
+async function withPanelsBack(fn) {
+    document.body.classList.add('dm-popup-open');
+    try { toastr.info('A question waits for you in the popup.', 'Dungeon Master', { timeOut: 4000 }); } catch { /* no toastr */ }
+    try { return await fn(); } finally { document.body.classList.remove('dm-popup-open'); }
+}
+
 export async function askReaction(hit) {
-    const r = await withDraft(() => ST.callGenericPopup(
+    const r = await withPanelsBack(() => withDraft(() => ST.callGenericPopup(
         `<h3>${escape(hit.who)} hits you</h3><p>${escape(hit.what || 'Attack')}: <b>${hit.total}</b>${hit.dc !== null ? ` vs AC ${hit.dc}` : ''} · <b>${hit.damage}</b> damage (${escape(hit.detail)}).</p><p>React before it lands? <i>Uncanny Dodge</i> and the like halve it. Anything else (a spell, a feature, an item) goes to the DM to rule on, and the damage waits.</p>`,
-        ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Take the hit', cancelButton: false, customButtons: ['Half damage (Uncanny Dodge…)', 'React another way…'] }));
+        ST.POPUP_TYPE.CONFIRM, '', { okButton: 'Take the hit', cancelButton: false, customButtons: ['Half damage (Uncanny Dodge…)', 'React another way…'] })));
     // SillyTavern numbers custom buttons from 2 (index + 2) in current builds, 1001 up in older ones.
     if (r === ST.POPUP_RESULT.CUSTOM1 || r === 1001 || r === 2) return { kind: 'half' };
     if (r === ST.POPUP_RESULT.CUSTOM2 || r === 1002 || r === 3) {

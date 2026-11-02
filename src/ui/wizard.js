@@ -371,6 +371,19 @@ async function buildCampaign(form) {
         const { loadForCurrentChat, campaign, saveDoc } = await import('../st/campaign.js');
         await loadForCurrentChat();
         const c = campaign();
+        // What the party starts with: the premise's coin and gear, on the books from the first turn.
+        if (c && json.start && typeof json.start === 'object') {
+            const w = c.docs.world;
+            const gold = Number(json.start.gold);
+            if (Number.isFinite(gold) && gold > 0) w.gold = Math.min(100000, Math.round(gold * 100) / 100);
+            const names = [persona.name, ...partyChars.map(p => p.name)];
+            for (const [who, items] of Object.entries(json.start.inventory || {})) {
+                const name = names.find(n => n.toLowerCase() === String(who).toLowerCase());
+                if (!name || !Array.isArray(items)) continue;
+                (w.inventory ??= {})[name] = [...new Set(items.map(x => String(x).trim().slice(0, 40)).filter(Boolean))].slice(0, 8);
+            }
+            saveDoc('world');
+        }
         // Where each companion starts: anyone not with the player is away from the start (and, on a
         // map, put where the setup says, like a cage elsewhere in the prison).
         const away = {};

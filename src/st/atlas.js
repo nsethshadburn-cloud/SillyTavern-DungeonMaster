@@ -13,7 +13,7 @@ import { lockDc, lockWords, pickModifier, notePickFailure, keyFor } from '../cor
 import { roll } from '../core/dice.js';
 import { slug, nameKey, matchName } from '../core/text.js';
 import { normalizePlan, normalizeTownPlan, generatePlace, generateTown, generateInterior, generateGrounds, generateWilds, WILD_KINDS, clearDoorways, ensureIds } from '../core/layout.js';
-import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson, syncMounts } from '../core/explore.js';
+import { floorById, roomAt, doorAt, stairsAt, exitAt, computeVisible, reveal, findPath, isExplored, stepOn, hiddenNow, hideIn, poseNow, restOn, standUp, caughtNow, release, adoptTrapProps, followSteps, trapsKnownTo, learnTraps, freeNear, setDoorState, tickGuards, visibleGuards, walkable, propById, moveProp, windowAt, adoptStrays, placePerson, syncMounts, looksLikePlace } from '../core/explore.js';
 import { isBeast } from '../core/sprites.js';
 import { applySceneCard } from '../core/state.js';
 import { lookupModifier, isAway, applyPresence, conditionsOf, isNight, isLate, applyStateChanges } from '../core/world.js';
@@ -340,6 +340,8 @@ export function goTargets(c, name) {
         const other = cur.place.rooms[d.rooms.find(id => id && id !== rm.id)];
         if (other && !out.some(o => o.id === other.id)) out.push({ id: other.id, name: `${other.name} (next door)` });
     }
+    // The way out: "go check the lane outside" sends them to the door to the street.
+    for (const d of Object.values(cur.place.doors)) if (d.exit && d.floor === pos.floor && !['locked', 'hidden', 'walled'].includes(d.state) && !out.some(o => o.id === d.id)) out.push({ id: d.id, name: 'the door out to the street (outside)' });
     return out.slice(0, 24);
 }
 
@@ -1195,6 +1197,13 @@ export async function requestBuild(req, { status = null, signal = null, plan = n
         }
         anim.step(town ? `Raising ${Object.keys(place.buildings).length} buildings` : camp ? `Posting ${Object.keys(place.guards).length} people` : `Furnishing ${Object.keys(place.rooms).length} rooms`);
         await sleep(400);
+        // A map done again keeps the story's people who were on the old one (the fence's bruisers, the constable): they stand by the start, where the DM can move them.
+        if (place && replacing) {
+            const kept = Object.values(replacing.guards || {}).filter(g => g.state !== 'gone' && g.state !== 'dead' && !g.down && (c.docs.npcs || []).some(n => nameKey(n.name) === nameKey(g.name) && !n.dead) && !personByName(place, g.name));
+            const at = place.start ? { floor: place.start.floor, x: place.start.x, y: place.start.y } : null;
+            for (const g of kept) if (at) placePerson(place, g.name, at, { floor: at.floor, info: { description: g.description, hostile: g.hostile === true, sprite: g.sprite }, arrive: true });
+            if (kept.length) status?.note(`Still here on the new map: ${kept.map(g => g.name).join(', ')}`);
+        }
         if (replacing) await forgetFamily(c, replacing);
         const key = placeKey(place.name || req.name);
         // A building is two maps: its grounds outside (with the front door) and its inside. The front
@@ -1675,8 +1684,9 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
     const dark = place.fog !== false && !isExplored(place, floorId, target.x, target.y);
     const door = dark ? null : doorAt(place, floorId, target.x, target.y);
     if (door && door.state === 'locked') { toastr.info(`That door is locked (${door.id}). Tell the DM how you deal with it.`, 'Map', { timeOut: 3500 }); return; }
+    // Only someone hostile (or set on the party) blocks the way: a shopkeeper in a doorway is squeezed past (she steps aside).
     const others = new Set([
-        ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId).map(g => `${g.x},${g.y}`),
+        ...Object.values(place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId && (g.hostile === true || g.intent === 'attack' || g.intent === 'hold')).map(g => `${g.x},${g.y}`),
         ...Object.entries(place.state.waiting || {}).filter(([n, w]) => w && place.state.positions[n]?.floor === floorId).map(([n]) => `${place.state.positions[n].x},${place.state.positions[n].y}`),
     ]);
     const path = findPath(place, floorId, lead, target, { blocked: others, toward: dark });
@@ -1760,6 +1770,9 @@ export async function walkTo(target, redraw = () => { }, { inTurn = false } = {}
         for (const [x, y] of path) {
             const d = doorAt(place, floorId, x, y);
             if (d && d.state === 'closed') { setDoorState(place, d, 'open'); sfx('door'); }
+            // Someone friendly on this square steps aside.
+            const inWay = Object.values(place.guards).find(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === floorId && g.x === x && g.y === y);
+            if (inWay) { const aside = freeNear(place, floorId, x, y, new Set([`${x},${y}`, ...others, ...Object.values(place.state.positions).filter(p => p.floor === floorId).map(p => `${p.x},${p.y}`)])); if (aside) Object.assign(inWay, { x: aside.x, y: aside.y }); }
             lead.x = x; lead.y = y;
             walked++;
             sfx('step', { theme: floorById(place, floorId).map.theme });
@@ -2086,7 +2099,7 @@ export async function applyMapSync(c, ops) {
             if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) continue;
             if (place.parent?.prop) continue;
             // A knife on the ground is an item, not someone: nothing named like a thing, or like an item lying here, becomes a person.
-            if (looksLikeThing(ch.name) || Object.values(place.items).some(i => i.state !== 'taken' && nameKey(i.name).includes(nameKey(ch.name)))) continue;
+            if (looksLikeThing(ch.name) || looksLikePlace(ch.name, place) || Object.values(place.items).some(i => i.state !== 'taken' && nameKey(i.name).includes(nameKey(ch.name)))) continue;
             const at = where(ch.near) ?? (lead ? { floor: floorId, x: lead.x, y: lead.y } : null);
             const g = at && placePerson(place, ch.name, at, { floor: floorId, info: { description: ch.what, hostile: ch.hostile }, arrive: true });
             if (!g) continue;
@@ -2326,6 +2339,52 @@ export async function climbInFromText(c, text, redraw = () => { }) {
     const inside = currentPlace(c)?.place;
     return `${c.meta.persona.name} climbed into ${label} (${v.id}): the party is now on its inside map, "${inside?.name ?? label}"${inside?.vehicle === 'jail' ? ', iron bars all round and one steel door, locked' : ', open on either side'}. Narrate only what is on that map: ${inside ? (inside.floors[0].map.props || []).map(p => p.label || PROPS[p.type]?.name || p.type).join(', ') : 'nothing'}.`;
 }
+
+/**
+ * "Amber goes into Tusk's shop", "Amber steps out into the lane": the party walks in through a
+ * building's door, or out through the exit, from the player's own words (the DM's enter_place does
+ * the same by op). Out of character ("((Amber is out in the lane now))") only the way out counts.
+ * Returns the event for the DM, or '' when the words say nothing of the kind.
+ */
+export async function enterOrLeaveFromText(c, text, redraw = () => { }, { ooc = false } = {}) {
+    const here = currentPlace(c);
+    if (!here || !text || c.docs.world.combat) return '';
+    const { place } = here;
+    const player = c.meta.persona.name;
+    const t = String(text).replace(/[*_~`]/g, ' ');
+    const lead = place.state.positions[player];
+    if (!lead) return '';
+    const floorId = lead.floor;
+    const inWords = /\b(?:enters?|entered|entering|(?:go|goes|went|head|heads|step|steps|walk|walks|duck|ducks|slip|slips|get|gets|come|comes|push|pushes|make|makes)(?:\s+\w+){0,2}\s+(?:in|into|inside|through the door|in through|in at|in to)\b)/i.test(t);
+    const outWords = /\b(?:(?:walk|walks|step|steps|head|heads|go|goes|went|get|gets|come|comes|make|makes|slip|slips|back)(?:\s+\w+){0,2}\s+out\b|leaves?\b|leaving\b|out (?:the|through the) (?:front |back |side )?door|out (?:into|onto|to) the (?:lane|street|road|yard|square|night|rain|open|air|alley)|is (?:out|outside|back out) (?:in|on) the (?:lane|street|road|yard|square)|outside now)\b/i.test(t);
+    const words = s => nameKey(String(s || '').replace(/'s\b/g, '')).split(' ').filter(w => w.length > 2 && !NAME_STOP.has(w));
+    if (!place.parent && place.buildings && Object.keys(place.buildings).length && inWords && !ooc) {
+        const tk = new Set(words(t));
+        const KIND_WORD = { inn: /\binn\b/i, tavern: /\b(?:tavern|alehouse|pub|taproom)\b/i, smithy: /\b(?:smithy|forge|smith|locksmith)\b/i, 'general store': /\b(?:store|shop|goods)\b/i, temple: /\b(?:temple|chapel|shrine|church)\b/i, alchemist: /\b(?:alchemist|apothecary)\b/i, bakery: /\bbakery\b/i, stable: /\bstables?\b/i, 'guard post': /\b(?:watch house|guard post|watch)\b/i, tailor: /\btailor\b/i, bank: /\bbank\b/i, butcher: /\bbutcher\b/i, library: /\b(?:library|archive)\b/i, jeweler: /\bjewel/i };
+        const score = b => words(b.name).filter(w => tk.has(w)).length * 2 + (words(b.keeper).some(w => tk.has(w)) && /\b(?:shop|store|forge|smithy|place|house|inn|tavern|stall|home|rooms?)\b/i.test(t) ? 2 : 0) + (KIND_WORD[b.kind]?.test(t) ? 1 : 0);
+        const ranked = Object.values(place.buildings).filter(b => b.enterable !== false && b.door && place.doors[b.door]).map(b => ({ b, s: score(b) })).sort((a, b) => b.s - a.s);
+        const best = ranked[0];
+        if (!best || best.s < 2 || (ranked[1] && ranked[1].s === best.s)) return '';
+        const d = place.doors[best.b.door];
+        if (d.floor !== floorId) return '';
+        if (d.state === 'locked') return `${player} goes to ${best.b.name}, but its door is locked: the party stands outside it on the map. Say so, and decide what happens (a knock, a wait, a key).`;
+        await walkTo({ x: d.x, y: d.y }, redraw, { inTurn: true });
+        const now = currentPlace(c);
+        if (!now || now.key === here.key) return `${player} meant to go into ${best.b.name} but the party didn't get through its door (the way was blocked, or the walk stopped): they're still outside on the map. Narrate them outside, not in.`;
+        return `${player} went into ${best.b.name} (from their own words): the party is on its inside map now, "${now.place.name}". Narrate only what's inside it; the map put them just inside the door.`;
+    }
+    if (place.parent && outWords && (!ooc || new RegExp(`\\b${player.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t))) {
+        const exit = Object.values(place.doors).find(d => d.exit && d.floor === floorId && !['locked', 'hidden', 'walled'].includes(d.state)) ?? Object.values(place.doors).find(d => d.exit && d.floor === floorId);
+        if (!exit) return '';
+        if (exit.state === 'locked') return `${player} makes for the way out, but the door out (${exit.id}) is locked: the party is still inside on the map. Say so.`;
+        await walkTo({ x: exit.x, y: exit.y }, redraw, { inTurn: true });
+        const now = currentPlace(c);
+        if (!now || now.key === here.key) return `${player} meant to go out but the party didn't get to the door (the way was blocked, or the walk stopped): they're still inside on the map. Narrate them inside, not out.`;
+        return `${player} went out of ${place.name} (from their own words): the party is back on "${now.place.name}", just outside its door. Narrate the outside.`;
+    }
+    return '';
+}
+const NAME_STOP = new Set(['the', 'and', 'of', 'at', 'old', 'new', 'inn', 'shop', 'store', 'house', 'tavern', 'into', 'inside', 'through', 'door', 'goes', 'walks', 'heads', 'steps', 'amber']);
 
 // ---------- custody: a prisoner kept close ----------
 

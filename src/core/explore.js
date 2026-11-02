@@ -740,7 +740,8 @@ export function applyPlaceChanges(place, changes, { floor = place.state?.floor, 
         else if (/^(hold|holding|stands? (?:his|her|their|its) ground|guarding)$/i.test(v)) { if (g) { wake(); g.state = 'alert'; setIntent(g, 'hold'); } }
         else if (/^(calm|patrol|patrolling|stay|staying)$/i.test(v)) { if (g) { g.state = 'patrol'; setIntent(g, /^stay/i.test(v) ? 'stay' : ''); } }
         else {
-            // A square or a room: move them there (someone new appears there).
+            // A square or a room: move them there (someone new appears there). A building or a thing by name is not someone.
+            if (!g && (looksLikePlace(name, place) || looksLikeThing(name))) { log.push(`⚠️ guards.${name}: that's ${looksLikePlace(name, place) ? 'a place' : 'a thing'}, not someone; nothing was put on the map (a building is build_place or enter_place; a thing is add_props or items)`); continue; }
             if (!g && atCapacity(place)) { log.push(`⚠️ guards.${name}: ${place.name} can take no more newcomers (${NEWCOMER_MAX} since it was built)`); continue; }
             g = placePerson(place, name, v, { floor, arrive: true });
             if (!g) { log.push(`⚠️ guards.${name}: couldn't place them at "${v}" (no such square or room on this map)`); continue; }
@@ -1067,7 +1068,7 @@ export function findRoom(place, ref) {
 }
 
 /** Words that name a thing, not a someone: items, furniture, food, light. */
-const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p => p.name), ...Object.keys(PROPS)].flatMap(n => String(n).toLowerCase().split(/[^a-z]+/)).filter(w => w.length > 2 && !['the', 'and', 'wall', 'known', 'great', 'old', 'fallen'].includes(w))), 'tin', 'oil', 'lamp', 'lantern', 'key', 'keys', 'bottle', 'flask', 'vial', 'potion', 'scroll', 'book', 'books', 'coin', 'coins', 'gold', 'sword', 'dagger', 'bow', 'arrow', 'arrows', 'shield', 'bag', 'pouch', 'box', 'ring', 'amulet', 'necklace', 'letter', 'note', 'notes', 'map', 'rope', 'torch', 'candle', 'bread', 'food', 'meat', 'cheese', 'apple', 'wine', 'ale', 'water', 'gem', 'gems', 'jewel', 'jewels', 'ledger', 'journal', 'diary', 'lockpick', 'lockpicks', 'tools', 'kit', 'cloak', 'boots', 'gloves', 'hat', 'coat', 'armor', 'armour', 'helmet', 'blanket', 'pillow', 'plate', 'cup', 'mug', 'bucket', 'shovel', 'pick', 'hammer', 'nails', 'chain', 'chains', 'lock', 'door', 'window', 'floor', 'stairs', 'wall', 'item', 'items', 'thing', 'things', 'supplies', 'rations', 'tinderbox', 'matches', 'crowbar', 'mirror', 'knife', 'knives', 'axe', 'hatchet', 'club', 'mace', 'spear', 'javelin', 'crossbow', 'quiver', 'shortbow', 'longbow', 'shortsword', 'longsword', 'whip', 'cudgel', 'sling', 'bolt', 'bolts', 'shiv'].join('|')})\\b`, 'i');
+const THING_WORDS = new RegExp(`\\b(${[...new Set([...Object.values(PROPS).map(p => p.name), ...Object.keys(PROPS)].flatMap(n => String(n).toLowerCase().split(/[^a-z]+/)).filter(w => w.length > 2 && !['the', 'and', 'wall', 'known', 'great', 'old', 'fallen'].includes(w))), 'tin', 'oil', 'lamp', 'lantern', 'key', 'keys', 'bottle', 'flask', 'vial', 'potion', 'scroll', 'book', 'books', 'coin', 'coins', 'gold', 'sword', 'dagger', 'bow', 'arrow', 'arrows', 'shield', 'bag', 'pouch', 'box', 'ring', 'amulet', 'necklace', 'letter', 'note', 'notes', 'map', 'rope', 'torch', 'candle', 'bread', 'food', 'meat', 'cheese', 'apple', 'wine', 'ale', 'water', 'gem', 'gems', 'jewel', 'jewels', 'ledger', 'ledgers', 'journal', 'diary', 'candlestick', 'candlesticks', 'silk', 'silks', 'lockbox', 'strongbox', 'badge', 'badges', 'satchel', 'goblet', 'goblets', 'bracelet', 'brooch', 'cloth', 'bolt', 'bolts', 'sack', 'sacks', 'chest', 'chests', 'cargo', 'crates', 'wares', 'goods', 'papers', 'documents', 'deeds', 'contraband', 'loot', 'valuables', 'lockpick', 'lockpicks', 'tools', 'kit', 'cloak', 'boots', 'gloves', 'hat', 'coat', 'armor', 'armour', 'helmet', 'blanket', 'pillow', 'plate', 'cup', 'mug', 'bucket', 'shovel', 'pick', 'hammer', 'nails', 'chain', 'chains', 'lock', 'door', 'window', 'floor', 'stairs', 'wall', 'item', 'items', 'thing', 'things', 'supplies', 'rations', 'tinderbox', 'matches', 'crowbar', 'mirror', 'knife', 'knives', 'axe', 'hatchet', 'club', 'mace', 'spear', 'javelin', 'crossbow', 'quiver', 'shortbow', 'longbow', 'shortsword', 'longsword', 'whip', 'cudgel', 'sling', 'bolt', 'bolts', 'shiv'].join('|')})\\b`, 'i');
 /** Creature words that win over a thing word ("guard dog", "rat in a barrel"). */
 const BEING_WORDS = /\b(man|woman|men|women|boy|girl|child|guard|guards|soldier|knight|captain|warden|jailer|butler|maid|servant|cook|priest|monk|nun|thief|bandit|cultist|merchant|keeper|lord|lady|king|queen|prince|princess|old|young|dog|hound|wolf|rat|rats|cat|bear|spider|snake|bat|bats|goblin|orc|troll|ogre|skeleton|zombie|ghoul|ghost|wraith|vampire|demon|devil|dragon|beast|creature|monster|golem|elemental|slime|ooze|horse|crow|raven|boar|guardian|sentry|watchman|prisoner|stranger|figure|master|mistress|sergeant|brother|sister|father|mother|smith|innkeeper|owner|hunter|farmer|apprentice|scholar|wizard|witch|mage|sorcerer|cleric|paladin|ranger|rogue|bard|druid|healer|doctor|nurse|steward|chamberlain|noble|baron|duke|count|countess|page|squire|executioner|torturer|inquisitor|assassin|spy|mercenary|pirate|sailor|baby|twin|handler|turnkey|gaoler|dwarf|elf|halfling|gnome|human|hag|imp|kobold|gnoll|minotaur|harpy|wyvern|basilisk|mimic|specter|spectre|lich|mummy|banshee|shade|mastiff|stray|mutt|puppy|kitten|owl|hawk|eagle|toad|frog|crocodile|shark)\b/i;
 
@@ -1086,6 +1087,18 @@ const TRAP_WORDS = /\b(trap|traps|pit|plate|dart|darts|needle|glyph|sigil|rune|r
 
 /** Things the story talks about that are not anyone: fire, smoke, noises, weather, light. */
 export const NOT_A_PERSON = /^(?:the |a |an |some )?(?:fire|flames?|blaze|smoke|embers?|sparks?|light|lantern ?light|torch ?light|glow|noise|sounds?|footsteps|voices?|shouts?|screams?|alarm|bells?|horn|wind|rain|storm|thunder|lightning|snow|fog|mist|smell|stench|shadows?|darkness|dust|water|flood|blood|rubble|cave-?in|collapse|trap|darts?|arrows?|net)s?$/i;
+
+/** Words that name a place: an inn, a shop, a street. A name with one of these and no creature word is a building or a way, never someone. */
+export const PLACE_WORDS = /\b(?:inn|tavern|alehouse|taproom|shop|store|forge|smithy|house|hall|temple|shrine|chapel|church|market|yard|stables?|bank|cellar|street|lane|road|alley|bridge|gate|gatehouse|tower|keep|manor|mansion|castle|warehouse|office|guildhall|square|plaza|docks?|wharf|pier|mill|farm|barn|camp|cave|ruins?|bakery|apothecary|archive|library|tailor's|smith's)\b/i;
+
+/** Does a name look like a place (Tusk's Locksmith Shop, Eel Street) rather than a person or creature? With a place given, a building or room of it by that name ("The Drowned Eel") is one too. */
+export function looksLikePlace(name, place = null) {
+    const s = String(name || '').trim();
+    if (!s) return false;
+    const key = nameKey(s);
+    if (place && (nameKey(place.name) === key || Object.values(place.buildings || {}).some(b => nameKey(b.name) === key) || Object.values(place.rooms || {}).some(r => nameKey(r.name) === key))) return true;
+    return PLACE_WORDS.test(s) && !BEING_WORDS.test(s);
+}
 
 /** Does a name look like an object (a tin of lamp oil, a ledger, a spike pit) rather than a person or creature? */
 export function looksLikeThing(name) {
