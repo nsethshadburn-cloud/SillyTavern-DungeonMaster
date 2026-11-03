@@ -36,7 +36,7 @@ import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction } from './prompts.js';
 import { sfx } from '../ui/sound.js';
-import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
+import { applySceneCard, pushTimeline, applyTableRules, samePlace } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
 import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
 import { mergeMind } from '../core/minds.js';
@@ -306,9 +306,12 @@ async function turnBody(c, opts, status, signal) {
     // Turn prompts: the player's message in a fight is THEIR turn (the DM resolves only that); "end_turn" hands the round on.
     if (c.docs.world.combat && turnPromptsOn()) {
         const cb = c.docs.world.combat;
+        const opening = meta.openingRound?.turn === meta.turn ? meta.openingRound : null;
         if (opts.force === 'end_turn') cb.phase = 'others';
+        else if (opening) cb.phase = 'others';
         else if (!opts.force && !autoRoll && !triage.ooc && cb.order?.some(o => o.name === meta.persona.name)) cb.phase = 'player';
-        if (cb.phase === 'player' && !opts.force) reasons = reasons.map(r => r === 'combat_round' ? 'player_turn' : r);
+        if (opening) reasons = reasons.map(r => r === 'combat_round' ? 'round_opens' : r);
+        else if (cb.phase === 'player' && !opts.force) reasons = reasons.map(r => r === 'combat_round' ? 'player_turn' : r);
         if (opts.force === 'end_turn' || opts.force === 'reaction') reasons = reasons.filter(r => r !== 'combat_round' && r !== 'combat_action');
     }
     if (triage.task?.dm && !reasons.includes('companion_task')) reasons.push('companion_task');
@@ -324,7 +327,8 @@ async function turnBody(c, opts, status, signal) {
         const step = status.step(`DM is thinking (${modelLabel(model)}) · ${reasons.join(', ')}`);
         let result;
         try {
-            const companionChoices = opts.force === 'end_turn' ? await decideCompanionTurns(c, status).catch(error => { console.warn('[Dungeon Master] companion choices failed', error); return null; }) : null;
+            const opening = meta.openingRound?.turn === meta.turn ? meta.openingRound : null;
+            const companionChoices = opts.force === 'end_turn' || opening ? await decideCompanionTurns(c, status, opening?.names).catch(error => { console.warn('[Dungeon Master] companion choices failed', error); return null; }) : null;
             result = await withDmThinking('The Dungeon Master is thinking', () => askDm({
                 reasons,
                 companionChoices,
@@ -355,8 +359,12 @@ async function turnBody(c, opts, status, signal) {
         const quiet = !triage.ooc && !triage.speakers?.length && ['action', 'risky_action', 'scene_move'].includes(triage.category);
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
         // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
-        if (result.turn.player_roll && !signal.aborted && /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '')) {
-            meta.turnProblems = [...(meta.turnProblems || []), `you asked ${meta.persona.name} to roll and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
+        const toldHold = /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '');
+        const toldHit = result.turn.player_roll?.kind === 'attack' && /\b(?:bites?|sinks?|slides?|punches|drives?|buries|plunges?|tears?|rips?) (?:deep |home )?into\b|\bblood (?:wells|runs|sprays|spatters|flows)\b|\b(?:opens?|lays? open) (?:a|his|her|its|their) \w+\b|\bfinds? (?:flesh|its mark|the gap|a gap)\b|\b(?:turns?|glances?|skates?|skitters?|skids?) (?:off|aside|away)\b|\b(?:catches?|cuts?|hits?) only air\b|\bmisses? (?:by|him|her|them|it|wide|clean)\b/i.test(result.turn.narration || '');
+        if (result.turn.player_roll && !signal.aborted && (toldHold || toldHit)) {
+            meta.turnProblems = [...(meta.turnProblems || []), toldHit
+                ? `you asked ${meta.persona.name} for an attack roll and your narration told whether it landed before the dice were in: stop at the swing (the blade coming round, the thrust), never the bite or the miss; the roll says, and the next turn tells what came of it.`
+                : `you asked ${meta.persona.name} to roll and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
             saveMeta();
         }
         // The player attacked (in character: an aside in double brackets isn't the player's blow) and the DM neither started a fight nor asked for a roll: say so, to both.
@@ -394,6 +402,8 @@ async function turnBody(c, opts, status, signal) {
         await localReplies(c, triage, playerText, status, signal);
         await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal);
     }
+    // The opening of round 1 is done with (whatever the DM made of it): from here the player's turn is theirs.
+    if (meta.openingRound) { delete meta.openingRound; if (c.docs.world.combat && turnPromptsOn()) c.docs.world.combat.phase = 'player'; saveMeta(); }
 }
 
 /**
@@ -499,6 +509,35 @@ function playerTarget(c, pr) {
     const named = all.find(n => words.includes(nameKey(n)) || (nameKey(n).split(' ')[0].length > 3 && words.includes(nameKey(n).split(' ')[0])));
     if (named) return named;
     return foes.length === 1 ? foes[0] : '';
+}
+
+const RANGED_WORDS = /\b(?:bow|crossbow|sling|javelin|dart|darts|throw|throws|thrown|hurl|hurls|arrow|arrows|bolt|bolts|shoot|shoots|shot|fire|fires|cast|casts|spell|ray|blast|breath|spit|spits)\b/i;
+const REACH_WORDS = /\b(?:reach|pike|glaive|halberd|whip|lance|long ?spear)\b/i;
+
+/**
+ * Reach: a melee attack from more than a square off (two with a reach weapon) first walks the attacker
+ * up as far as a move allows (enemies six squares, the party what's left of their speed this round).
+ * Returns null for a ranged attack or no board; else {d, reach, at, moved}, d = squares still between them.
+ */
+export function closeToTarget(c, who, target, words, status) {
+    const world = c.docs.world, meta = c.meta;
+    if (!world.combat?.map || !target || RANGED_WORDS.test(String(words || ''))) return null;
+    const names = Object.keys(world.combat.positions || {});
+    const w = matchName(who, names) ?? who, tgt = matchName(target, names) ?? target;
+    const from = parseCoord(world.combat.positions?.[w], world.combat.map), to = parseCoord(world.combat.positions?.[tgt], world.combat.map);
+    if (!from || !to) return null;
+    const reach = REACH_WORDS.test(String(words || '')) ? 2 : 1;
+    let d = Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y));
+    if (d <= reach) return { d, reach, at: from, moved: false };
+    const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== w && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
+    const isFoe = Boolean(world.combat.enemies?.[w]);
+    const budget = isFoe ? 6 : moveBudget(world, w, speedSquares(statsForName(w, meta))).left;
+    const ok = clampMove(world.combat.map, from, to, budget, others);
+    const moved = ok.x !== from.x || ok.y !== from.y;
+    if (moved) { world.combat.positions[w] = toCoord(ok.x, ok.y); if (!isFoe) spendMove(world, w, reachable(world.combat.map, from, budget, others).get(`${ok.x},${ok.y}`) ?? 0); }
+    d = Math.max(Math.abs(ok.x - to.x), Math.abs(ok.y - to.y));
+    if (d <= reach) status.note(`${w} closes to ${toCoord(ok.x, ok.y)} to reach ${tgt}`);
+    return { d, reach, at: ok, moved };
 }
 
 function attackTarget(c, r) {
@@ -756,15 +795,29 @@ async function resolvePlayerRoll(c, parsed, status) {
     let afterInit = '';
     if (pr.kind === 'initiative' && c.docs.world.combat) {
         addToInitiative(c.docs.world, meta.persona.name, total);
-        // From the first round on, nobody else acts until the player ends their turn.
-        if (turnPromptsOn()) c.docs.world.combat.phase = 'player';
+        // Round 1 opens with whoever beat the player, in order; then it's the player's turn, and nobody else acts until they end it.
+        const order = c.docs.world.combat.order || [];
+        const ahead = order.slice(0, Math.max(0, order.findIndex(o => o.name === meta.persona.name))).map(o => o.name);
+        if (turnPromptsOn()) c.docs.world.combat.phase = ahead.length ? 'others' : 'player';
+        if (ahead.length) meta.openingRound = { turn: meta.turn, names: ahead };
+        afterInit += ahead.length
+            ? ` ROUND 1 OPENS: ${ahead.join(', ')} beat ${meta.persona.name}'s ${total} and act now, in that order (npc_rolls for their attacks, "positions" for their moves); then STOP at ${meta.persona.name}'s turn and say it is theirs. Nobody below ${meta.persona.name} acts yet.`
+            : ` ${meta.persona.name} has the highest initiative: it is their turn first; nobody acts before them.`;
         saveDoc('world');
         // The attack that started the fight was put aside for initiative: it's asked for now, not lost.
         if (meta.afterInitiative) {
             const again = meta.afterInitiative;
             delete meta.afterInitiative;
-            await postRollRequest(c, again);
-            afterInit = ` The code has asked ${meta.persona.name} for the attack roll that started the fight (${again.skill}${again.target ? ` on ${again.target}` : ''}): don't ask again; wait for it, then resolve it as their first action.`;
+            // Reach holds for that first attack too: walk up as far as a move allows; still out of reach, no roll.
+            if (again.kind === 'attack') again.target = playerTarget(c, again);
+            const close = again.kind === 'attack' ? closeToTarget(c, meta.persona.name, again.target, `${again.reason || ''} ${again.skill || ''}`, status) : null;
+            if (close && close.d > close.reach) {
+                await postNote(`⚠️ ${again.target} is ${close.d} squares off, out of reach even after moving as far as a turn allows: say where you move, or use a ranged weapon.`);
+                afterInit += ` The attack that started the fight was NOT rolled: ${again.target} is ${close.d} squares from ${meta.persona.name} (now at ${toCoord(close.at.x, close.at.y)}), out of reach. Say in words where ${again.target} stands; ${meta.persona.name} moves or changes weapon on their turn.`;
+            } else {
+                await postRollRequest(c, again);
+                afterInit += ` The code has asked ${meta.persona.name} for the attack roll that started the fight (${again.skill}${again.target ? ` on ${again.target}` : ''}): don't ask again; wait for it, then resolve it as their first action.`;
+            }
         }
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
@@ -986,10 +1039,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (t.scene.time && !new RegExp(String(world.time), 'i').test(t.scene.time)) status.note(`Time stays ${world.time} (the clock keeps it; use "clock" to skip ahead)`);
     }
     // A new place: the old scene card no longer applies. A new scene: NPCs forget the last one.
-    const newPlace = Boolean(t.scene?.location && prevLocation && nameKey(t.scene.location) !== nameKey(prevLocation));
+    // A reworded name ("Eel Street" for "Eel Street, Marrow Ford") is the same place, not a move.
+    const newPlace = Boolean(t.scene?.location && prevLocation && !samePlace(t.scene.location, prevLocation));
     const newScene = newPlace || Boolean(t.scene?.changed);
-    world.sceneCard = applySceneCard(world.sceneCard, t.scene_card, { newPlace, partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
-    if (newPlace && !t.scene_card) dmOnly.push(`the party moved to "${t.scene.location}" and you sent no scene_card: send the full card for the new place (place, people with spots, objects) so the companions and the sketch know where everyone is.`);
+    // The card is replaced by the DM's card for the new place; with no card the old one stays (and the DM is told): never an
+    // empty picture. The card that then comes for the new place replaces it whole.
+    const cardOwed = Boolean(meta.sceneCardOwed);
+    world.sceneCard = applySceneCard(world.sceneCard, t.scene_card, { newPlace: (newPlace || cardOwed) && Boolean(t.scene_card), partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
+    if (newPlace && !t.scene_card) { meta.sceneCardOwed = true; dmOnly.push(`the party moved to "${t.scene.location}" and you sent no scene_card: send the full card for the new place (place, people with spots, objects) so the companions and the sketch know where everyone is.`); }
+    else if (t.scene_card) meta.sceneCardOwed = false;
     // Who split off from the player, and who is back.
     applyPresence(world, meta.party.map(p => p.name), t.party_away, t.party_back);
     // NPCs who get briefs are "here".
@@ -1135,6 +1193,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // Back to the story: the sketch is drawn again from the scene card (the fight's squares were the fight's).
         endCombat(world);
         status.note('Combat over');
+        await postDiceCard(`⚔️ **The fight is over.** ${[meta.persona.name, ...meta.party.map(p => p.name)].filter(n => world.party?.[n]).map(n => `${n} ${world.party[n].hp}/${world.party[n].hp_max}`).join(' · ')}`, { combat: true });
         // After a fight the story breathes: a few turns with no new people, no alarms, no next guard.
         meta.pacing.calmUntil = (meta.turn || 0) + 3;
         mapChanged = true;
@@ -1290,6 +1349,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (!mine.length && !actedFor) { t.npc_rolls.push({ who: n, what: `attacks ${ch.target}${ch.weapon ? ` with ${ch.weapon}` : ''}`, notation: `1d20${ch.toHit >= 0 ? '+' : ''}${ch.toHit}`, dc: null, kind: 'attack', target: ch.target, damage: ch.damage || '', half: false, on_success: '', on_fail: '', spot: null }); status.note(`${n}'s attack on ${ch.target} (their choice) added: the DM left it out`); }
         }
     }
+    // In a fight, everyone's rolls go in initiative order, whatever order the DM wrote them in.
+    if (world.combat?.order?.length && t.npc_rolls.length > 1) {
+        const place = n => { const i = world.combat.order.findIndex(o => matchName(n, [o.name])); return i < 0 ? 99 : i; };
+        t.npc_rolls = t.npc_rolls.map((r, i) => [r, i]).sort((a, b) => place(a[0].who) - place(b[0].who) || a[1] - b[1]).map(([r]) => r);
+    }
     for (const r of t.npc_rolls) {
         if (signal.aborted) throw new Error('aborted');
         // Getting up off the ground is no roll (it costs the move): anyone with free hands just stands.
@@ -1315,27 +1379,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             await enemyHere(c, r.target, status);
             if (r.dc === null && r.target) r.dc = armorOf(c, r.target);
             if (!r.damage) r.damage = attackDice(c, r);
-            // Reach: a melee attack from more than a square off (two with a reach weapon) first walks the attacker up as far as a move allows; still out of reach, it's dropped.
-            if (world.combat?.map && r.target) {
-                const names = Object.keys(world.combat.positions || {});
-                const who = matchName(r.who, names) ?? r.who, tgt = matchName(r.target, names) ?? r.target;
-                const ranged = /\b(?:bow|crossbow|sling|javelin|dart|darts|throw|throws|thrown|hurl|hurls|arrow|arrows|bolt|bolts|shoot|shoots|shot|fire|fires|cast|casts|spell|ray|blast|breath|spit|spits)\b/i.test(`${r.what} ${r.notation}`);
-                const from = parseCoord(world.combat.positions?.[who], world.combat.map), to = parseCoord(world.combat.positions?.[tgt], world.combat.map);
-                if (!ranged && from && to) {
-                    const reach = /\b(?:reach|pike|glaive|halberd|whip|lance|long ?spear)\b/i.test(r.what || '') ? 2 : 1;
-                    let d = Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y));
-                    if (d > reach) {
-                        const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== who && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
-                        const isFoe = Boolean(world.combat.enemies?.[who]);
-                        const budget = isFoe ? 6 : moveBudget(world, who, speedSquares(statsForName(who, meta))).left;
-                        const ok = clampMove(world.combat.map, from, to, budget, others);
-                        if (ok.x !== from.x || ok.y !== from.y) { world.combat.positions[who] = toCoord(ok.x, ok.y); if (!isFoe) spendMove(world, who, reachable(world.combat.map, from, budget, others).get(`${ok.x},${ok.y}`) ?? 0); mapChanged = true; }
-                        d = Math.max(Math.abs(ok.x - to.x), Math.abs(ok.y - to.y));
-                        if (d > reach) { problems.push(`${r.who}'s ${r.what || 'attack'} on ${r.target} was dropped: ${d} squares apart after moving as far as a turn allows (now at ${toCoord(ok.x, ok.y)}), out of reach. Move them adjacent with "positions" first, or make it a thrown or ranged attack.`); continue; }
-                        status.note(`${r.who} closes to ${toCoord(ok.x, ok.y)} to reach ${r.target}`);
-                    }
-                }
-            }
+            // Reach: a melee attack from more than a square off first walks the attacker up as far as a move allows; still out of reach, it's dropped.
+            const close = closeToTarget(c, r.who, r.target, `${r.what} ${r.notation}`, status);
+            if (close?.moved) mapChanged = true;
+            if (close && close.d > close.reach) { problems.push(`${r.who}'s ${r.what || 'attack'} on ${r.target} was dropped: ${close.d} squares apart after moving as far as a turn allows (now at ${toCoord(close.at.x, close.at.y)}), out of reach. Move them adjacent with "positions" first, or make it a thrown or ranged attack.`); continue; }
         }
         const judged = judge(result.total, r.dc, result.natural, r.kind);
         let damageText = '';
@@ -1412,6 +1459,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;
+        let outOfReach = false;
         if (pr.kind === 'damage') pr.die = 100;
         // "Roll damage" with nothing to roll: the dice come from the sheet (doubled after a natural 20).
         if (pr.kind === 'damage' && !pr.damage) {
@@ -1420,7 +1468,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (pr.damage) status.note(`Damage dice from the sheet: ${pr.damage}`);
         }
         if (pr.kind === 'damage' && pr.damage) pr.damage = normalizeNotation(pr.damage) || pr.damage;
-        if (pr.kind === 'initiative') pr.dc = null;
+        if (pr.kind === 'initiative') { pr.dc = null; if (pr.advantage && pr.advantage !== 'none' && !/\badvantage\b/i.test(pr.reason || '')) { pr.advantage = 'none'; status.note('Initiative is a plain roll: the advantage was dropped (say why in the reason if there is one)'); } }
         // Getting up, slipping free, working a lock: pinned or cuffed hands make it a roll at disadvantage, and getting up from under someone is DC 15 at least.
         {
             const conds = conditionsOf(world, meta.persona.name).join(' ').toLowerCase();
@@ -1437,8 +1485,15 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const ac = foe && Number.isFinite(Number(foe.ac)) ? Number(foe.ac) : Number.isFinite(Number(sheetAc)) ? Number(sheetAc) : null;
             if (ac !== null && pr.dc !== ac) { if (pr.dc !== null) problems.push(`player_roll.dc ${pr.dc} for the attack on ${pr.target} was replaced by their AC ${ac} (the roster's; it never changes between rolls)`); pr.dc = ac; }
             if (/cuff|shackl|manacle|bound|tied|restrained/i.test(conditionsOf(world, meta.persona.name).join(' ')) && pr.advantage !== 'disadvantage') { pr.advantage = 'disadvantage'; status.note('Cuffed: the attack is at disadvantage'); }
+            // Reach holds for the player too: they walk up as far as their move allows; still out of reach, no roll is asked and both sides are told.
+            const close = closeToTarget(c, meta.persona.name, pr.target, `${pr.reason || ''} ${pr.skill || ''}`, status);
+            if (close?.moved) mapChanged = true;
+            if (close && close.d > close.reach) {
+                outOfReach = true;
+                problems.push(`${meta.persona.name}'s attack on ${pr.target} was not rolled: ${pr.target} is ${close.d} squares off even after moving as far as a turn allows (${meta.persona.name} now at ${toCoord(close.at.x, close.at.y)}), out of reach. ${meta.persona.name}: say where you move, or use a ranged weapon. DM: say in words where ${pr.target} stands.`);
+            }
         }
-        await postRollRequest(c, pr);
+        if (!outOfReach) await postRollRequest(c, pr);
     }
     for (const d of t.directions) {
         if (signal.aborted) throw new Error('aborted');
@@ -1502,6 +1557,14 @@ export async function runOpening(openingIn) {
             if (!String(opening?.narration || '').trim()) opening = { ...(opening || {}), narration: 'The adventure begins. Say what you do, or ask the DM to set the scene.' };
         }
         await applyDmTurn(c, opening, status, new AbortController().signal, { reasons: ['opening'] });
+        // What the party starts with (the premise's coin and gear, set by the wizard): on a card, not only in the panel.
+        {
+            const w = c.docs.world;
+            const lines = [];
+            if (Number(w.gold) > 0) lines.push(`Gold ${w.gold}`);
+            for (const [who, items] of Object.entries(w.inventory || {})) if (Array.isArray(items) && items.length) lines.push(`${who}: ${items.join(', ')}`);
+            if (lines.length) await postDiceCard(`📜 Starting out: ${lines.join(' · ')}`, { state: true });
+        }
         if (c.docs.world.sketch) openMap();
         status.finish('The adventure begins');
     } catch (error) {
@@ -1562,11 +1625,11 @@ export { dmType };
  * the foes and how far and hurt they are, their own weapons and items, who needs help. The DM runs
  * the round with those choices in front of it, and the code puts their rolls on the targets they chose.
  */
-async function decideCompanionTurns(c, status) {
+async function decideCompanionTurns(c, status, only = null) {
     const s = settings();
     const world = c.docs.world, meta = c.meta, cb = world.combat;
     if (!cb || !s.useHelper) return null;
-    const names = meta.party.map(p => p.name).filter(n => !isAway(world, n) && cb.order.some(o => o.name === n) && !(world.party[n]?.hp <= 0));
+    const names = meta.party.map(p => p.name).filter(n => !isAway(world, n) && cb.order.some(o => o.name === n) && !(world.party[n]?.hp <= 0) && (!only || only.includes(n)));
     if (!names.length) return null;
     const posOf = n => { const sq = cb.positions?.[n]; return sq && cb.map ? parseCoord(sq, cb.map) : null; };
     const out = {};

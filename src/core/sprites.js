@@ -126,8 +126,11 @@ export const LIBRARY = {
     animal: { beast: 'custom' },
 };
 
-/** Pick a library figure from what an NPC or enemy is called and described as. */
-export function presetFor(text) {
+/**
+ * Pick a library figure from what an NPC or enemy is called and described as.
+ * person = the words describe a person (a bull-necked man, a boar of a thug): animal figures are skipped.
+ */
+export function presetFor(text, { person = false } = {}) {
     const t = String(text || '').toLowerCase();
     const w = list => new RegExp(`\\b(${list})\\b`);
     const rules = [
@@ -159,7 +162,7 @@ export function presetFor(text) {
         [w('beggars?|vagrants?|drunks?|drunkards?|vagabonds?|hermits?'), 'human_beggar'], [w('elders?|old m[ae]n|old wom[ae]n|grandmother|grandfather|crone|matron|village elder'), 'human_elder'],
         [w('child|children|kids?|boys?|girls?|urchins?|orphans?|youngsters?'), 'human_child'],
     ];
-    return rules.find(([re]) => re.test(t))?.[1] ?? null;
+    return rules.find(([re, key]) => re.test(t) && !(person && LIBRARY[key]?.beast))?.[1] ?? null;
 }
 
 function hashText(s) {
@@ -212,7 +215,9 @@ const COMMONERS = ['human_townsfolk', 'human_peasant', 'human_laborer', 'human_f
 export function lookForNpc(name, description = '', key = '', gender = '') {
     const sex = gender === 'male' || gender === 'female' ? gender : sexFromText(`${name} ${description}`);
     const h = hashText(name);
-    const preset = LIBRARY[key] ? key : presetFor(`${name} ${description}`) ?? COMMONERS[Math.floor(h / 7) % COMMONERS.length];
+    // An animal by name (Brown Mare, Gutter Crow) is one; otherwise a description that says person wins over its animal words ("a boar of a man").
+    const person = Boolean(description) && NOT_AN_ANIMAL.test(description) && !LIBRARY[presetFor(name)]?.beast;
+    const preset = LIBRARY[key] ? key : presetFor(`${name} ${description}`, { person }) ?? COMMONERS[Math.floor(h / 7) % COMMONERS.length];
     const look = libraryLook(preset, h % 7, sex);
     // "Brown Mare", "a dun gelding": the coat the words say.
     if (look.beast) { const fur = furFromWords(`${name} ${description}`); if (fur) look.fur = fur; }

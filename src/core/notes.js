@@ -42,7 +42,7 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{knowledge}}]',
     ].join('\n'),
     avoid: '[{{char}} has been repeating these lately. Use different words and gestures this time: {{avoid}}]',
-    combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight, and no talk of dice, rolls or turns.]',
+    combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight, never whether a blow landed or how badly anyone is hurt, and no talk of dice, rolls or turns.]',
     npc: [
         '[You play only {{npc}}, a side character in this story.',
         '{{description}}',
@@ -61,6 +61,7 @@ export const OLD_DEFAULTS = Object.freeze({
         'Length: {{length}}.]',
     ].join('\n'),
     combatV63: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight.]',
+    combatV70: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight, and no talk of dice, rolls or turns.]',
     npcLast: 'Never speak or act for {{player}} or {{party}}. Reply with 1-3 sentences, mostly dialogue. Don\'t invent new plot.]',
     long: 'up to two short paragraphs',
     sceneV30: [

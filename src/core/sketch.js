@@ -6,7 +6,7 @@
 
 import { normalizeMap, themeFor, PROPS, toCoord, parseCoord, isWalkable } from './grid.js';
 import { nameKey } from './text.js';
-import { looksLikeThing } from './people.js';
+import { looksLikeThing, looksLikePlace } from './people.js';
 
 /** Where someone stands, in the DM's words: a closed list, like the referee's. */
 export const ZONES = Object.freeze(['beside', 'near', 'across', 'door', 'outside']);
@@ -37,12 +37,13 @@ const PROP_WORDS = [
 /**
  * The prop that fits an object of the scene card ("Dawnlamp: squat brass lamp on the table" → torch),
  * or '' for none. The name says what it is; its look only helps when the name doesn't. A thing by its
- * name (a ledger, a key) is never a prop, whatever it lies on.
+ * name (a ledger, a key) is never a prop, whatever it lies on; nor is a place (the locksmith's shop
+ * across the lane), whatever lamp hangs on it.
  */
 export function propForObject(name, look = '') {
     const byName = PROP_WORDS.find(([re]) => re.test(String(name).toLowerCase()));
     if (byName) return PROPS[byName[1]] ? byName[1] : '';
-    if (looksLikeThing(name)) return '';
+    if (looksLikeThing(name) || looksLikePlace(name)) return '';
     const byLook = PROP_WORDS.find(([re]) => re.test(String(look).toLowerCase()));
     return byLook && PROPS[byLook[1]] ? byLook[1] : '';
 }

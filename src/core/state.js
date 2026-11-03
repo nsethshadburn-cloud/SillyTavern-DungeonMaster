@@ -50,6 +50,12 @@ function setEntry(map, name, text) {
     if (text) map[name] = text;
 }
 
+/** The same place under two names: one name holds the other ("Eel Street" and "Eel Street, Marrow Ford"). */
+export function samePlace(a, b) {
+    const x = nameKey(a), y = nameKey(b);
+    return !x || !y || x === y || x.includes(y) || y.includes(x);
+}
+
 /**
  * Apply the DM's changes to the scene card.
  * newPlace = the party just arrived somewhere else: the old place and objects no longer apply,

@@ -430,6 +430,8 @@ export function themeFor(setting = '', location = '') {
     const w = String(location || '').toLowerCase();
     // Buildings and rooms first (a shop on Market Street is a room; a manor on the moor is a manor), the land and the town last.
     const byWords = [
+        // A building's grounds are outdoors (the inn yard, the manor's garden), whatever the building.
+        [/\b(?:yard|courtyard|garden|orchard|porch|stoop|doorstep|rooftop|balcony|terrace|outside)\b/, 'town'],
         [/tavern|\binn\b|alehouse|taproom|common room/, 'tavern'], [/mansion|manor|estate|palace/, 'mansion'],
         [/\bhouse|\bhome\b|cottage|cabin|lodge|\bhut\b|\bshop\b|\bstore\b|smithy|forge|workshop|office|\bbank\b|guild|\brooms?\b|cellar|kitchen|parlou?r|chamber|\bhall\b|warehouse|stable/, 'house'],
         [/castle|\bkeep\b|\bfort\b|fortress|citadel|tower|gatehouse|bailey/, 'castle'], [/temple|church|shrine|chapel|cathedral|abbey/, 'temple'], [/prison|jail|gaol|\bcells?\b|dungeon/, /dungeon/.test(w) ? 'dungeon' : 'prison'],

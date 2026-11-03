@@ -22,7 +22,7 @@ const THEME_STYLE = {
     house: { floor: 'planks', floorC: [30, 35, 36], wall: 'timber', wallC: [38, 22, 54], dark: 0.08, moss: 0 },
     mansion: { floor: 'parquet', floorC: [26, 42, 30], wall: 'wallpaper', wallC: [350, 30, 26], dark: 0.3, moss: 0 },
     cabin: { floor: 'planks', floorC: [28, 40, 32], wall: 'log', wallC: [26, 42, 28], dark: 0.15, moss: 0 },
-    town: { floor: 'grass', floorC: [100, 32, 32], wall: 'plaster', wallC: [40, 25, 66], dark: 0, moss: 0.02 },
+    town: { floor: 'cobble', floorC: [30, 8, 46], wall: 'plaster', wallC: [40, 25, 66], dark: 0, moss: 0.02 },
     forest: { floor: 'grass', floorC: [100, 35, 30], wall: 'hedge', wallC: [120, 35, 16], dark: 0.05, moss: 0 },
     jungle: { floor: 'grass', floorC: [112, 44, 24], wall: 'hedge', wallC: [125, 45, 13], dark: 0.12, moss: 0.15 },
     camp: { floor: 'dirt', floorC: [32, 30, 30], wall: 'palisade', wallC: [26, 38, 26], dark: 0.12, moss: 0 },

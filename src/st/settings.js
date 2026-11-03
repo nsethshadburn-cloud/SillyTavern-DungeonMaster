@@ -132,6 +132,11 @@ export function settings() {
         if (s.templates?.combat === OLD_DEFAULTS.combatV63) s.templates.combat = DEFAULT_TEMPLATES.combat;
         s.noDiceV63 = true;
     }
+    // v0.71: a companion never calls a hit or a wound (untouched old defaults only).
+    if (!s.noWoundsV71) {
+        if (s.templates?.combat === OLD_DEFAULTS.combatV70) s.templates.combat = DEFAULT_TEMPLATES.combat;
+        s.noWoundsV71 = true;
+    }
     // v0.35.2: English only, and an NPC never narrates a blow landing (untouched old defaults only).
     if (!s.englishV35) {
         if (s.templates?.scene === OLD_DEFAULTS.sceneV31 || s.templates?.scene === OLD_DEFAULTS.sceneV30) s.templates.scene = DEFAULT_TEMPLATES.scene;

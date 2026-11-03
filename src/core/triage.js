@@ -69,6 +69,15 @@ export function ruleTriage(text, ctx = {}) {
         return result;
     }
 
+    // Coin changing hands (buying, paying, asking a price, the room for the night): the DM sets the price
+    // and sends the gold; left to an NPC's own line, the price is never paid on the books.
+    if (!ctx.inCombat && /\b(?:pay|pays|paying|paid|buy|buys|buying|bought|purchase|purchases|sell|sells|selling|sold|haggle|haggles|bargain|bargains|how much (?:for|is|do|does|will|would)|what(?:'s| is| does| will) (?:it|that|this|the \w+) cost|name (?:your|the|a) price|the price|coins? (?:on|onto|across|down)|rooms? for the night|a room for the night|the (?:tab|bill)|settle up|\d+\s*(?:gp|sp|cp|gold|silver|copper))\b/.test(t)) {
+        result.category = 'risky_action';
+        result.trade = true;
+        result.needsHelper = true; // the helper still picks who answers; the category stands
+        return result;
+    }
+
     // Obvious risky attempts.
     if (/\b(try|tries|trying|attempt|attempts|attempting) to\b|\b(sneak|sneaks|sneaking|pick(?:s|ing)? the lock|lockpick|pickpocket|steal|steals|stealing|climb|climbs|climbing|jump|jumps|persuade|persuades|intimidate|intimidates|deceive|deceives|lie|lies to|bluff|bluffs|search(?:es|ing)? (?:for|the)|investigate|investigates|hide|hides|disarm|disarms|break(?:s)? (?:down|open)|force(?:s)? (?:the|it) open|sense motive|insight|grab|grabs|trip|trips|shove|shoves)\b/.test(t)) {
         result.category = 'risky_action';

@@ -155,6 +155,70 @@ test('a rest moves the clock and the books; a new place needs a card, and gets i
     assert.ok(w.sketch.map.props.some(p => p.type === 'counter'));
 });
 
+test('v0.71: a reworded place keeps the card; a move with no card keeps it too until the card comes', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    const w = c.docs.world;
+    assert.ok(w.sketch.positions.Hob, 'Hob on the opening sketch');
+    // The DM shortens the name: the same place, nobody vanishes, nothing owed.
+    await dmTurn(turn({ narration: 'Rain on the lane.', scene: { type: 'social', location: 'Marrow Ford, Eel Street', setting: 'town', changed: false } }));
+    assert.equal(w.location, 'Marrow Ford, Eel Street');
+    assert.ok(w.sketch.positions.Hob, 'Hob is still there');
+    assert.equal(w.sceneCard.people.Hob !== undefined, true);
+    assert.ok(!c.meta.turnProblems.some(p => /sent no scene_card/.test(p)));
+    // A real move with no card: the old card stays (the DM is told), and the card that follows replaces it whole.
+    await dmTurn(turn({ narration: 'Inside, brass and oil.', scene: { type: 'social', location: "Tusk's Locksmith Shop", setting: 'town', changed: true } }));
+    assert.ok(c.meta.turnProblems.some(p => /sent no scene_card/.test(p)));
+    assert.ok(w.sceneCard.people.Hob !== undefined, 'not wiped to an empty picture');
+    await dmTurn(turn({ scene: { type: 'social', location: "Tusk's Locksmith Shop", setting: 'town', changed: false }, scene_card: { place: 'the front room of the shop, one lamp', people: { 'Olwen Tusk': 'behind the counter' }, spots: { 'Olwen Tusk': 'across' } } }));
+    assert.equal(w.sceneCard.people.Hob, undefined, 'the new card replaced the old');
+    assert.ok(w.sketch.positions['Olwen Tusk']);
+    assert.equal(w.sketch.positions.Hob, undefined);
+});
+
+test('v0.71: round 1 opens with whoever beat the player; the player\'s reach; the fight\'s end card', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    const w = c.docs.world;
+    await playerSays('((a fight breaks out with Hob and Scald))', [turn({ narration: 'Hob draws a club.', scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, start_combat: { enemies: [{ name: 'Hob', ac: 12, hp: 11, dex: 1, damage: '1d6+2' }, { name: 'Scald', ac: 11, hp: 9, dex: 2 }] }, player_roll: { kind: 'initiative', skill: 'Initiative', advantage: 'advantage', reason: 'roll initiative' } })]);
+    assert.equal(c.meta.pendingRoll.kind, 'initiative');
+    assert.equal(c.meta.pendingRoll.advantage, 'none', 'initiative is a plain roll unless the reason says why');
+    // Hob beat the player, Scald and Judy did not (the dice are set by hand so the test can see it).
+    for (const o of w.combat.order) o.init = o.name === 'Hob' ? 25 : 2;
+    w.combat.order.sort((a, b) => b.init - a.init);
+    await playerSays('15', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'Hob comes at you first.', npc_rolls: [{ who: 'Hob', what: 'club swing at Amber', notation: '1d20+4', kind: 'attack', target: 'Amber', damage: '1d6+2', on_success: 'the club lands', on_fail: 'it whistles past' }] })]);
+    assert.match(llm.calls.at(-1).user, /ROUND 1 OPENS: Hob beat Amber's 19 and act now/);
+    assert.doesNotMatch(llm.calls.at(-1).user, /Scald beat/);
+    assert.equal(c.meta.openingRound, undefined, 'the opening of the round is done with');
+    assert.ok(cards('roll').some(t => /\*\*Hob\*\* · club swing/.test(t)), 'Hob acted before the player');
+    // The player swings at Scald from the far corner: a move's worth closer, still out of reach, no roll, both sides told.
+    w.combat.positions.Scald = 'a9';
+    w.combat.positions.Amber = 'l1';
+    await playerSays('*Amber stabs Scald.*', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'You lunge.', player_roll: { kind: 'attack', skill: 'Short sword', target: 'Scald', dc: 11, reason: 'the stab at Scald' } })]);
+    assert.equal(c.meta.pendingRoll, null, 'no roll asked');
+    assert.ok(c.meta.turnProblems.some(p => /out of reach/.test(p)), 'the DM is told');
+    assert.ok(cards('note').some(t => /out of reach/.test(t)), 'the player is told');
+    // Next round the move is back: the swing walks her up and is asked.
+    await playerSays('*Amber goes for Scald.*', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'You close the distance.', player_roll: { kind: 'attack', skill: 'Short sword', target: 'Scald', dc: 11, reason: 'the stab at Scald' } })]);
+    assert.equal(c.meta.pendingRoll?.kind, 'attack');
+    const dist = (a, b) => Math.max(Math.abs(a.charCodeAt(0) - b.charCodeAt(0)), Math.abs(Number(a.slice(1)) - Number(b.slice(1))));
+    assert.ok(dist(w.combat.positions.Amber, 'a9') <= 1, `walked up (${w.combat.positions.Amber})`);
+    await playerSays('((they run))', [turn({ narration: 'They bolt.', end_combat: true, positions: { Hob: 'gone', Scald: 'gone' }, scene_card: { people: { Hob: '', Scald: '' } } })]);
+    assert.equal(w.combat, null);
+    assert.ok(cards('roll').some(t => /⚔️ \*\*The fight is over\.\*\* Amber \d+\/\d+/.test(t)), 'an end card');
+});
+
+test('v0.71: coin in NPC chatter still reaches the books: the trade is the DM\'s', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    H.settings().useHelper = true;
+    llm.local.push('{"category":"banter","engaged":2,"stalled":false,"speakers":["Hob"],"addressed":"Hob"}');
+    await playerSays('*Amber sets coins on the bar.* "Stew for two, and a room for the night. Name the price and I\'ll pay it."', [turn({ narration: 'Three silver, and the room at the top of the stairs.', state_changes: { gold: -0.3 }, directions: [{ speaker: 'Hob', direction: 'Take the coin and point at the stairs.', length: 'short' }] })]);
+    H.settings().useHelper = false;
+    assert.match(llm.calls.at(-1).user, /Coin is changing hands/);
+    assert.equal(c.docs.world.gold, 39.7);
+});
+
 test('a dropped roll: the code asked first; a roll for a companion is rolled by the code', async () => {
     const c = await freshCampaign();
     await orchestrator.runOpening(opening());

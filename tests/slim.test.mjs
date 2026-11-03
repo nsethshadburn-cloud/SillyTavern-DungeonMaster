@@ -5,13 +5,61 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { looksLikePlace, looksLikeThing, notAPerson } from '../src/core/people.js';
 import { buildSketch, propForObject, zoneOf, moveOnSketch, sketchMap, ZONES } from '../src/core/sketch.js';
-import { normalizeSceneCard, applySceneCard, emptySceneCard } from '../src/core/state.js';
+import { normalizeSceneCard, applySceneCard, emptySceneCard, samePlace } from '../src/core/state.js';
 import { normalizeNotation, parsePlayerRoll } from '../src/core/dice.js';
 import { parseBookkeeping, bookkeeperPrompt, tidyBookkeeping } from '../src/core/bookkeeper.js';
 import { BIBLE_INSTRUCTIONS, DM_RULES, normalizeDmTurn, parseDmTurn } from '../src/core/protocol.js';
 import { createWorldState } from '../src/core/world.js';
 import { isWalkable, parseCoord } from '../src/core/grid.js';
 import { TASKS, defaultTaskModels } from '../src/core/models.js';
+import { themeFor } from '../src/core/grid.js';
+import { presetFor, lookForNpc } from '../src/core/sprites.js';
+import { ruleTriage } from '../src/core/triage.js';
+import { dmReasons, createPacingState } from '../src/core/pacing.js';
+
+// v0.71 (live test 10): the sketch follows a reworded place; a yard is outdoors; a shop among the objects is
+// no prop; a man with animal words is a man; coin changing hands is the DM's by rule.
+test('a reworded place name is the same place', () => {
+    assert.ok(samePlace('Eel Street', 'Eel Street, Marrow Ford'));
+    assert.ok(samePlace("Tusk's Locksmith Shop", "Olwen Tusk's Locksmith Shop, Eel Street"));
+    assert.ok(!samePlace('Eel Street', 'The Drowned Eel'));
+    assert.ok(!samePlace("Tusk's shop", 'the back room'));
+});
+
+test('a yard is outdoors whatever building it belongs to; a street is still a street', () => {
+    assert.equal(themeFor('town', 'inn yard behind the Drowned Eel'), 'town');
+    assert.equal(themeFor('town', "the manor's walled garden"), 'town');
+    assert.equal(themeFor('town', 'the Drowned Eel, common room'), 'tavern');
+    assert.equal(themeFor('town', "Tusk's shop on Eel Street"), 'house');
+});
+
+test('a place among the objects is never a prop, whatever hangs on it', () => {
+    assert.equal(propForObject("Locksmith's shop", 'shuttered front, a lamp lit over the door'), '');
+    assert.equal(propForObject('The Drowned Eel', 'the inn across the lane, windows glowing'), '');
+    assert.equal(propForObject('Rain barrel', 'by the shop wall'), 'barrel');
+});
+
+test('a man described with animal words is drawn as a man; an animal by name stays one', () => {
+    assert.equal(presetFor('Hob a bull-necked man with a boar\'s grin, Tusk\'s bruiser'), 'cow');
+    assert.equal(presetFor('Hob a bull-necked man with a boar\'s grin, Tusk\'s bruiser', { person: true }), 'human_brute');
+    assert.ok(!lookForNpc('Hob', "a bull-necked man with a boar's grin, Tusk's bruiser", 'human_thug').beast);
+    assert.ok(!lookForNpc('Hob', "a bull-necked man with a boar's grin, Tusk's bruiser").beast, 'no sprite given: still a man');
+    assert.ok(lookForNpc('Brown Mare', "the captain's horse, a steady bay").beast, 'an animal by name');
+    assert.ok(lookForNpc('Gutter Crow', 'a crow that follows the party').beast);
+});
+
+test('coin changing hands is the DM\'s by rule, outside a fight', () => {
+    for (const line of ['"Two rooms for the night, and a hot meal."', '*Amber sets coins on the bar.* "Name the price and I\'ll pay it."', '"How much for the lantern?"', 'I buy the rope.']) {
+        const r = ruleTriage(line, { player: 'Amber', companions: ['Judy Hopps'] });
+        assert.equal(r.category, 'risky_action', line);
+        assert.ok(r.trade, line);
+        assert.ok(r.needsHelper, 'the helper still picks who answers');
+    }
+    assert.ok(!ruleTriage('"Hello there."', { player: 'Amber' }).trade);
+    assert.ok(!ruleTriage('I buy the rope.', { player: 'Amber', inCombat: true }).trade, 'not mid-fight');
+    const reasons = dmReasons({ pacing: createPacingState(), triage: { category: 'risky_action', trade: true }, eventDue: false, checkinEvery: 5, budgetBlocked: false, budgetTight: false });
+    assert.ok(reasons.includes('trade'));
+});
 
 test('a place or a thing named as a person is refused; a being by its words is not', () => {
     for (const n of ["Olwen Tusk's Locksmith Shop", 'Eel Street', 'The Gilded Lantern inn', 'The Drowned Eel Inn', 'the back room']) assert.ok(looksLikePlace(n), n);
