@@ -81,13 +81,15 @@ export function sketchTheme(card, world) {
 /** The empty room or clearing: walls around it and a door at the bottom indoors; open ground outdoors. */
 export function sketchMap(theme, seed = 1) {
     const open = OPEN.has(theme);
+    // Open ground is grass, a town's is cobbles, a camp's dirt; the way out is a dirt patch at the bottom edge.
+    const ground = theme === 'town' ? '=' : theme === 'camp' || theme === 'warren' ? ':' : ',';
     const rows = [];
     for (let r = 0; r < H; r++) {
         const y = H - 1 - r;
         let row = '';
         for (let x = 0; x < W; x++) {
             const edge = x === 0 || x === W - 1 || y === 0 || y === H - 1;
-            if (open) row += y === DOOR.y && x === DOOR.x ? ':' : ',';
+            if (open) row += y === DOOR.y && x === DOOR.x ? ':' : ground;
             else if (y === DOOR.y && x === DOOR.x) row += '+';
             else row += edge ? '#' : '.';
         }

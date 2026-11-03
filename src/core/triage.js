@@ -17,6 +17,8 @@ export function ruleTriage(text, ctx = {}) {
     const raw = String(text ?? '').trim().replace(/^[*_]+\s*\(\s*ooc\s*\)\s*[*_]+\s*:?\s*/i, 'OOC: ');
     const t = raw.toLowerCase();
     const result = { category: null, ooc: false, oocText: '', rollResult: false, roll: null, needsHelper: true };
+    // Someone grabbing, tackling or pinning someone, in the player's line or an aside to the DM: a contest, decided by dice (the DM is told so).
+    result.contest = !ctx.inCombat && grabsSomeone(raw);
 
     // Out of character: "((...))", "(OOC ...)", "OOC:", "DM, ...", "@DM ..."
     const ooc = raw.match(/^\s*(?:\(\((.*?)\)\)?|\(\s*ooc\s*[:\-]?\s*(.*?)\)?|ooc\s*[:\-]\s*(.*)|@?dm\s*[,:\-]\s*(.*)|@dm\s+(.*))\s*$/is);
@@ -71,7 +73,7 @@ export function ruleTriage(text, ctx = {}) {
 
     // Coin changing hands (buying, paying, asking a price, the room for the night): the DM sets the price
     // and sends the gold; left to an NPC's own line, the price is never paid on the books.
-    if (!ctx.inCombat && /\b(?:pay|pays|paying|paid|buy|buys|buying|bought|purchase|purchases|sell|sells|selling|sold|haggle|haggles|bargain|bargains|how much (?:for|is|do|does|will|would)|what(?:'s| is| does| will) (?:it|that|this|the \w+) cost|name (?:your|the|a) price|the price|coins? (?:on|onto|across|down)|rooms? for the night|a room for the night|the (?:tab|bill)|settle up|\d+\s*(?:gp|sp|cp|gold|silver|copper))\b/.test(t)) {
+    if (!ctx.inCombat && TRADE_WORDS.test(t)) {
         result.category = 'risky_action';
         result.trade = true;
         result.needsHelper = true; // the helper still picks who answers; the category stands
@@ -86,6 +88,18 @@ export function ruleTriage(text, ctx = {}) {
     }
 
     return result;
+}
+
+/** Coin changing hands, in the words a shop hears: a price asked or named, coin counted out, the room for the night. */
+const TRADE_WORDS = /\b(?:pay|pays|paying|paid|buy|buys|buying|bought|purchase|purchases|sell|sells|selling|sold|haggle|haggles|bargain|bargains|how much\b|what(?:'s| is| does| will) (?:it|that|this|the \w+) cost|what do (?:i|we) owe|name (?:your|the|a) price|the price|(?:count|counts|counting) out|coins?\b|purse|rooms? for the night|a room for the night|the (?:tab|bill)|settle up|(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve|twenty|fifty|a few|some|half a|a) (?:gp|sp|cp|gold|silver|copper|crowns?|marks?)\b|(?:i'?ll|we'?ll|i will|we will) take (?:the|a|an|one|two|three|it|that|those|them|both)\b)/;
+
+/** Someone grabbing, tackling, pinning or holding someone (not a thing): the words of a contest. */
+const CONTEST_WORDS = /\b(?:grab|grabs|grabbed|grabbing|seize|seizes|seized|tackle|tackles|tackled|tackling|pin|pins|pinned|pinning|wrestle|wrestles|wrestling|hold(?:s|ing)? (?:him|her|them|me|you|\w+) down|catch(?:es)? hold of|take(?:s)? hold of|lunge(?:s|d)? (?:for|at)|snatch(?:es)? at|collar(?:s|ed)?)\b (?:\w+ ){0,3}?(?:him|her|them|me|you|amber|judy|the (?:player|thief|constable|rabbit|hare|fox|man|woman|boy|girl)|\w+'s (?:arm|wrist|collar|coat|cloak|sleeve|shoulder|leg|ankle|hair|ear|ears|paw|scruff|throat|neck))\b/i;
+
+/** A grab, a tackle, a hold on someone in this text (a hand on a thing isn't one: "grabs the ledger", "grabs the rope"). */
+export function grabsSomeone(text) {
+    const s = String(text || '').replace(/\(\(|\)\)/g, ' ');
+    return CONTEST_WORDS.test(s) || /\b(?:tries|try|trying|tried|reaches|reaching|goes|going) to (?:grab|seize|tackle|pin|hold|catch|collar) (?:him|her|them|me|you|amber|judy)\b/i.test(s);
 }
 
 /**

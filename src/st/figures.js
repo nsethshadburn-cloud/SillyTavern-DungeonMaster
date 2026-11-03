@@ -28,17 +28,18 @@ function settled(look, name, text) {
 /** The look for anyone on the map, by name. */
 export function figureFor(name) {
     const c = campaign();
-    const animal = animalFigure(name);
+    const npc = c ? (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name)) : null;
+    const enemy = c?.docs.world.combat?.enemies?.[name];
+    // The animal rigs are kept by name across campaigns: a "Hob" who was a hound once is not this campaign's Hob the bruiser.
+    const animal = (!npc && !enemy) || npc?.sprite === 'animal' || enemy?.sprite === 'animal' ? animalFigure(name) : null;
     if (animal) return animal;
     if (!c) return libraryLook(presetFor(name));
     if (name === c.meta.persona.name) return settled(stored('persona', c.meta.persona.avatar), name, c.meta.persona.description) ?? libraryLook(presetFor(c.meta.persona.description || name), 0, sexFromText(c.meta.persona.description) || guessGender(name));
     const member = c.meta.party.find(p => p.name === name);
     if (member) return settled(stored('character', member.avatar), name, member.summary) ?? libraryLook(presetFor(member.summary || name), 1, sexFromText(member.summary) || guessGender(name));
-    const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
     // Men and women look different on the map: the DM's gender for them, else their description, else the first name.
     const sex = who => (who.gender === 'male' || who.gender === 'female' ? who.gender : sexFromText(`${who.name} ${who.description || ''}`) || guessGender(who.name));
-    if (npc) return lookForNpc(npc.name, npc.description, npc.sprite, sex(npc));
-    const enemy = c.docs.world.combat?.enemies?.[name];
+    if (npc) return lookForNpc(npc.name, npc.description, npc.sprite || enemy?.sprite || '', sex(npc));
     return lookForNpc(name.replace(/\s*\d+$/, ''), '', enemy?.sprite);
 }
 

@@ -132,6 +132,7 @@ export function dmReasons({ pacing, triage, eventDue, checkinEvery, budgetBlocke
     if (triage.rollResult) reasons.push('roll_result');
     if (['risky_action', 'scene_move', 'combat_action'].includes(triage.category)) reasons.push(triage.category);
     if (triage.trade) reasons.push('trade');
+    if (triage.contest) reasons.push('contest');
     if (pacing.inCombat && triage.category !== 'banter') reasons.push('combat_round');
     if (eventDue) reasons.push('event');
     if (triage.stalled || (pacing.fillerStreak ?? 0) >= STALL_FILLER_STREAK) reasons.push('stalled');

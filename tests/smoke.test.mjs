@@ -219,6 +219,24 @@ test('v0.71: coin in NPC chatter still reaches the books: the trade is the DM\'s
     assert.equal(c.docs.world.gold, 39.7);
 });
 
+test('v0.72: a grab with no roll is told off; a companion task with no result is told off', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    await playerSays('((a watchman corners Amber in the yard and tries to grab him))', [turn({ narration: 'He comes off the gate, reaching for your arm.' })]);
+    assert.match(llm.calls.at(-1).user, /That is a CONTEST/);
+    assert.ok(c.meta.turnProblems.some(p => /a contest is dice/.test(p)), 'the DM is told');
+    assert.ok(cards('note').some(t => /grab without the contested roll/.test(t)), 'the player is told');
+    await playerSays('*Amber tries to twist out of his reach.*', [turn({ narration: 'His hand snaps out.', player_roll: { kind: 'check', skill: 'Acrobatics', dc: 13, reason: 'slipping the grab' } })]);
+    assert.equal(c.meta.pendingRoll?.kind, 'check');
+    assert.ok(!c.meta.turnProblems.some(p => /a contest is dice/.test(p)), 'asked this time');
+    H.settings().useHelper = true;
+    llm.local.push('{"category":"action","engaged":2,"stalled":false,"speakers":[],"addressed":"Judy Hopps","task":{"who":"Judy Hopps","what":"check the lane","dm":true}}');
+    fake.lines.push('"Someone is moving in the shop," Judy says.');
+    await playerSays('Judy, go check the lane.', [turn({ directions: [{ speaker: 'Judy Hopps', direction: 'Report what you saw.', length: 'short' }] })]);
+    H.settings().useHelper = false;
+    assert.ok(c.meta.turnProblems.some(p => /no result for it/.test(p)), 'a brief alone is told off');
+});
+
 test('a dropped roll: the code asked first; a roll for a companion is rolled by the code', async () => {
     const c = await freshCampaign();
     await orchestrator.runOpening(opening());

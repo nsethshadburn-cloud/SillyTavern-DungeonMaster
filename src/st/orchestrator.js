@@ -367,6 +367,19 @@ async function turnBody(c, opts, status, signal) {
                 : `you asked ${meta.persona.name} to roll and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
             saveMeta();
         }
+        // A grab in the line (the player's, or an aside asking for one) came back with no dice: a hold by say-so. Both sides are told.
+        if (reasons.includes('contest') && !result.turn.player_roll && !(result.turn.npc_rolls || []).length && !result.turn.start_combat && !signal.aborted) {
+            meta.turnProblems = [...(meta.turnProblems || []), `the line had a grab or a hold in it ("${trimToTokens(playerText, 40)}") and you asked for no roll: a contest is dice, never your say-so, and nothing holds anyone until the dice say. Ask it now (player_roll Athletics or Acrobatics against the grabber, or both sides in npc_rolls), with the narration stopping at the reaching hand; then conditions_add "grappled (held by X)" only when it lands.`];
+            saveMeta();
+            status.note('A grab with no roll: the DM has been told');
+            await postNote(`⚠️ The DM narrated a grab without the contested roll. It has been told; nothing holds you until the dice say.`);
+        }
+        // A companion's task came back with a brief and no result: she'd invent it. The DM is told.
+        if (reasons.includes('companion_task') && triage.task?.who && !String(result.turn.narration || '').trim() && !(result.turn.npc_rolls || []).length && !signal.aborted) {
+            meta.turnProblems = [...(meta.turnProblems || []), `${triage.task.who} was told to ${triage.task.what || 'do something'} and your reply had no result for it (no narration, no npc_roll), only a brief: she invents what she found. Next time: the roll in npc_rolls with both outcomes, or narration (and "happened") saying what she did and found, and her spot in scene_card.`];
+            saveMeta();
+            status.note(`${triage.task.who}'s task came back with no result: the DM has been told`);
+        }
         // The player attacked (in character: an aside in double brackets isn't the player's blow) and the DM neither started a fight nor asked for a roll: say so, to both.
         const attacked = attacksSomeone(playerText.replace(/\(\([\s\S]*?\)\)/g, ' '));
         if (attacked && !c.docs.world.combat && !result.turn.start_combat && result.turn.player_roll && result.turn.player_roll.kind !== 'attack' && result.turn.player_roll.kind !== 'initiative' && !result.turn.end_combat && !signal.aborted) {

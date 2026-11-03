@@ -14,7 +14,7 @@ import { isWalkable, parseCoord } from '../src/core/grid.js';
 import { TASKS, defaultTaskModels } from '../src/core/models.js';
 import { themeFor } from '../src/core/grid.js';
 import { presetFor, lookForNpc } from '../src/core/sprites.js';
-import { ruleTriage } from '../src/core/triage.js';
+import { ruleTriage, grabsSomeone } from '../src/core/triage.js';
 import { dmReasons, createPacingState } from '../src/core/pacing.js';
 
 // v0.71 (live test 10): the sketch follows a reworded place; a yard is outdoors; a shop among the objects is
@@ -48,6 +48,30 @@ test('a man described with animal words is drawn as a man; an animal by name sta
     assert.ok(lookForNpc('Gutter Crow', 'a crow that follows the party').beast);
 });
 
+test('v0.72: a grab in any line is a contest; a hand on a thing is not', () => {
+    for (const line of ['((One of the watchmen corners Amber in the inn yard at dawn and tries to grab him))', '*Hob lunges for Amber\'s collar.*', '*Amber tackles him.*', '((the warden seizes Judy by the ears))']) {
+        assert.ok(grabsSomeone(line), line);
+        assert.ok(ruleTriage(line, { player: 'Amber', companions: ['Judy Hopps'] }).contest, line);
+    }
+    for (const line of ['*Amber grabs the ledger and runs.*', '*Amber grabs the rope.*', '"Grab a seat."']) assert.ok(!grabsSomeone(line), line);
+    assert.ok(!ruleTriage('*Amber tackles him.*', { player: 'Amber', inCombat: true }).contest, 'in a fight the round runs it');
+    const reasons = dmReasons({ pacing: createPacingState(), triage: { category: 'question', ooc: true, contest: true }, eventDue: false, checkinEvery: 5, budgetBlocked: false, budgetTight: false });
+    assert.ok(reasons.includes('contest'));
+});
+
+test('v0.72: a card for another place replaces the old card; a town sketch is cobbles', () => {
+    const street = applySceneCard(null, normalizeSceneCard({ place: 'wet cobbled lane on Eel Street, lamps lit', people: { Hob: 'at the inn door' }, spots: { Hob: 'across' }, objects: { 'Rain barrel': 'by the wall' } }), { partyNames: ['Amber'] });
+    const shop = applySceneCard(street, normalizeSceneCard({ place: 'front room of a locksmith shop, one lamp', people: { 'Olwen Tusk': 'behind the counter' }, spots: { 'Olwen Tusk': 'across' }, objects: { counter: 'scarred oak' } }), { partyNames: ['Amber'] });
+    assert.equal(shop.objects['Rain barrel'], undefined, 'the street\'s barrel stays on the street');
+    assert.equal(shop.people.Hob, undefined);
+    assert.ok(shop.objects.counter && shop.people['Olwen Tusk']);
+    const relit = applySceneCard(shop, normalizeSceneCard({ place: 'front room of a locksmith shop, lamp out', objects: { 'back door': 'locked' } }), { partyNames: ['Amber'] });
+    assert.ok(relit.objects.counter, 'the same room in new light keeps its things');
+    assert.ok(sketchMap('town').rows.join('').includes('='), 'cobbles');
+    assert.ok(!sketchMap('town').rows.join('').includes(','), 'no grass');
+    assert.ok(sketchMap('forest').rows.join('').includes(','));
+});
+
 test('coin changing hands is the DM\'s by rule, outside a fight', () => {
     for (const line of ['"Two rooms for the night, and a hot meal."', '*Amber sets coins on the bar.* "Name the price and I\'ll pay it."', '"How much for the lantern?"', 'I buy the rope.']) {
         const r = ruleTriage(line, { player: 'Amber', companions: ['Judy Hopps'] });
@@ -55,6 +79,7 @@ test('coin changing hands is the DM\'s by rule, outside a fight', () => {
         assert.ok(r.trade, line);
         assert.ok(r.needsHelper, 'the helper still picks who answers');
     }
+    for (const line of ['"I\'ll take a hooded lantern, if you have one. How much?"', '*Amber counts out the coin and sets it on the counter.* "Five silver it is."', '"What do we owe you?"']) assert.ok(ruleTriage(line, { player: 'Amber' }).trade, line);
     assert.ok(!ruleTriage('"Hello there."', { player: 'Amber' }).trade);
     assert.ok(!ruleTriage('I buy the rope.', { player: 'Amber', inCombat: true }).trade, 'not mid-fight');
     const reasons = dmReasons({ pacing: createPacingState(), triage: { category: 'risky_action', trade: true }, eventDue: false, checkinEvery: 5, budgetBlocked: false, budgetTight: false });

@@ -67,6 +67,9 @@ export function samePlace(a, b) {
 export function applySceneCard(card, update, { newPlace = false, partyNames = [] } = {}) {
     const base = card && typeof card === 'object' ? card : emptySceneCard();
     const out = { place: base.place || '', people: { ...(base.people || {}) }, spots: { ...(base.spots || {}) }, objects: { ...(base.objects || {}) } };
+    // A card whose place is another place (its first words, before the light and the weather) is the card of that place: the street's barrel doesn't come into the shop.
+    const clause = s => String(s || '').split(/[,;.:]/)[0];
+    if (update?.place && base.place && !samePlace(clause(update.place), clause(base.place))) newPlace = true;
     if (newPlace) {
         out.place = '';
         out.objects = {};
