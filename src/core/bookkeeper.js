@@ -67,12 +67,12 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
  *   names = whose conditions may change (the party and the people here); itemNames = who carries tracked
  *   items (the party); itemsOf = what someone carries (their own and the shared pack)
  */
-/** States the bookkeeper may never set or clear: the dice, the DM's own fields and the map own these. */
-const NOT_THE_BOOKKEEPERS = /unconscious|incapacitated|out cold|senseless|dead|dying|asleep|sleeping|caged|uncaged|cuffed|shackled|chained|locked|free|freed|conscious|awake|alive|restrained|tied|bound|rope|netted|caught|paraly|stunned|prone|fallen|knocked down|on the ground|tripped|tackled|standing|on (?:his|her|their) feet/i;
+/** States the bookkeeper may never set or clear: the dice and the DM own these (restraints and prone it may fill in from the narration). */
+const NOT_THE_BOOKKEEPERS = /unconscious|incapacitated|out cold|senseless|dead|dying|asleep|sleeping|conscious|awake|alive|paraly|stunned/i;
 
 /**
- * Fence the bookkeeper's changes: conditions only on the party (never the place's people), never
- * a state that the dice, the DM or the map decide (unconscious, dead, asleep, caged, cuffed...).
+ * Fence the bookkeeper's changes: conditions only on the party, never a state that the dice or the
+ * DM decide (unconscious, dead, asleep, stunned).
  * Items stay as they are. Returns the trimmed changes, or null when nothing is left.
  */
 export function tidyBookkeeping(changes, { party = [] } = {}) {

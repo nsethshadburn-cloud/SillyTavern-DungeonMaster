@@ -152,10 +152,10 @@ function clampSize(n, fallback, max = MAX_SIZE) {
  * Normalize a map from the DM: {width, height, rows:[top row ... bottom row]}.
  * Unknown characters become floor; short rows are padded; extra rows/cols are cut.
  */
-/** The map on screen: the battle map during a fight, otherwise the DM's scene map (if any). */
+/** The map on screen: the battle map during a fight, otherwise the sketch of the scene (if any). */
 export function activeMap(world) {
     if (world?.combat?.map) return world.combat;
-    if (world?.sceneMap?.map) return world.sceneMap;
+    if (world?.sketch?.map) return world.sketch;
     return null;
 }
 
@@ -428,13 +428,15 @@ export function clampMove(map, from, to, max, blocked = new Set()) {
  */
 export function themeFor(setting = '', location = '') {
     const w = String(location || '').toLowerCase();
-    // Rooms first (a manor on the moor is a manor), the land last.
+    // Buildings and rooms first (a shop on Market Street is a room; a manor on the moor is a manor), the land and the town last.
     const byWords = [
+        [/tavern|\binn\b|alehouse|taproom|common room/, 'tavern'], [/mansion|manor|estate|palace/, 'mansion'],
+        [/\bhouse|\bhome\b|cottage|cabin|lodge|\bhut\b|\bshop\b|\bstore\b|smithy|forge|workshop|office|\bbank\b|guild|\brooms?\b|cellar|kitchen|parlou?r|chamber|\bhall\b|warehouse|stable/, 'house'],
+        [/castle|\bkeep\b|\bfort\b|fortress|citadel|tower|gatehouse|bailey/, 'castle'], [/temple|church|shrine|chapel|cathedral|abbey/, 'temple'], [/prison|jail|gaol|\bcells?\b|dungeon/, /dungeon/.test(w) ? 'dungeon' : 'prison'],
+        [/crypt|tomb|catacomb|grave|barrow|ossuary/, 'crypt'], [/\bcaves?\b|cavern|grotto|\bmine\b|tunnel|burrow/, 'cave'], [/sewer/, 'sewer'], [/library|archive/, 'library'], [/\bship\b|\bdeck\b|\bboat\b|galleon|\bhold\b/, 'ship'],
         [/jungle|rainforest/, 'jungle'], [/swamp|marsh|\bbog\b|\bfen\b/, 'swamp'], [/\bsnow|\bice\b|frozen|tundra|glacier/, 'snow'], [/desert|\bdunes?\b|\bsand\b|oasis/, 'desert'],
         [/\bcamp\b|encampment|palisade/, 'camp'],
-        [/town|village|city|street|market|square|hamlet/, 'town'], [/\bcaves?\b|cavern|grotto|\bmine\b|tunnel|burrow/, 'cave'], [/crypt|tomb|catacomb|grave|barrow|ossuary/, 'crypt'], [/sewer/, 'sewer'],
-        [/castle|\bkeep\b|\bfort\b|fortress|citadel|tower|gatehouse|bailey/, 'castle'], [/temple|church|shrine|chapel|cathedral|abbey/, 'temple'], [/prison|jail|gaol|\bcells?\b|dungeon/, /dungeon/.test(w) ? 'dungeon' : 'prison'],
-        [/tavern|\binn\b|alehouse|taproom/, 'tavern'], [/mansion|manor|estate|palace/, 'mansion'], [/\bhouse|\bhome\b|cottage|cabin|lodge|\bhut\b/, 'house'], [/\bship\b|\bdeck\b|\bboat\b|galleon|\bhold\b/, 'ship'], [/library|archive/, 'library'],
+        [/town|village|city|street|market|square|hamlet|lane|alley/, 'town'],
         [/forest|\bwoods?\b|\bgrove\b|glade|clearing|thicket|\bdowns\b|\bhills?\b|\bplains?\b|meadow|\bfields?\b|grass|\bmoors?\b|\bheath\b|prairie|\bridge\b|valley|\bstones\b|\briver\b|\bstream\b|\blake\b|\bshore\b|\btrail\b|\broad\b|\bwilds?\b|wilderness/, 'forest'],
     ];
     for (const [re, theme] of byWords) if (re.test(w)) return theme;

@@ -189,10 +189,10 @@ test('per-job models: Sonnet for setup and story direction, Haiku for everyday p
     const taskModels = defaultTaskModels();
     const price = { [S]: 2, [H]: 0.1, 'claude-opus-5-5': 5 };
     const o = { hybrid: true, mainModel: S, taskModels, rank: m => price[m] ?? 0 };
-    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet', 'build_place']) {
+    for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet']) {
         assert.equal(pickModel([k], o), S, k);
     }
-    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'explore', 'map_sync', 'drift', 'stalled', 'deadlock', 'resync', 'map_brief']) {
+    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'drift', 'stalled', 'deadlock', 'resync']) {
         assert.equal(pickModel([k], o), H, k);
     }
     assert.equal(pickModel(['ooc', 'opening'], o), S, 'the more capable model wins when jobs disagree');
@@ -419,32 +419,23 @@ test('v0.7: no secret rolls, companions roll covert actions, version stamp match
     assert.match(DM_RULES, /never narrate what a companion chooses to do/);
     const { companionActionPrompt, parseCompanionAction } = await import('../src/core/triage.js');
     assert.match(companionActionPrompt({ name: 'Judy Hopps', message: 'x', scene: 'y' }).user, /ATTEMPT/);
-    assert.deepEqual(parseCompanionAction('{"attempt": true, "what": "slip the cuff key from his pouch"}'), { attempt: true, what: 'slip the cuff key from his pouch', go: '' });
-    assert.deepEqual(parseCompanionAction('{"attempt": false, "what": "talks"}'), { attempt: false, what: '', go: '' });
-    const places = [{ id: 'p12', name: 'the hay (in this room)' }, { id: 'R5', name: 'Guard room (next door)' }];
-    assert.equal(parseCompanionAction('{"attempt": false, "go": "p12"}', places).go, 'p12', 'she goes to hide in the hay');
-    assert.equal(parseCompanionAction('{"go": "the moon"}', places).go, '', 'only real places');
-    assert.equal(parseCompanionAction('{"go": "p12", "hide": true}', places).hide, true, 'she hides in the hay');
-    assert.equal(parseCompanionAction('{"go": "p12"}', places).hide, undefined);
-    assert.match(companionActionPrompt({ name: 'Judy', message: "I'll hide in the hay.", places }).user, /p12 = the hay/);
+    assert.deepEqual(parseCompanionAction('{"attempt": true, "what": "slip the cuff key from his pouch"}'), { attempt: true, what: 'slip the cuff key from his pouch' });
+    assert.deepEqual(parseCompanionAction('{"attempt": false, "what": "talks"}'), { attempt: false, what: '' });
     const { DEFAULT_TEMPLATES, DEFAULT_LENGTHS } = await import('../src/core/notes.js');
     assert.match(DEFAULT_TEMPLATES.npc, /one or two short lines of dialogue/);
     assert.equal(DEFAULT_LENGTHS.long, '4-6 sentences at most');
 });
 
-test('v0.8: scene maps outside combat, dead NPCs', async () => {
+test('v0.8: dead NPCs; v0.70: the sketch is the map outside a fight', async () => {
     const { activeMap, normalizeMap } = await import('../src/core/grid.js');
-    const t = parseDmTurn('{"scene_map":{"title":"Flooded crypt","width":6,"height":4,"rows":["######","#..~~#","#.T..#","######"]},"npcs_dead":["Corwin Tillet"]}');
-    assert.equal(t.scene_map.title, 'Flooded crypt');
+    const t = parseDmTurn('{"npcs_dead":["Corwin Tillet"]}');
     assert.deepEqual(t.npcs_dead, ['Corwin Tillet']);
-    assert.equal(parseDmTurn('{"scene_map":"close"}').scene_map, 'close');
-    assert.equal(parseDmTurn('{"narration":"x"}').scene_map, null);
-    const room = { title: 'Crypt', map: normalizeMap(t.scene_map), positions: {} };
-    assert.equal(activeMap({ sceneMap: room }), room, 'outside combat the scene map shows');
-    const fight = { map: room.map, positions: {} };
-    assert.equal(activeMap({ sceneMap: room, combat: fight }), fight, 'in a fight the battle map wins');
+    assert.equal('scene_map' in t, false, 'scene maps are gone: the sketch is drawn from the scene card');
+    const sketch = { key: 'x', map: normalizeMap({ width: 6, height: 4, rows: ['######', '#..~~#', '#.T..#', '######'] }), positions: {} };
+    assert.equal(activeMap({ sketch }), sketch, 'outside combat the sketch shows');
+    const fight = { map: sketch.map, positions: {} };
+    assert.equal(activeMap({ sketch, combat: fight }), fight, 'in a fight the battle map wins');
     assert.equal(activeMap({}), null);
-    assert.match(DM_RULES, /Be conservative: never for towns/);
 });
 
 test('character sheets can come from Word documents and text files', async () => {
@@ -485,9 +476,7 @@ test('v0.10: refusals become a deadlock, "just happened" reaches companions', as
     assert.ok(TASKS.some(t => t.key === 'deadlock' && !t.main), 'deadlocks run on the light model (v0.25.2)');
 });
 
-test('v0.10.1 fixes: scene_map null keeps the map, 2d20kh1 has a natural die', () => {
-    assert.equal(parseDmTurn('{"scene_map": null}').scene_map, null, 'null means no change');
-    assert.equal(parseDmTurn('{"scene_map": "close"}').scene_map, 'close');
+test('v0.10.1 fixes: 2d20kh1 has a natural die', () => {
     const seq = [20, 3];
     const adv = roll('2d20kh1+5', { rng: () => seq.shift() });
     assert.equal(adv.natural, 20);
@@ -497,13 +486,11 @@ test('v0.10.1 fixes: scene_map null keeps the map, 2d20kh1 has a natural die', (
 
 test('v0.18.2: telling a companion to do something: where they go, and whether the DM decides', async () => {
     const { helperTriagePrompt, parseHelperTriage } = await import('../src/core/triage.js');
-    const places = [{ id: 'p12', name: 'the crate (in this room)' }, { id: 'R3', name: 'Guard Room (next door)' }];
-    const { user } = helperTriagePrompt({ player: 'Amber', message: 'Judy go to that crate and tell me if you find anything', recent: '', speakers: ['Judy Hopps'], scene: 'x', companions: ['Judy Hopps'], places });
+    const { user } = helperTriagePrompt({ player: 'Amber', message: 'Judy go to that crate and tell me if you find anything', recent: '', speakers: ['Judy Hopps'], scene: 'x', companions: ['Judy Hopps'] });
     assert.match(user, /"task"/);
-    assert.match(user, /p12 = the crate/);
     assert.doesNotMatch(helperTriagePrompt({ player: 'Amber', message: 'hi', recent: '', speakers: [], scene: 'x' }).user, /"task"/, 'no companions: no task question');
     const h = parseHelperTriage('{"category":"action","speakers":["Judy Hopps"],"task":{"who":"Judy Hopps","what":"search the crate","go":"p12","dm":true}}', ['Judy Hopps']);
-    assert.deepEqual(h.task, { who: 'Judy Hopps', what: 'search the crate', go: 'p12', dm: true });
+    assert.deepEqual(h.task, { who: 'Judy Hopps', what: 'search the crate', dm: true });
     assert.equal(parseHelperTriage('{"category":"banter","task":null}', []).task, null);
     assert.equal(parseHelperTriage('{"category":"action","task":{"who":"Judy Hopps","what":"wait here"}}', []).task.dm, false);
 });
@@ -527,21 +514,12 @@ test('v0.19.1: damage from a save: all on a failure, half on a success when it s
     assert.equal(t.player_roll.half, true);
 });
 
-test('v0.21: companions agree in chat to follow, stick close or stay; map tiers shape the rules', async () => {
-    const { companionActionPrompt, parseCompanionAction } = await import('../src/core/triage.js');
+test('v0.21: map tiers shape the rules (v0.70: off, or the sketch and the battle map)', async () => {
     const { dmRules, DM_RULES } = await import('../src/core/protocol.js');
-    const { user } = companionActionPrompt({ name: 'Judy Hopps', message: '"Right behind you, partner."', scene: 'x', places: [], askAttempt: false, player: 'Amber', askStance: true });
-    assert.match(user, /stay right by Amber's side/);
-    assert.match(user, /"stance"/);
-    assert.equal(parseCompanionAction('{"stance": "follow"}').stance, 'follow');
-    assert.equal(parseCompanionAction('{"stance": "close"}').stance, 'close');
-    assert.equal(parseCompanionAction('{"stance": "maybe"}').stance, undefined);
-    assert.equal(parseCompanionAction('{"go": "p1", "stance": "stay"}', [{ id: 'p1', name: 'x' }]).go, 'p1');
     assert.equal(dmRules('some'), DM_RULES);
-    assert.match(dmRules('always'), /MAP MODE ALWAYS/);
+    assert.equal(dmRules('always'), DM_RULES, 'the old "always" tier is plain on');
     const off = dmRules('off');
-    assert.doesNotMatch(off, /## Places and maps/);
-    assert.doesNotMatch(off, /^ {2}"(scene_map|build_place|place_changes|map_effects|positions)":/m);
+    assert.doesNotMatch(off, /^ {2}"(positions|dashing|free_move)":/m);
     assert.doesNotMatch(off, /^- Maps: a grid/m);
     assert.match(off, /NO MAPS/);
     assert.match(off, /## Combat/, 'combat itself stays');

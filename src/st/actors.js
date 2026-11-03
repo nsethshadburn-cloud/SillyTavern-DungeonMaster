@@ -16,8 +16,7 @@ import { addNpcs, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderTemplate, lengthText, pronounsFor, fitNote, noteBudget } from '../core/notes.js';
 import { trimToTokens, stripSpeakerPrefix, matchName, nameKey, repeatedPhrases, repeatedTopics } from '../core/text.js';
 import { renderSceneCard, renderTimeline, renderPeople } from '../core/state.js';
-import { roomBrief, currentPlace, withinEarshot } from './atlas.js';
-import { notAPerson } from '../core/explore.js';
+import { notAPerson } from '../core/people.js';
 import { ensureClock, hhmm, WEATHER_WORDS } from '../core/clock.js';
 
 const KEY_NOTE = 'DM_NOTE';
@@ -56,13 +55,10 @@ export function recentRepliesOf(name, max = 8) {
     return out;
 }
 
-/** The fight's enemies, the people on the map (their side, the dead), and who has spotted the party. */
+/** The fight's enemies and who has spotted the party. */
 function mapPeople(c) {
     const w = c.docs.world;
-    const foes = Object.keys(w.combat?.enemies ?? {});
-    const here = currentPlace(c);
-    const others = here ? Object.values(here.place.guards).filter(g => g.state !== 'gone').map(g => ({ name: g.name, description: g.description, hostile: g.hostile === true || g.intent === 'attack', dead: g.state === 'dead' })) : [];
-    return { foes, others, aware: awareSummary(w) };
+    return { foes: Object.keys(w.combat?.enemies ?? {}), others: [], aware: awareSummary(w) };
 }
 
 /** What is true right now: the scene card, people met, the timeline (companions only), table rules. */
@@ -108,15 +104,11 @@ export function buildNote({ brief = '', length = 'normal', npc = null, speaker =
     });
     const state = stateVars(c, speaker, { npc: Boolean(npc) });
     parts.push({ key: 'state', text: renderTemplate(s.templates.state, { ...vars, ...state }) });
-    // What the DM said just happened, and what the player just did on the map (resolved by the code): already done, not to be redone.
-    const happened = [c.meta.happened, ...(c.meta.mapLog || []).map(e => e.text)].filter(Boolean).join(' ');
+    // What the DM said just happened: already done, not to be redone.
+    const happened = String(c.meta.happened || '');
     if (happened) parts.push({ key: 'happened', text: renderTemplate(s.templates.happened, { ...vars, happened }) });
     const knowledge = speaker ? c.meta.knowledge?.[speaker] : '';
     if (knowledge) parts.push({ key: 'knowledge', text: renderTemplate(s.templates.knowledge, { ...vars, knowledge }) });
-    if (speaker) {
-        const here = roomBrief(c, speaker);
-        if (here.room && s.templates.room) parts.push({ key: 'room', text: renderTemplate(s.templates.room, { ...vars, ...here }) });
-    }
     if (c.meta.pacing?.inCombat) parts.push({ key: 'combat', text: renderTemplate(s.templates.combat, vars) });
     if (state.avoid) parts.push({ key: 'avoid', text: renderTemplate(s.templates.avoid, { ...vars, avoid: state.avoid }) });
     if (brief) parts.push({ key: 'brief', text: renderTemplate(s.templates.brief, { ...vars, brief, length: lengthText(length, s.lengths) }) });
@@ -239,15 +231,10 @@ export async function markSceneStart(messageId = ST.chat.length - 1) {
 
 // ---------------- Who can speak ----------------
 
-/** Names the extension can make speak: party members + NPCs in the roster here. */
-/**
- * The roster NPCs who are here and in reach. On a map, someone who is on it counts only from the
- * same floor, within earshot, and awake (a warden two floors up, or a jailer asleep at his desk,
- * is not in the conversation); tied up still talks.
- */
+/** The roster NPCs who are here (last seen at this location) and alive. */
 export function npcsInReach(c = campaign()) {
     if (!c) return [];
-    return (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && withinEarshot(c, n.name));
+    return (c.docs.npcs || []).filter(n => isHere(n, c.docs.world.location) && !n.dead);
 }
 
 export function speakerCandidates() {
@@ -280,7 +267,7 @@ export async function makeSpeak(speaker, brief, { signal, length = 'normal' } = 
     if ((npc && isBeast(npc)) || (!npc && isBeast({ name: speaker }))) { console.info('[Dungeon Master] an animal gets no line:', speaker); return null; }
     if (!npc) {
         // A thing (a trap, a chest) can't speak, whatever the DM called it.
-        if (notAPerson(currentPlace(c)?.place ?? null, speaker)) { console.warn('[Dungeon Master] not a person, no line:', speaker); return null; }
+        if (notAPerson(speaker)) { console.warn('[Dungeon Master] not a person, no line:', speaker); return null; }
         // The DM briefed someone it never registered: add them so they keep a voice and a memory.
         [npc] = addNpcs(c.docs.npcs, [{ name: speaker, description: '', gender: 'any', attitude: 'neutral' }], c.docs.world.location);
         npc.voice = pickNpcVoice(npc, c.docs.npcs);

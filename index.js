@@ -4,7 +4,7 @@
 import { ST, MODULE, EXT_PATH } from './src/st/st.js';
 import { settings } from './src/st/settings.js';
 import { campaign, loadForCurrentChat, clearActive, saveMeta } from './src/st/campaign.js';
-import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll, levelUp } from './src/st/orchestrator.js';
+import { runTurn, askDmNow, loadDeck, syncPartyHp, isRunning, stopAll, levelUp, ensureSketch } from './src/st/orchestrator.js';
 import { refreshStandingPrompt, clearPrompts, injectDirection, clearDirection, stripReplyNamePrefix, cleanPartyReply, hideNarrationFromBot, addNoteToChat, briefForMessage } from './src/st/actors.js';
 import { syncTtsTakeover, voiceLine, stopVoices, ttsConfig, voicesActive } from './src/st/voices.js';
 import { sayOnMap } from './src/ui/bubbles.js';
@@ -20,8 +20,6 @@ import { hideStatus } from './src/ui/status.js';
 import { roll } from './src/core/dice.js';
 import { startDiceWatch } from './src/st/dicewatch.js';
 import { npcForName } from './src/st/npccards.js';
-import { forgetPlaces, loadCurrentPlace, requestBuild, rebuildPlace, buildFromRequest, atlasEntry } from './src/st/atlas.js';
-import { mapRequest } from './src/core/triage.js';
 import { onMessagesDeleted, forgetTurns } from './src/st/undo.js';
 import { registerCampaignChat, onChatDeleted } from './src/st/cleanup.js';
 import { ensureFigures, redoFigure, partyFigures } from './src/st/figures.js';
@@ -41,7 +39,6 @@ async function onChatChanged() {
         console.error('[Dungeon Master] Saving before the chat change failed', error);
     }
     forgetAll();
-    forgetPlaces();
     clearActive();
     clearPrompts();
     hideStatus();
@@ -49,7 +46,6 @@ async function onChatChanged() {
         const c = await loadForCurrentChat();
         if (c) {
             registerCampaignChat(c);
-            await loadCurrentPlace(c);
             // Map figures for the player and companions who don't have one yet (in the background).
             ensureFigures(c);
             syncPartyHp();
@@ -67,9 +63,11 @@ async function onChatChanged() {
     }
     const active = campaign();
     syncTtsTakeover(Boolean(active && !active.meta.paused));
-    // A campaign on a map (or in a fight) opens its panel with the chat, as it was before the reload.
-    if (active && !active.meta.paused && (active.docs.world.place || active.docs.world.combat?.map)) openMap();
-    else if (active?.docs.world.combat?.map || active?.docs.world.sceneMap?.map || active?.docs.world.place) refreshMap();
+    // The sketch of the scene (or the fight's map) opens with the chat, as it was before the reload.
+    if (active && !active.meta.paused) {
+        ensureSketch();
+        if (active.docs.world.combat?.map || active.docs.world.sketch) openMap();
+    }
     renderScreen();
     updateMenuState();
 }
@@ -178,49 +176,9 @@ function registerSlashCommands() {
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'dmmap',
-        helpString: 'Open or close the battle map.',
+        helpString: 'Open or close the map (the sketch of the scene, or the battle map in a fight).',
         callback: async () => {
             toggleMap();
-            return '';
-        },
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'dmbuild',
-        helpString: 'Build a map for a place, e.g. /dmbuild big Blackmoor Manor, or /dmbuild small Hollowbrook village. A place that already has a map is reopened, never rebuilt.',
-        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'big|small and the place name', typeList: [ARGUMENT_TYPE.STRING], isRequired: true })],
-        callback: async (_args, text) => {
-            const m = String(text || '').trim().match(/^(big|small)\s+(.+)$/i);
-            if (!campaign() || !m) {
-                toastr.warning('Use it like /dmbuild big Blackmoor Manor in a campaign chat.', 'Dungeon Master');
-                return '';
-            }
-            const name = m[2].trim();
-            const kind = /(town|village|hamlet|city)/i.exec(name)?.[1] ?? '';
-            try {
-                await requestBuild({ name, size: m[1].toLowerCase(), kind: kind.toLowerCase(), why: 'the player asked for it' });
-            } catch (error) {
-                toastr.error(String(error?.message || error), 'Dungeon Master');
-            }
-            return '';
-        },
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'dmrebuild',
-        helpString: 'Build a map again: /dmrebuild for the map you\'re on (asks first), /dmrebuild Blackmoor Manor for a saved one, or /dmrebuild a big forest with a stream to say what the map you\'re on should be (no asking).',
-        unnamedArgumentList: [SlashCommandArgument.fromProps({ description: 'the place name (optional: the map you\'re on)', typeList: [ARGUMENT_TYPE.STRING], isRequired: false })],
-        callback: async (_args, text) => {
-            if (!campaign()) {
-                toastr.warning('Use it in a campaign chat.', 'Dungeon Master');
-                return '';
-            }
-            try {
-                const t = String(text || '').trim();
-                // A saved map's name rebuilds that map; anything else is what the map should be.
-                if (t && !atlasEntry(t)) await buildFromRequest({ ...(mapRequest(`rebuild the map: ${t}`) ?? { kind: '', size: '' }), text: t, redo: true });
-                else await rebuildPlace(t);
-            } catch (error) {
-                toastr.error(String(error?.message || error), 'Dungeon Master');
-            }
             return '';
         },
     }));
@@ -288,7 +246,7 @@ function registerSlashCommands() {
 }
 
 /** The version of the code this browser actually loaded (keep equal to manifest.json; a test checks). */
-export const LOADED_VERSION = '0.69.0-beta';
+export const LOADED_VERSION = '0.70.0-beta';
 
 /**
  * After an update, browsers can keep running the old cached plugin code while SillyTavern shows

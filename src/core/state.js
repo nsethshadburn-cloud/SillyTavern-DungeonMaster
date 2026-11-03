@@ -4,6 +4,7 @@
 // DM's narration, so this is how they stay consistent. Pure module.
 
 import { nameKey } from './text.js';
+import { ZONES } from './sketch.js';
 
 const MAX_PEOPLE = 10;
 const MAX_OBJECTS = 8;
@@ -12,7 +13,7 @@ export const MAX_TIMELINE = 8;
 const MAX_RULES = 12;
 
 export function emptySceneCard() {
-    return { place: '', people: {}, objects: {} };
+    return { place: '', people: {}, spots: {}, objects: {} };
 }
 
 function clip(v) {
@@ -26,7 +27,7 @@ function entries(v) {
 /** Validate a scene card update from the DM. Null when there's nothing usable. */
 export function normalizeSceneCard(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const out = { place: clip(raw.place), people: {}, objects: {} };
+    const out = { place: clip(raw.place), people: {}, spots: {}, objects: {} };
     for (const key of ['people', 'objects']) {
         for (const [name, text] of entries(raw[key]).slice(0, key === 'people' ? MAX_PEOPLE : MAX_OBJECTS)) {
             const n = String(name).trim().slice(0, 60);
@@ -34,7 +35,12 @@ export function normalizeSceneCard(raw) {
             if (n) out[key][n] = text === null ? '' : clip(text);
         }
     }
-    if (!out.place && !Object.keys(out.people).length && !Object.keys(out.objects).length) return null;
+    // Where each person stands, in one of the sketch's words; anything else is ignored.
+    for (const [name, zone] of entries(raw.spots).slice(0, MAX_PEOPLE)) {
+        const n = String(name).trim().slice(0, 60), z = String(zone ?? '').trim().toLowerCase();
+        if (n && (ZONES.includes(z) || z === '')) out.spots[n] = z;
+    }
+    if (!out.place && !Object.keys(out.people).length && !Object.keys(out.objects).length && !Object.keys(out.spots).length) return null;
     return out;
 }
 
@@ -54,18 +60,22 @@ function setEntry(map, name, text) {
  */
 export function applySceneCard(card, update, { newPlace = false, partyNames = [] } = {}) {
     const base = card && typeof card === 'object' ? card : emptySceneCard();
-    const out = { place: base.place || '', people: { ...(base.people || {}) }, objects: { ...(base.objects || {}) } };
+    const out = { place: base.place || '', people: { ...(base.people || {}) }, spots: { ...(base.spots || {}) }, objects: { ...(base.objects || {}) } };
     if (newPlace) {
         out.place = '';
         out.objects = {};
         const party = new Set(partyNames.map(nameKey));
         for (const name of Object.keys(out.people)) if (!party.has(nameKey(name))) delete out.people[name];
+        for (const name of Object.keys(out.spots)) if (!party.has(nameKey(name))) delete out.spots[name];
     }
     if (update) {
         if (update.place) out.place = update.place;
-        for (const [name, text] of Object.entries(update.people || {})) setEntry(out.people, name, text);
+        for (const [name, text] of Object.entries(update.people || {})) { setEntry(out.people, name, text); if (!text) setEntry(out.spots, name, ''); }
+        for (const [name, zone] of Object.entries(update.spots || {})) setEntry(out.spots, name, zone);
         for (const [name, text] of Object.entries(update.objects || {})) setEntry(out.objects, name, text);
     }
+    // A spot for someone who isn't in the card is noise.
+    for (const name of Object.keys(out.spots)) if (!Object.keys(out.people).some(p => nameKey(p) === nameKey(name)) && !partyNames.some(p => nameKey(p) === nameKey(name))) delete out.spots[name];
     // Keep the newest entries when the DM sends more than fit.
     for (const [key, max] of [['people', MAX_PEOPLE], ['objects', MAX_OBJECTS]]) {
         const list = Object.entries(out[key]);

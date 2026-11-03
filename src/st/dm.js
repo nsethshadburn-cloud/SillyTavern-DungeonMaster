@@ -1,18 +1,12 @@
-import { isBeast } from '../core/sprites.js';
 // Talking to the DM (Claude): building its prompt and reading its decisions.
 
 import { ST } from './st.js';
 import { settings, SURPRISES } from './settings.js';
-import { callClaude, callLocal, resolveDmConnection } from './llm.js';
+import { callClaude, resolveDmConnection } from './llm.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
 import { personaSheet, characterSheet, sheetMarkdown, statsForName } from './sheets.js';
 import { dmType } from './messages.js';
-import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, PLACE_PLAN_INSTRUCTIONS, SMALL_PLACE_INSTRUCTIONS, TOWN_PLAN_INSTRUCTIONS, PLACE_BRIEF_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
-import { placeSummary, placeView, cropText } from '../core/explore.js';
-import { atlas, currentPlace, partyOnMap, loadPlace, withinEarshot } from './atlas.js';
-import { activeBoard } from './fire-turn.js';
-import { fireSummary } from '../core/fire.js';
-import { GRAND_KINDS } from '../core/layout.js';
+import { dmRules, CONDENSE_NOTES_INSTRUCTIONS, RECAP_INSTRUCTIONS, ESCALATE_INSTRUCTION, RESYNC_INSTRUCTIONS, parseDmTurn } from '../core/protocol.js';
 import { pacingReport } from '../core/pacing.js';
 import { rosterSummary, combatSummary, isAway, awareSummary, isHere } from '../core/world.js';
 import { renderMapText } from '../core/grid.js';
@@ -22,6 +16,7 @@ import { renderSceneCard, normalizeSceneCard, applySceneCard } from '../core/sta
 import { modelLabel } from '../core/models.js';
 import { untilWords, resourcesLine } from '../core/upkeep.js';
 import { renderMinds, mergeMind, normalizeMind } from '../core/minds.js';
+import { isBeast } from '../core/sprites.js';
 
 let stableCache = { key: '', text: '' };
 
@@ -122,11 +117,11 @@ async function memoryBookEntries(max = 4) {
 }
 
 const REASON_TEXT = {
-    ooc: 'The player asked you something out of character. Answer in "ooc". Only add narration if the question changes the scene. If they ask for a map (make, generate, regenerate, rebuild, fix the map), send build_place THIS turn, with "replace": true when a map of that place already exists, kind and size from their words; the code builds it from their words if you don\'t, so never just promise one.',
+    ooc: 'The player asked you something out of character. Answer in "ooc". Only add narration if the question changes the scene.',
     roll_result: 'The player rolled for your last request. The result is below. Narrate the outcome.',
     risky_action: 'The player attempted something with an uncertain outcome. Rule on it: ask for a roll (player_roll) or narrate the result if no roll is needed.',
-    scene_move: 'The player wants to move the scene (travel, rest, leave, time skip). Compress the uneventful part unless they are in a real conversation, then land them at the next interesting moment or the destination, and describe where they arrive.',
-    combat_action: 'Combat action. Resolve the player\'s action fairly (they may name a square to move to, like "d4"; update "positions"). If no fight is on yet, this starts one: send start_combat (the enemies by name, a map only outside a built place) and player_roll "initiative" in this same turn; never narrate the attack as about to happen without them.',
+    scene_move: 'The player wants to move the scene (travel, rest, leave, go into or out of a place, time skip). Compress the uneventful part unless they are in a real conversation, then land them at the next interesting moment or the destination, describe where they arrive, and send the full scene card for it.',
+    combat_action: 'Combat action. Resolve the player\'s action fairly (they may name a square to move to, like "d4"; update "positions"). If no fight is on yet, this starts one: send start_combat (the enemies by name; a battle map if the scene has room to draw one, or none to fight on the sketch where everyone stands) and player_roll "initiative" in this same turn; never narrate the attack as about to happen without them.',
     combat_round: 'Combat is ongoing. You run this round: decide what each companion and enemy does, roll for them (npc_rolls), move them ("positions"), and narrate. Companions get only a "short" brief for a quick line.',
     player_turn: 'It is the PLAYER\'s turn and they just acted. Resolve ONLY what the player did: their attack or action (ask for their roll with player_roll, narrate its result, move them with "positions" if they said where they go). Nobody else acts, moves or rolls: no npc_rolls, no "positions" for anyone else, no enemy reaction beyond a word. Stop after the result: the code then asks the player whether their turn is done (they may still move or act).',
     end_turn: 'The player ENDS their turn. Now everyone AFTER the player in the initiative order acts (npc_rolls, "positions"), then the next round begins: everyone BEFORE the player acts in order, and you STOP at the player\'s turn. Never ask the player for a roll of something they did not do.',
@@ -136,13 +131,12 @@ const REASON_TEXT = {
     stalled: 'The scene has stalled (filler replies or going in circles). Move it forward yourself: skip ahead, arrive somewhere, or let someone or something push in.',
     drift: 'The party has been away from the plot for a while. Apply the PLOT PRESSURE stage in the pacing report, building on any pressure you set up before.',
     npc_addressed: 'The player is talking to a character who is not in the NPC list yet. Register them in new_npcs (if they exist in the scene) and give them a direction so they answer, or narrate why they can\'t.',
-    companion_task: 'The player told a companion to do something whose result isn\'t known yet (COMPANION TASK below). The companion does it now (the code already walks them to where they have to go on the map). Rule on it: roll for them in npc_rolls if it needs a roll (Investigation to search something, Perception to look or listen, Stealth, Sleight of Hand, Thieves\' Tools...), decide what they actually find or what happens, and brief them with that result so they tell the player in their own words. Never let them find something you haven\'t decided is there.',
+    companion_task: 'The player told a companion to do something whose result isn\'t known yet (COMPANION TASK below). The companion does it now, in the story: roll for them in npc_rolls if it needs a roll (Investigation to search something, Perception to look or listen, Stealth, Sleight of Hand, Thieves\' Tools...), decide what they actually find or what happens, move their spot in the scene card, and brief them with that result so they tell the player in their own words. Never let them find something you haven\'t decided is there.',
     companion_action: 'A companion just attempted something risky in their own reply (below). Rule on it like a player\'s action: roll for them in npc_rolls against a DC or the right opponent (for example the player\'s passive Perception), narrate what actually happens, and brief them only if they need to react. If it truly needs no roll, just narrate the result.',
     solo: 'No companion or NPC is with the player right now, or nobody nearby would answer. Respond as the world: what they notice, what happens, who shows up. Keep it short if nothing much happens. Absent companions stay silent.',
     checkin: 'The world moves on: a few turns have passed since it last acted. Advance it one clear step: NPCs who are here act on their own jobs and agendas, anything underway (intake, a march, a search, a deal) takes its next step, time passes, something new shows up or is learned. A quiet moment is also when a companion acts on their MIND unprompted (raises their worry, pushes their own goal, confronts someone): brief them to, if it\'s been a while. Usually that happens through briefs to the NPCs and companions, with narration only if something new arrives, a place changes or time skips. If the player is mid-conversation, weave this around them without cutting the conversation off; they can keep talking while it happens. But if they just set something up ("I have a question…", "there\'s something I need to tell you"), the world waits: brief the listener only. Then set world_next (at least 2 after a setup).',
     opening: 'Open the campaign.',
     manual: 'The player asked the DM to step in.',
-    explore: 'The party is exploring a mapped place and something happened as they moved (PLACE EVENT below). Rule on it: ask for a roll if one is needed (a save against a sprung trap, Stealth to stay unseen), narrate briefly, brief companions or NPCs, and record changes with place_changes.',
 };
 
 /**
@@ -156,28 +150,15 @@ const REASON_TEXT = {
  *  handUp = this model may hand the turn to the main DM model
  * @returns {Promise<{layers:string[], user:string}>}
  */
-export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, companionTask = null, companionChoices = null, placeEvent = '', target = null }) {
+export async function volatilePrompt({ reasons, playerMessage = '', rollResolution = '', events = [], extraFiles = [], oocText = '', handUp = false, companionAction = null, companionTask = null, companionChoices = null, placeEvent = '' }) {
     const c = campaign();
     const s = settings();
     const w = c.docs.world;
 
-    const here = currentPlace(c);
-    // A building is two maps: whichever side the party is on, the DM also knows the other (its rooms and secrets).
-    let otherSide = '';
-    if (here?.place.kind === 'grounds') {
-        const inside = await Promise.all(Object.values(here.place.buildings).filter(b => b.interior).map(b => loadPlace(b.interior, c)));
-        otherSide = inside.filter(Boolean).map(p => `(INSIDE, through the front door; the party is outside now)\n${placeSummary(p)}`).join('\n\n');
-    } else if (here?.place.parent) {
-        const out = await loadPlace(here.place.parent.key, c);
-        if (out?.kind === 'grounds') otherSide = `(OUTSIDE, through the front door: the grounds; the party is inside now)\n${placeSummary(out)}`;
-    }
     const plotLayer = [
         '# TABLE RULES (settled by the player out of character; always true)', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none yet)',
         '', '# PLOT (tick beats via beats_completed using their ids)', c.docs.plot || '(no plot)',
         '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
-        '', '# ATLAS (maps already built and kept; never build these again, send the party back with "enter_place")', Object.values(atlas(c).places).filter(e => !e.parent).map(e => `- ${e.name} (${e.kind}${e.size ? `, ${e.size}` : ''})`).join('\n') || '(none yet)',
-        ...(here ? ['', placeSummary(here.place)] : []),
-        ...(otherSide ? ['', otherSide] : []),
     ].join('\n');
 
     const memories = await memoryBookEntries();
@@ -208,22 +189,11 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     sections.push(combatSummary(w, c.meta.persona.name));
     const aware = awareSummary(w);
     if (aware) sections.push(`AWARE (who has noticed whom; decided by rolls, keep to it): ${aware}`);
-    if (w.combat?.map && w.combat.inPlace && here) {
-        // A fight inside a big place: only the area around the party, in the floor's own squares.
-        const lead = Object.values(w.combat.positions || {}).map(cd => /^([a-z]{1,2})(\d+)$/.exec(cd)).filter(Boolean)[0];
-        const pos = Object.fromEntries(Object.entries(w.combat.positions || {}).map(([n, cd]) => { const m = /^([a-z]{1,2})(\d+)$/.exec(cd); if (!m) return [n, null]; const col = m[1].length === 1 ? m[1].charCodeAt(0) - 97 : (m[1].charCodeAt(0) - 96) * 26 + m[1].charCodeAt(1) - 97; return [n, { floor: w.combat.inPlace.floor, x: col, y: Number(m[2]) - 1 }]; }));
-        const pts = Object.values(pos).filter(Boolean);
-        const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-        if (lead && pts.length) sections.push('Battle area (the floor\'s own squares; columns a.., rows 1.. from the bottom):', cropText(here.place, w.combat.inPlace.floor, { x: Math.min(...xs) - 3, y: Math.min(...ys) - 3, w: Math.max(...xs) - Math.min(...xs) + 7, h: Math.max(...ys) - Math.min(...ys) + 7 }, pos));
-    } else if (w.combat?.map) sections.push('Battle map (columns a.., rows 1.. from the bottom):', renderMapText(w.combat.map, w.combat.positions || {}));
-    else if (here) sections.push(`# INSIDE ${here.place.name.toUpperCase()}`, placeView(here.place, partyOnMap(c), { away: partyOnMap(c).filter(n => isAway(w, n)) }));
-    else if (w.sceneMap?.map) sections.push(`Scene map "${w.sceneMap.title}" (columns a.., rows 1.. from the bottom; send "scene_map": "close" when they leave):`, renderMapText(w.sceneMap.map, w.sceneMap.positions || {}));
-    // Fire, spell effects and the air on the map in play.
-    const board = activeBoard(c);
-    const burning = board ? fireSummary(board.map, board.nameAt) : '';
-    if (burning) sections.push(burning);
+    if (w.combat?.map) sections.push(`Battle map${w.combat.onSketch ? ' (the sketch of the scene: the party fights where it stood)' : ''} (columns a.., rows 1.. from the bottom):`, renderMapText(w.combat.map, w.combat.positions || {}));
     sections.push(`Last standing_direction (what companions currently know): ${c.meta.standing || '(none)'}`);
-    sections.push('SCENE CARD (what companions and NPCs are told is physically true right now; send "scene_card" changes to fix or update it):', renderSceneCard(w.sceneCard) || '(empty: send a full "scene_card" this turn)');
+    sections.push('SCENE CARD (what companions and NPCs are told is physically true right now, and what the sketch is drawn from; send "scene_card" changes to fix or update it):', renderSceneCard(w.sceneCard) || '(empty: send a full "scene_card" this turn)');
+    const spots = Object.entries(w.sceneCard?.spots || {}).filter(([, z]) => z);
+    if (spots.length) sections.push(`Spots (where each one stands, relative to ${c.meta.persona.name}): ${spots.map(([n, z]) => `${n}: ${z}`).join('; ')}.`);
     sections.push(`Party's current objective (shown to companions): ${c.meta.objective || '(none set: set "objective")'}`);
 
     sections.push('', '# PACING REPORT', pacingReport(c.meta.pacing, { length: c.meta.options.length, sessionMinutes, usualSessionMinutes: Number(s.usualSessionMinutes) || 90, plot: c.docs.plot, worldEvery: Number(s.checkinEvery) || 5 }));
@@ -239,27 +209,24 @@ export async function volatilePrompt({ reasons, playerMessage = '', rollResoluti
     for (const r of reasons) sections.push(`- ${REASON_TEXT[r] ?? r}`);
     if (handUp) sections.push('', ESCALATE_INSTRUCTION);
     if (oocText) sections.push('', `Player's out-of-character question: ${oocText}`);
-    if (c.meta.turnProblems?.length) sections.push('', `WHAT DIDN'T TAKE LAST TURN (the code dropped these and the player saw a warning). Fix each one now with the exact names and ids in the state above, and never claim in the story what the tracker doesn't show:\n${c.meta.turnProblems.map(p => `- ${p}`).join('\n')}`);
+    if (c.meta.turnProblems?.length) sections.push('', `WHAT DIDN'T TAKE LAST TURN (the code dropped these and the player saw a warning). Fix each one now with the exact names in the state above, and never claim in the story what the tracker doesn't show:\n${c.meta.turnProblems.map(p => `- ${p}`).join('\n')}`);
     if (rollResolution) sections.push('', `ROLL RESULT: ${rollResolution}`);
-    if (placeEvent) sections.push('', `PLACE EVENT: ${placeEvent}`);
-    if (c.meta.mapLog?.length) sections.push('', `ON THE MAP SINCE YOUR LAST TURN (the player did these on the map and the code resolved them; they are real and already done: narrate what follows from them in a line where it matters, keep every companion and NPC consistent with them, never redo or undo them, never ask for a roll for them):\n${c.meta.mapLog.map(e => `- ${e.text}`).join('\n')}`);
+    if (placeEvent) sections.push('', placeEvent);
     if (events.length) {
         sections.push('', 'RANDOM EVENT CANDIDATES (use one by id, "custom", or "none"):');
         for (const ev of events) sections.push(`- [${ev.id}] ${ev.title} (${ev.type}, danger ${ev.danger}/5): ${ev.seed}`);
     }
     if (playerMessage) sections.push('', `The player's latest message: ${trimToTokens(playerMessage, 800)}`);
-    if (companionTask) sections.push('', `COMPANION TASK: the player told ${companionTask.name} to ${companionTask.what || 'do something'}${companionTask.went ? ` (they're now at ${companionTask.went} on the map)` : ''}.`);
-    if (target) sections.push('', `TARGET: ${target.actor} acts on ${target.line}, ${target.where}${target.reached ? `; ${target.actor} is standing right beside it now` : ''}. It's that one exactly (picked on the map), not another ${target.name}: any place_changes for it use ${target.kind === 'person' ? 'that name' : `the id ${target.id}`}.`);
+    if (companionTask) sections.push('', `COMPANION TASK: the player told ${companionTask.name} to ${companionTask.what || 'do something'}.`);
     if (companionChoices && Object.keys(companionChoices).length) sections.push('', `COMPANION CHOICES this round (each companion decided their own turn; run each exactly as given, with npc_rolls for an attack on that target with that weapon, and narrate it in a line; don't choose for them): ${Object.entries(companionChoices).map(([n, ch]) => `${n}: ${ch.action}${ch.target ? ` ${ch.target}` : ''}${ch.weapon ? ` with ${ch.weapon}${ch.damage ? ` (${ch.damage})` : ''}` : ''}${ch.item ? ` (${ch.item})` : ''}${ch.where ? ` (${ch.where})` : ''}${ch.why ? `; ${ch.why}` : ''}`).join(' | ')}.`);
     if (companionAction) sections.push('', `COMPANION ATTEMPT TO RULE ON: ${companionAction.name} tries to ${companionAction.what || 'do something risky'}. Their reply: ${trimToTokens(companionAction.text, 500)}`);
 
     const companions = c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
     const awayList = Object.entries(w.away ?? {}).map(([n, where]) => `${n} (${where})`);
-    // On a map, only people the party has seen, on their floor and within earshot, can be given lines (an unseen or distant one is a voice in the narration, or nothing).
-    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location) && withinEarshot(c, n.name) && !isBeast(n)).map(n => n.name);
+    const present = (c.docs.npcs || []).filter(n => isHere(n, w.location) && !n.dead && !isBeast(n)).map(n => n.name);
     sections.push('', `Valid speakers for directions: party with the player ${JSON.stringify(companions)}; NPCs here ${JSON.stringify(present)} (or new NPCs you introduce now).`);
     if (awayList.length) sections.push(`Companions AWAY from the player (no briefs; they can't hear or speak until "party_back"): ${awayList.join('; ')}.`);
-    if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) sections.push(`CALM (${c.meta.pacing.calmUntil - c.meta.turn} more turn(s)): the story breathes after what just happened. No new people, no alarm, no attack, no one arriving (the code drops them anyway). Let the player search, talk, plan; answer what they do and stop.`);
+    if (Number.isFinite(c.meta.pacing?.calmUntil) && c.meta.turn < c.meta.pacing.calmUntil) sections.push(`CALM (${c.meta.pacing.calmUntil - c.meta.turn} more turn(s)): the story breathes after what just happened. No new people, no alarm, no attack, no one arriving. Let the player search, talk, plan; answer what they do and stop.`);
     sections.push('Reply with the JSON object only.');
     return { layers: [plotLayer, notesLayer], user: sections.join('\n') };
 }
@@ -314,64 +281,6 @@ function logCost(label, usd) {
     c.meta.stats.usd = Math.round(((c.meta.stats.usd || 0) + usd) * 1e6) / 1e6;
     c.meta.stats.dmCalls = (c.meta.stats.dmCalls || 0) + 1;
     saveDoc('costs');
-}
-
-/**
- * Ask Claude for a place's full plan (every room of a big site, or a town's buildings).
- * @param {{name:string, size:string, kind:string, why?:string, town?:boolean}} req
- */
-export async function askPlacePlan(req, { signal = null } = {}) {
-    const c = campaign();
-    const big = req.size === 'big';
-    // A mansion or castle is never a handful of rooms, even as a "small" map: it gets the full rules.
-    const grand = !big && GRAND_KINDS.test(`${req.kind} ${req.name}`.toLowerCase());
-    const rooms = big ? (/castle|palace|fortress|dungeon|prison|asylum/.test(req.kind) ? 40 : /mansion|manor|estate|temple|tower|mine|crypt|catacomb/.test(req.kind) ? 34 : 26) : grand ? 12 : 6;
-    const user = [
-        '# PLOT', c.docs.plot || '(none)',
-        '', '# YOUR PRIVATE NOTES', c.docs.notes ? trimToTokens(c.docs.notes, 2500, true) : '(none)',
-        '', '# STORY SO FAR', c.docs.story ? trimToTokens(c.docs.story, 2000, true) : '(none)',
-        '', '# NPCS MET', c.docs.npcs?.length ? rosterSummary(c.docs.npcs) : '(none yet)',
-        '', '# TABLE RULES', c.meta.tableRules?.length ? c.meta.tableRules.map(r => `- ${r}`).join('\n') : '(none)',
-        '', '# RECENT CHAT (oldest first)', transcript(30) || '(empty)',
-        '', '# WHERE THE PARTY IS RIGHT NOW (the scene card)', renderSceneCard(c.docs.world.sceneCard) || '(not set)',
-        '', '# BUILD THIS PLACE',
-        `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nWhy it's needed: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}${req.town ? '' : `\nAbout ${rooms} rooms${big ? '' : ' at most'}.`}`,
-        '', req.town ? TOWN_PLAN_INSTRUCTIONS : big || grand ? PLACE_PLAN_INSTRUCTIONS : SMALL_PLACE_INSTRUCTIONS,
-    ].join('\n');
-    const reply = await callClaude({ system: await stableSystem(), user, task: 'build_place', label: `planning ${req.name}`, maxTokens: big ? 20000 : grand ? 12000 : 6000, signal });
-    logCost(`planning ${req.name} · ${modelLabel(reply.model)}`, reply.usd);
-    const json = extractJson(reply.text);
-    if (!json) throw new Error('Claude did not return a usable plan. Ask the DM to try again.');
-    return json;
-}
-
-/**
- * Ask for a place's BRIEF (a few lines: what it is, how big, where the party starts, the story's
- * rooms, people, locks and secrets); the architect (core/architect.js) builds the rest by algorithm.
- * The local helper writes it when there is one (free), else Haiku (a fraction of a cent).
- * Returns the parsed JSON, or {} when the reply was unusable (the request alone still builds a place).
- */
-export async function askPlaceBrief(req, { signal = null } = {}) {
-    const c = campaign();
-    const s = settings();
-    const local = (s.mapBrief ?? 'local') === 'local' && s.useHelper;
-    const context = [
-        '# THE STORY', c.docs.story ? trimToTokens(c.docs.story, local ? 600 : 1200, true) : c.docs.bible ? `(just begun) The campaign: ${trimToTokens(c.docs.bible, local ? 500 : 1000, true)}` : '(just begun)',
-        req.context ? `\n# AT THE START\n${trimToTokens(req.context, 400, true)}` : '',
-        '', '# DM NOTES (secrets)', c.docs.notes ? trimToTokens(c.docs.notes, local ? 500 : 1500, true) : '(none)',
-        '', '# PEOPLE MET', c.docs.npcs?.length ? trimToTokens(rosterSummary(c.docs.npcs), local ? 300 : 800, true) : '(none yet)',
-        '', '# RECENT CHAT (oldest first)', transcript(local ? 8 : 16) || '(empty)',
-        '', '# WHERE THE PARTY IS RIGHT NOW', renderSceneCard(c.docs.world.sceneCard) || '(not set)',
-        '', '# THE PLACE TO BUILD', `Name: ${req.name}\nKind: ${req.kind || 'unspecified'}\nSize asked: ${req.size || 'small'}\nWhy: ${req.why || 'the story is going there'}${req.start ? `\nThe party starts: ${req.start}` : ''}${req.objective ? `\nWhat they're there for: ${req.objective}` : ''}`,
-        '', PLACE_BRIEF_INSTRUCTIONS,
-    ].join('\n');
-    if (local) {
-        const raw = await callLocal({ system: 'You plan places for a tabletop roleplaying game. Reply with ONE JSON object and nothing else.', messages: [{ role: 'user', content: context }], maxTokens: 700, profileId: s.helperProfileId });
-        return extractJson(raw) ?? {};
-    }
-    const reply = await callClaude({ system: 'You plan places for a tabletop roleplaying game. Reply with ONE JSON object and nothing else.', user: context, task: 'map_brief', label: `brief for ${req.name}`, maxTokens: 900, signal });
-    logCost(`brief for ${req.name} · ${modelLabel(reply.model)}`, reply.usd);
-    return extractJson(reply.text) ?? {};
 }
 
 /** Keep the DM's notes compact (one cheap call when they get long). */

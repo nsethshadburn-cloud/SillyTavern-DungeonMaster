@@ -132,23 +132,18 @@ function panelHtml() {
         <select id="dm-actor-profile" class="text_pole">${profileOptions(s.actorProfileId, { emptyLabel: 'Current connection (whatever is selected)', filter: p => p.mode === 'tc' || p.api !== 'claude' })}</select></label>
       <label>Helper (quick decisions)
         <select id="dm-helper-profile" class="text_pole">${profileOptions(s.helperProfileId, { emptyLabel: 'Same as actors (current connection)', filter: p => p.api !== 'claude' })}</select></label>
-      <label>Maps
+      <label>Map
         <select id="dm-map-tier" class="text_pole">
-          <option value="off" ${s.mapTier === 'off' ? 'selected' : ''}>Off: no maps, the whole campaign stays in the chat</option>
-          <option value="some" ${!s.mapTier || s.mapTier === 'some' ? 'selected' : ''}>Sometimes: maps where they're needed, or when you ask</option>
-          <option value="always" ${s.mapTier === 'always' ? 'selected' : ''}>Always: a map for every new place (small for a short stop, big only for big story places)</option>
+          <option value="off" ${s.mapTier === 'off' ? 'selected' : ''}>Off: no map, the whole campaign stays in the chat</option>
+          <option value="some" ${!s.mapTier || s.mapTier !== 'off' ? 'selected' : ''}>On: a sketch of the scene drawn from the DM's scene card, and a battle map in fights</option>
         </select></label>
       <label class="checkbox_label"><input id="dm-use-helper" type="checkbox" ${s.useHelper ? 'checked' : ''}> Use the helper to read your moves (saves Claude calls)</label>
       <label class="checkbox_label"><input id="dm-bookkeeper" type="checkbox" ${s.bookkeeper !== false ? 'checked' : ''}> Bookkeeper: after each turn the helper checks what was said against everyone's conditions and items, and fills in what the DM forgot (shown on a 📜 card)</label>
-      <label class="dm-task-row"><span>Map builder: how new maps are made</span><select id="dm-map-builder" class="text_pole"><option value="algorithm" ${(s.mapBuilder ?? 'algorithm') === 'algorithm' ? 'selected' : ''}>Algorithm from a short brief (seconds, nearly free)</option><option value="claude" ${s.mapBuilder === 'claude' ? 'selected' : ''}>Claude plans every room (slow, about $0.05–0.30)</option></select></label>
-      <label class="dm-task-row"><span>Who writes a map's brief</span><select id="dm-map-brief" class="text_pole"><option value="local" ${(s.mapBrief ?? 'local') === 'local' ? 'selected' : ''}>Local helper (free; Haiku if there is no helper)</option><option value="haiku" ${s.mapBrief === 'haiku' ? 'selected' : ''}>Haiku</option></select></label>
-      <label class="dm-task-row"><span>Map sync: after each turn, put on the map what the story did (someone appears, walks over to something, hides, a door is kicked in)</span><select id="dm-map-sync" class="text_pole"><option value="local" ${(s.mapSync ?? 'local') === 'local' ? 'selected' : ''}>Local helper (free; Haiku if there is no helper)</option><option value="claude" ${s.mapSync === 'claude' ? 'selected' : ''}>Haiku</option><option value="off" ${s.mapSync === 'off' ? 'selected' : ''}>Off</option></select></label>
       <label class="checkbox_label"><input id="dm-auto-dice" type="checkbox" ${s.autoReadDice ? 'checked' : ''}> Read SillyTavern's dice rolls automatically when the DM asks for a roll (no need to type the number)</label>
       <label class="checkbox_label"><input id="dm-map-figures" type="checkbox" ${s.mapFigures !== false ? 'checked' : ''}> Little animated figures on the map (off = round portraits). Your party's are drawn once by Claude from their card and picture (about 1-2 cents each); type <code>/dmfigure Judy</code> to redraw one.</label>
       <label class="checkbox_label"><input id="dm-map-ambience" type="checkbox" ${s.mapAmbience !== false ? 'checked' : ''}> Weather and ambient particles on the map (rain, snow, dust, fireflies, glints on water, flickering torches). Fire and spell effects always show. Also a button on the map.</label>
       <label class="checkbox_label"><input id="dm-map-bubbles" type="checkbox" ${s.mapBubbles !== false ? 'checked' : ''}> Speech bubbles on the map: what a companion or NPC says appears over their figure, word by word, in time with their voice (right away when voices are off), and stays a few seconds after they finish.</label>
       <label class="checkbox_label"><input id="dm-turn-prompts" type="checkbox" ${s.turnPrompts !== false ? 'checked' : ''}> Turn prompts in a fight: after your action, a popup asks whether your turn is done (you may still move); before an enemy's hit lands, it asks whether you react (Uncanny Dodge halves it; anything else goes to the DM).</label>
-      <label class="checkbox_label"><input id="dm-guards-talk" type="checkbox" ${s.guardsTalk !== false ? 'checked' : ''}> Guards and locals talk: when one sees you and has a word to say, now and then it comes from the local model (one short line) instead of the canned pool.</label>
       <small>Profiles come from SillyTavern's Connection Manager. A profile brings its own saved formats, so update old profiles before using them here.</small>
 
       <h4>Budget</h4>
@@ -202,7 +197,6 @@ function panelHtml() {
       ${templateEditor('happened', 'Just happened (what the last DM turn changed)', 'Fill-in: {{happened}}. Stops companions from redoing actions the DM already resolved.')}
       ${templateEditor('knowledge', 'What each companion knows (written by the DM at the start, updated now and then)', 'Fill-in: {{knowledge}}. Added to that companion\'s note on every reply.')}
       ${templateEditor('avoid', 'Repeated phrases (when a character keeps reusing the same words)', 'Fill-in: {{avoid}}. Found automatically in that character\'s last 8 replies.')}
-      ${templateEditor('room', 'The room on the map (when inside a built place)', 'Fill-ins: {{room}} (its name and description), {{things}} (what is in it), {{exits}} (doors, stairs, windows). So companions talk about what is really there.')}
       ${templateEditor('combat', 'Combat note (added during fights)', '')}
       ${templateEditor('npc', 'NPC note (side characters the bot voices)', 'Fill-ins: {{npc}} {{description}} {{pronouns}} {{attitude}} {{player}} {{party}}.')}
       <div class="dm-template">
@@ -395,15 +389,11 @@ export async function mountSettingsPanel({ onStart, onScreen }) {
     bindSelect('dm-helper-profile', 'helperProfileId');
     bindCheck('dm-use-helper', 'useHelper');
     bindCheck('dm-bookkeeper', 'bookkeeper');
-    bindSelect('dm-map-sync', 'mapSync');
-    bindSelect('dm-map-builder', 'mapBuilder');
-    bindSelect('dm-map-brief', 'mapBrief');
     bindCheck('dm-auto-dice', 'autoReadDice');
     bindCheck('dm-map-figures', 'mapFigures');
     bindCheck('dm-map-ambience', 'mapAmbience');
     bindCheck('dm-map-bubbles', 'mapBubbles');
     bindCheck('dm-turn-prompts', 'turnPrompts');
-    bindCheck('dm-guards-talk', 'guardsTalk');
     bindCheck('dm-sounds', 'sounds', refreshSoundSettings);
     bindNumber('dm-sfx-volume', 'sfxVolume');
     bindNumber('dm-ambient-volume', 'ambientVolume');

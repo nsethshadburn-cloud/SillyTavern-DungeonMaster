@@ -83,7 +83,6 @@ test('the note is sized to the setting and the live context; the brief always ar
         { key: 'state', text: long(120) },
         { key: 'happened', text: '[Just happened: the bolt is out.]' },
         { key: 'knowledge', text: long(300) },
-        { key: 'room', text: long(80) },
         { key: 'avoid', text: long(30) },
         { key: 'brief', text: '[Game master\'s note: she wants Amber to give up.]' },
     ];
@@ -92,9 +91,9 @@ test('the note is sized to the setting and the live context; the brief always ar
     const budget = 350;
     const fitted = fitNote(parts, budget);
     assert.ok(estimateTokens(fitted.join('\n')) <= budget + 5, 'within the budget');
-    assert.ok(fitted.includes(parts[6].text), 'the brief is untouched');
+    assert.ok(fitted.includes(parts[5].text), 'the brief is untouched');
     assert.ok(fitted.includes(parts[2].text), '"happened" is untouched');
-    assert.ok(!fitted.some(t => t === parts[5].text), 'the repeated-phrases line goes first');
+    assert.ok(!fitted.some(t => t === parts[4].text), 'the repeated-phrases line goes first');
     const knowledge = fitted.find(t => t.startsWith('[word') && t.endsWith('…]'));
     assert.ok(knowledge, 'a shortened part still closes its bracket');
     assert.ok(fitted.some(t => t === parts[0].text), 'the scene note is cut last');

@@ -4,7 +4,7 @@
 //
 // Placeholders the plugin fills in: {{player}} {{party}} {{location}} {{present}} {{situation}}
 // {{goal}} {{brief}} {{length}} {{npc}} {{description}} {{pronouns}} {{attitude}} {{knowledge}}
-// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}} {{room}} {{things}} {{exits}} {{here}} {{known}}.
+// {{scenecard}} {{people}} {{timeline}} {{rules}} {{avoid}}.
 // SillyTavern's own macros ({{char}}, {{user}}, ...) also work. A line containing a plugin
 // placeholder that's empty is dropped, so empty fields never leave half-sentences behind.
 
@@ -42,15 +42,6 @@ export const DEFAULT_TEMPLATES = Object.freeze({
         '{{knowledge}}]',
     ].join('\n'),
     avoid: '[{{char}} has been repeating these lately. Use different words and gestures this time: {{avoid}}]',
-    room: [
-        '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
-        '{{room}}',
-        'Right here with {{char}}: {{here}}',
-        'In it: {{things}}',
-        'Ways out: {{exits}}',
-        'Rooms {{char}} knows of in this place: {{known}}',
-        'Never name a room, door, passage, route or item that is not listed above: {{char}} doesn\'t know the rest of this place.]',
-    ].join('\n'),
     combat: '[A fight is happening. The game master narrates every action and result. {{char}} only says one short line or quick reaction: no actions, no describing the fight, and no talk of dice, rolls or turns.]',
     npc: [
         '[You play only {{npc}}, a side character in this story.',
@@ -108,20 +99,6 @@ export const OLD_DEFAULTS = Object.freeze({
         'Attitude toward the party: {{attitude}}.',
         'Never speak or act for {{player}} or {{party}}, and never narrate the scene. Reply with one or two short lines of dialogue and at most one brief action. Don\'t invent new plot.]',
     ].join('\n'),
-    room: [
-        '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
-        '{{room}}',
-        'In it: {{things}}',
-        'Ways out: {{exits}}]',
-    ].join('\n'),
-    roomV33: [
-        '[The room {{char}} is in right now on the map. Use what is really here; don\'t invent other furniture or exits.',
-        '{{room}}',
-        'In it: {{things}}',
-        'Ways out: {{exits}}',
-        'Rooms {{char}} knows of in this place: {{known}}',
-        'Never name a room, door, passage, route or item that is not listed above: {{char}} doesn\'t know the rest of this place.]',
-    ].join('\n'),
 });
 
 export const DEFAULT_LENGTHS = Object.freeze({
@@ -130,7 +107,7 @@ export const DEFAULT_LENGTHS = Object.freeze({
     long: '4-6 sentences at most',
 });
 
-const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid', 'room', 'things', 'exits', 'known', 'here'];
+const PLUGIN_KEYS = ['player', 'party', 'location', 'present', 'situation', 'goal', 'brief', 'length', 'npc', 'description', 'pronouns', 'attitude', 'knowledge', 'happened', 'scenecard', 'people', 'timeline', 'rules', 'avoid'];
 const KEY_RE = new RegExp(`\\{\\{(${PLUGIN_KEYS.join('|')})\\}\\}`, 'g');
 
 /**
@@ -177,7 +154,7 @@ export const DEFAULT_NOTE_TOKENS = 600;
 export const MIN_NOTE_TOKENS = 150;
 
 /** When the note is too long, these parts give way first (the brief, "happened" and the combat line never do). */
-export const SHRINK_ORDER = Object.freeze(['avoid', 'knowledge', 'room', 'state', 'scene']);
+export const SHRINK_ORDER = Object.freeze(['avoid', 'knowledge', 'state', 'scene']);
 
 /**
  * Fit the note's parts into a token budget. parts: [{key, text}] in display order. Parts are

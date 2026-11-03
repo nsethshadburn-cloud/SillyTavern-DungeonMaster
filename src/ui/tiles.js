@@ -7,7 +7,6 @@
 import { terrainAt, propsAt, propAt, PROPS, ORIENTED } from '../core/grid.js';
 import { rngFor, between, pick, hsl, tone, speckle, blob, crack, ellipse, rrect, line, shadow } from './paint-kit.js';
 import { PROP_ART } from './prop-art.js';
-import { fireLights } from '../core/fire.js';
 
 const THEME_STYLE = {
     dungeon: { floor: 'stone', floorC: [30, 6, 38], wall: 'brick', wallC: [25, 7, 28], dark: 0.35, moss: 0.12 },
@@ -1041,7 +1040,7 @@ export function paintMapBase(map, tile) {
         sctx.globalCompositeOperation = 'destination-out';
         for (const a of map.areas || []) if (a.lit) { sctx.fillStyle = 'rgba(0,0,0,0.7)'; sctx.fillRect(a.x * tile, (map.h - a.y - a.h) * tile, a.w * tile, a.h * tile); }
         // Fire lights up the dark too (its glow is drawn by the moving effects on top).
-        for (const l of [...lights, ...fireLights(map)]) {
+        for (const l of lights) {
             const cx = l.x * tile + tile / 2, cy = (map.h - 1 - l.y) * tile + tile / 2, rad = l.rad * tile;
             const g = sctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
             g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');

@@ -19,7 +19,6 @@ export const FILES = {
     events_log: ['events_log.json', 'json', []],
     rolls_log: ['rolls_log.json', 'json', []],
     costs: ['costs.json', 'json', []],
-    atlas: ['atlas.json', 'json', { places: {} }],
 };
 
 export function fileName(campaignId, key) {

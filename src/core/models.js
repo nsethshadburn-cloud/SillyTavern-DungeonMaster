@@ -6,19 +6,6 @@ export const DEFAULT_MAIN_MODEL = 'claude-sonnet-5-5';
 export const DEFAULT_LIGHT_MODEL = 'claude-haiku-5-5';
 
 /**
- * The referee's model: one word, a handful of tokens, as fast as a call can be. Haiku 4.5 answers
- * without thinking first. A Claude 5 model thinks before every answer unless told not to, and
- * SillyTavern's Claude backend has no way to tell it: with five tokens to answer in, the thought ate
- * the word and the call came back empty (live test 6).
- */
-export const REFEREE_MODEL = 'claude-haiku-4-5';
-
-/** Does this model think before it answers unless told not to (the Claude 5 family and Fable)? */
-export function thinksByDefault(model) {
-    return /claude-(?:fable|opus-5|sonnet-5|haiku-5)/.test(String(model || ''));
-}
-
-/**
  * Every job Claude does, in the order the settings panel shows them.
  * key = the DM call reason (core/pacing.js dmReasons) or a non-turn job; main = uses the main model by default.
  */
@@ -33,8 +20,6 @@ export const TASKS = Object.freeze([
     { key: 'opening', group: 'Setup', label: 'The opening scene', main: true },
     { key: 'persona_sheet', group: 'Setup', label: 'Reading your PDF character sheet', main: true },
     { key: 'character_sheet', group: 'Setup', label: 'Writing sheets for party members', main: true },
-    { key: 'build_place', group: 'Setup', label: 'Planning a map room by room (only when the map builder is set to Claude)', main: true },
-    { key: 'map_brief', group: 'Setup', label: 'A map\'s short brief for the map algorithm (when the local helper isn\'t used)', main: false },
     { key: 'sprite', group: 'Setup', label: 'Describing your party\'s little map figures', main: false },
     { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: false },
     { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: false },
@@ -52,9 +37,6 @@ export const TASKS = Object.freeze([
     { key: 'ooc', group: 'Everyday play', label: 'Out-of-character questions', main: false },
     { key: 'manual', group: 'Everyday play', label: 'When you ask the DM to step in', main: false },
     { key: 'solo', group: 'Everyday play', label: 'Your moments with no companion around', main: false },
-    { key: 'explore', group: 'Everyday play', label: 'Exploring a map (traps, guards spotted)', main: false },
-    { key: 'referee', group: 'Everyday play', label: 'The referee: one-word rulings on who holds whom (run, stay, give in). Haiku 4.5 answers without thinking first; a Claude 5 model thinks before every word and is slower', main: false },
-    { key: 'map_sync', group: 'Housekeeping', label: 'Keeping the map in step with the story (when the local helper is off)', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
     { key: 'resync', group: 'Housekeeping', label: 'Fixing a mismatch with the chat', main: false },
@@ -62,7 +44,7 @@ export const TASKS = Object.freeze([
 
 /** The recommended model for every job. */
 export function defaultTaskModels(main = DEFAULT_MAIN_MODEL, light = DEFAULT_LIGHT_MODEL) {
-    return Object.fromEntries(TASKS.map(t => [t.key, t.key === 'referee' ? REFEREE_MODEL : t.main ? main : light]));
+    return Object.fromEntries(TASKS.map(t => [t.key, t.main ? main : light]));
 }
 
 /**

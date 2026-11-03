@@ -1,6 +1,6 @@
 // Map figures for everyone on the board. The player and companions get one described by Claude
 // (Sonnet looks at their card and picture, once, and the look is kept per character for every
-// campaign). NPCs, guards and enemies use the built-in library, matched to what they are, in a
+// campaign). NPCs and enemies use the built-in library, matched to what they are, in a
 // color variant that's stable for their name.
 
 import { ST } from './st.js';
@@ -9,7 +9,6 @@ import { campaign } from './campaign.js';
 import { callClaude } from './llm.js';
 import { statsForName } from './sheets.js';
 import { guessGender } from './voices.js';
-import { currentPlace } from './atlas.js';
 import { normalizeLook, lookForNpc, presetFor, libraryLook, sexFromText, SPRITE_INSTRUCTIONS, LIBRARY, ANIMAL_WORDS, NOT_AN_ANIMAL, ANIMAL_INSTRUCTIONS } from '../core/sprites.js';
 import { extractJson, trimToTokens, nameKey } from '../core/text.js';
 
@@ -39,8 +38,6 @@ export function figureFor(name) {
     // Men and women look different on the map: the DM's gender for them, else their description, else the first name.
     const sex = who => (who.gender === 'male' || who.gender === 'female' ? who.gender : sexFromText(`${who.name} ${who.description || ''}`) || guessGender(who.name));
     if (npc) return lookForNpc(npc.name, npc.description, npc.sprite, sex(npc));
-    const person = currentPlace(c)?.place.guards?.[name];
-    if (person) return lookForNpc(person.name, person.description, person.sprite, sex(person));
     const enemy = c.docs.world.combat?.enemies?.[name];
     return lookForNpc(name.replace(/\s*\d+$/, ''), '', enemy?.sprite);
 }
@@ -220,8 +217,7 @@ export function ensureAnimalFigures(c, people) {
         }
         if (drew) {
             const { saveDoc } = await import('./campaign.js');
-            const { savePlace } = await import('./atlas.js');
-            try { saveDoc('npcs'); const cur = currentPlace(c); if (cur) savePlace(cur.key, c); } catch { /* saved on the next turn anyway */ }
+            try { saveDoc('npcs'); } catch { /* saved on the next turn anyway */ }
             const { refreshMap } = await import('../ui/map.js');
             refreshMap();
         }

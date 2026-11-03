@@ -1,5 +1,5 @@
 // Undo for deleted DM turns. Before each turn the game state is put aside (HP, conditions, items,
-// gold, the fight, who's away, the clock, the map the party is on, a roll the DM is waiting for,
+// gold, the fight, who's away, the clock, the sketch, a roll the DM is waiting for,
 // the timeline, what the companions know and feel, the notes, the plot, the NPC roster); after the
 // turn, the messages it wrote are noted. Deleting that turn's DM narration (or every message it
 // wrote) puts the state back the way it was before the turn, so the story and the books agree.
@@ -8,7 +8,6 @@
 
 import { ST } from './st.js';
 import { campaign, saveDoc, saveMeta } from './campaign.js';
-import { currentPlace, replacePlace } from './atlas.js';
 
 const KEEP = 6;
 let stack = [];
@@ -21,13 +20,10 @@ const clone = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)))
 /** Put the state aside before a turn. Returns the snapshot (pass it to sealTurn after). */
 export function snapshotTurn(c = campaign()) {
     if (!c) return null;
-    const cur = currentPlace(c);
     return {
         campaign: c.meta.id,
         from: ST.chat.length,
         world: clone(c.docs.world),
-        placeKey: cur?.key ?? null,
-        place: cur ? clone(cur.place) : null,
         pendingRoll: clone(c.meta.pendingRoll ?? null),
         stance: clone(c.meta.stance ?? {}),
         // What else a turn writes: the companions' knowledge and minds, the timeline, the pacing, the notes.
@@ -75,7 +71,6 @@ export async function onMessagesDeleted() {
     for (const [k, v] of Object.entries(restore.meta ?? {})) if (v !== undefined) c.meta[k] = v;
     saveMeta();
     for (const [k, v] of Object.entries(restore.docs ?? {})) if (v !== undefined) { c.docs[k] = v; saveDoc(k); }
-    if (restore.placeKey && restore.place) replacePlace(restore.placeKey, restore.place, c);
     const { refreshMap } = await import('../ui/map.js');
     refreshMap();
     const { refreshStandingPrompt } = await import('./actors.js');

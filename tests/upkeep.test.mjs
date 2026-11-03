@@ -1,12 +1,10 @@
 // Run with: node --test tests/
-// v0.26: conditions that wear off, rests, spell slots and abilities, death saves, and a stricter
-// map sync that also tracks items.
+// v0.26: conditions that wear off, rests, spell slots and abilities, death saves.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseCondition, untilFrom, expireConditions, maxSlots, classInfo, spend, resourcesLine, takeRest, deathSave, hurtWhileDown, dying, untilWords } from '../src/core/upkeep.js';
 import { applyStateChanges, changeHp } from '../src/core/world.js';
-import { parseMapSync, mapSyncPrompt } from '../src/core/mapsync.js';
 import { normalizeDmTurn } from '../src/core/protocol.js';
 
 const party = () => ({ party: { Amber: { hp: 20, hp_max: 30, conditions: [] }, 'Judy Hopps': { hp: 12, hp_max: 24, conditions: [] } } });
@@ -93,53 +91,3 @@ test('the DM\'s rest and spending come through', () => {
     assert.equal(normalizeDmTurn({ rest: 'nap' }).rest, null);
 });
 
-test('map sync: only what the story says, the same creature isn\'t added twice, items picked up and put down', () => {
-    const known = { party: ['Amber', 'Judy Hopps'], people: ['Guard Dog', 'Guard 1'], peopleInfo: { 'Guard Dog': 'a snarling mastiff', 'Guard 1': 'a guard' }, things: ['p4'], doors: [], rooms: [], items: ['I3'], carried: { Amber: ['coil of rope'] } };
-    const story = 'The hound lunges at Judy. Somewhere above, footsteps. A second guard storms in. Amber picks up the ledger and drops her coil of rope.';
-    const ops = parseMapSync(JSON.stringify({ changes: [
-        { op: 'spawn', name: 'The Hound', what: 'a big dog', intent: 'attack', target: 'Judy' },
-        { op: 'spawn', name: 'Guard 2', what: 'a guard' },
-        { op: 'spawn', name: 'Ogre', what: 'an ogre upstairs' },
-        { op: 'take', who: 'Amber', item: 'I3' },
-        { op: 'drop', who: 'Amber', item: 'rope' },
-        { op: 'drop', who: 'Amber', item: 'sword she never had' },
-        { op: 'found', item: 'I9' },
-    ] }), known, { story });
-    assert.deepEqual(ops.find(o => o.who === 'Guard Dog'), { op: 'intent', who: 'Guard Dog', intent: 'attack', target: 'Judy Hopps' }, '"the hound" is the Guard Dog');
-    assert.ok(ops.some(o => o.op === 'spawn' && o.name === 'Guard 2'), 'a second guard is a second guard');
-    assert.ok(!ops.some(o => o.name === 'Ogre'), 'the story never mentions an ogre');
-    assert.deepEqual(ops.find(o => o.op === 'take'), { op: 'take', who: 'Amber', id: 'I3' });
-    assert.deepEqual(ops.filter(o => o.op === 'drop'), [{ op: 'drop', who: 'Amber', item: 'coil of rope' }], 'only what she carries');
-    assert.ok(!ops.some(o => o.op === 'found'), 'only items that are here');
-    const { user } = mapSyncPrompt({ party: [], people: [], things: [], rooms: [], items: [{ id: 'I3', name: 'ledger', room: 'Study', hidden: true }], carried: { Amber: ['rope'] }, story: 'x' });
-    assert.match(user, /I3 = ledger \(hidden, not found yet\), Study/);
-    assert.match(user, /only heard or sensed/);
-});
-
-test('locks: a difficulty per door by the place and what it guards; picking uses the better of Sleight of Hand and Thieves\' Tools; a few failures call for attention; keys you carry', async () => {
-    const { lockDc, lockWords, pickModifier, notePickFailure, keyFor } = await import('../src/core/locks.js');
-    const door = (id, rooms, kind = 'locked') => ({ id, rooms, kind, state: 'locked', key: '' });
-    const cottage = { kind: 'cottage', name: 'Cottage', seed: 1, rooms: { A: { type: 'parlor' }, B: { type: 'bedroom' } } };
-    const bank = { kind: 'bank', name: 'Coin Exchange', seed: 1, rooms: { A: { type: 'foyer' }, V: { type: 'vault' } } };
-    const easy = lockDc(cottage, door('D1', ['A', 'B']));
-    const hard = lockDc(bank, door('D1', ['A', 'V']));
-    assert.ok(easy >= 8 && easy <= 12, `a cottage door is easy (${easy})`);
-    assert.ok(hard >= 18, `a bank vault is hard (${hard})`);
-    const d = door('D7', ['A', 'B']);
-    assert.equal(lockDc(cottage, d), lockDc(cottage, d), 'a door\'s lock never changes');
-    assert.equal(lockWords(10), 'a simple lock');
-    assert.equal(lockWords(21), 'a masterwork lock');
-    assert.deepEqual(pickModifier({ skills: { 'Sleight of Hand': 3 }, tools: { "Thieves' Tools": 7 } }), { mod: 7, skill: "Thieves' Tools" });
-    assert.deepEqual(pickModifier({ skills: { 'Sleight of Hand': 5 }, tools: {} }), { mod: 5, skill: 'Sleight of Hand' });
-    const f = door('D9', []);
-    const first = notePickFailure(f, 'Amber', 8);
-    assert.deepEqual(first, { count: 1, alarm: false });
-    let n = first;
-    while (!n.alarm) n = notePickFailure(f, 'Amber', 8);
-    assert.ok(n.count === 2 || n.count === 3, 'two or three failures in a row');
-    assert.equal(f.picks.Amber, 0, 'counting starts over after the DM is called');
-    assert.equal(notePickFailure(door('D10', []), 'Amber', 1).alarm, true, 'a natural 1 snaps the pick');
-    assert.equal(keyFor({ key: 'Copper key' }, ['rope', 'copper key']), 'copper key');
-    assert.equal(keyFor({ key: 'Copper key' }, ['iron key']), null);
-    assert.equal(keyFor({ key: '' }, ['iron key']), null);
-});

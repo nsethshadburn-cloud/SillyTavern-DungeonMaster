@@ -10,7 +10,7 @@ export const CATEGORIES = ['banter', 'action', 'risky_action', 'scene_move', 'co
 /**
  * Rule-based triage. Returns a partial result; `needsHelper` says whether the helper should refine it.
  * @param {string} text the player's message
- * @param {{pendingRoll?: object|null, inCombat?: boolean}} ctx
+ * @param {{pendingRoll?: object|null, inCombat?: boolean, companions?: string[], player?: string}} ctx player = the player's name ("Amber goes in" is "I go in")
  */
 export function ruleTriage(text, ctx = {}) {
     // "*(OOC)* ..." (the marker in italics, as players type it) is OOC like the plain forms.
@@ -23,15 +23,10 @@ export function ruleTriage(text, ctx = {}) {
     if (ooc) {
         result.ooc = true;
         result.oocText = (ooc[1] ?? ooc[2] ?? ooc[3] ?? ooc[4] ?? ooc[5] ?? '').trim() || raw;
-        result.mapRequest = mapRequest(result.oocText);
         result.category = 'question';
         result.needsHelper = false;
         return result;
     }
-
-    // "Claude, regenerate the map": said in character, still a request for a map.
-    const mr = /\b(claude|dm|game master|gm)\b/i.test(raw) ? mapRequest(raw) : null;
-    if (mr) result.mapRequest = mr;
 
     // Answer to a pending roll request.
     if (ctx.pendingRoll) {
@@ -47,15 +42,19 @@ export function ruleTriage(text, ctx = {}) {
     }
 
     // An order to the people of the place ("Bring Judy to me, unharmed.", "You. Unlock this door.", "Go and fetch her"):
-    // the world has to act on it, so the DM rules and moves them. A word to a companion by name is the helper's: a task.
+    // the world has to act on it, so the DM rules. A word to a companion by name is the helper's: a task.
     if (!ctx.inCombat && isOrder(raw, ctx.companions || [])) {
         result.category = 'risky_action';
         result.order = true;
         result.needsHelper = true;
         return result;
     }
-    // Obvious scene moves.
-    if (/\b(let'?s|we|i)\s+(head|go|travel|leave|set off|ride|sail|walk|move on|make camp|rest|sleep|camp)\b/.test(t) ||
+    // The player's own doings, in the first person or by their name ("*Amber goes into the shop*").
+    const me = String(ctx.player || '').toLowerCase().split(/\s+/)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const self = me ? `(?:let'?s|we|i|${me})` : "(?:let'?s|we|i)";
+    // Obvious scene moves: travel, rests, going into or out of a place.
+    if (new RegExp(`\\b${self}\\s+(?:head|heads|go|goes|travel|travels|leave|leaves|set off|sets off|ride|rides|sail|sails|walk|walks|move on|moves on|make camp|makes camp|rest|rests|sleep|sleeps|camp|camps|enter|enters|step|steps) (?:into|in|inside|out|outside|through|to|for|on|off|back|away|up|down|over|along|toward|towards|the|a|an|out of)\\b`).test(t) ||
+        new RegExp(`\\b${self}\\s+(?:head|heads|go|goes|travel|travels|leave|leaves|set off|sets off|ride|rides|sail|sails|move on|moves on|make camp|makes camp|rest|rests|sleep|sleeps|camp|camps)\\b`).test(t) ||
         /\b(long rest|short rest|fast[- ]travel|skip (ahead|to))\b/.test(t)) {
         result.category = 'scene_move';
         result.needsHelper = false;
@@ -63,14 +62,15 @@ export function ruleTriage(text, ctx = {}) {
     }
 
     // Obvious combat.
-    if (ctx.inCombat || /\b(attack|stab|slash|shoot|swing at|punch|cast .* at|fireball|draw (my|a) (sword|blade|bow|weapon)|charge at|tackle)\b/.test(t)) {
-        result.category = ctx.inCombat || /\b(attack|stab|slash|shoot|swing at|punch|charge at|tackle|cast .* at|fireball)\b/.test(t) ? 'combat_action' : 'risky_action';
+    const fight = /\b(attack|attacks|attacking|stab|stabs|stabbing|slash|slashes|slashing|shoot|shoots|shooting|swing|swings at|punch|punches|cast|casts \w+ at|fireball|charge|charges at|tackle|tackles|lunge|lunges at)\b/;
+    if (ctx.inCombat || fight.test(t) || /\bdraws? (?:my|a|his|her|their) (?:sword|blade|bow|weapon|dagger|knife)\b/.test(t)) {
+        result.category = ctx.inCombat || fight.test(t) ? 'combat_action' : 'risky_action';
         result.needsHelper = false;
         return result;
     }
 
     // Obvious risky attempts.
-    if (/\b(try to|attempt to|sneak|pick the lock|lockpick|pickpocket|steal|climb|jump|persuade|intimidate|deceive|lie to|bluff|search for|investigate|hide|disarm|break (down|open)|force (the|it) open|sense motive|insight)\b/.test(t)) {
+    if (/\b(try|tries|trying|attempt|attempts|attempting) to\b|\b(sneak|sneaks|sneaking|pick(?:s|ing)? the lock|lockpick|pickpocket|steal|steals|stealing|climb|climbs|climbing|jump|jumps|persuade|persuades|intimidate|intimidates|deceive|deceives|lie|lies to|bluff|bluffs|search(?:es|ing)? (?:for|the)|investigate|investigates|hide|hides|disarm|disarms|break(?:s)? (?:down|open)|force(?:s)? (?:the|it) open|sense motive|insight|grab|grabs|trip|trips|shove|shoves)\b/.test(t)) {
         result.category = 'risky_action';
         result.needsHelper = true; // helper can still downgrade, but default to DM
         return result;
@@ -81,9 +81,9 @@ export function ruleTriage(text, ctx = {}) {
 
 /**
  * Prompt for the local helper. Kept tiny, no thinking trigger.
- * @param {{player:string, message:string, recent:string, speakers:string[], scene:string}} p
+ * @param {{player:string, message:string, recent:string, speakers:string[], scene:string, away?:string[], companions?:string[]}} p
  */
-export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [], companions = [], places = [], mapOn = false }) {
+export function helperTriagePrompt({ player, message, recent, speakers, scene, away = [], companions = [] }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
     const user = [
         `Scene: ${scene || 'unknown'}`,
@@ -94,7 +94,7 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
         message,
         '',
         'Classify the new message. JSON keys:',
-        '"category": one of "banter" (talking/roleplay, no risk), "action" (simple action, no real risk), "risky_action" (outcome uncertain: needs a dice roll or a ruling), "scene_move" (travel, rest, leave, time skip), "combat_action", "question" (asking about the world).',
+        '"category": one of "banter" (talking/roleplay, no risk), "action" (simple action, no real risk), "risky_action" (outcome uncertain: needs a dice roll or a ruling), "scene_move" (travel, rest, leave, time skip, going into or out of a building), "combat_action", "question" (asking about the world).',
         '"engaged": 0-3, how invested/playful the player seems right now.',
         '"stalled": true if the conversation is going in circles with no progress for several messages.',
         '"refusing": true if the player refuses, resists, dodges or bargains against what another character is asking or trying to make them do (even calmly).',
@@ -103,10 +103,7 @@ export function helperTriagePrompt({ player, message, recent, speakers, scene, a
             : '"speakers": [] (nobody is with the player right now).',
         away.length ? `Not with the player (can't hear or reply): ${away.join('; ')}.` : '',
         '"addressed": the name of the character the player is speaking to or acting toward (any name, even if not in that list), or "" if nobody in particular.',
-        companions.length ? `"task": only if the player tells or asks a companion (${companions.map(s => JSON.stringify(s)).join(', ')}) to DO something now (not just talk): {"who": their name, "what": "a few words", "go": ${places.length ? '"the id of a room they have to go to, from the list below, or empty"' : '""'}, "dm": true if what happens or what they find isn't known yet and the Dungeon Master has to decide it (searching, looking inside, checking for something, opening, picking a lock, sneaking, scouting, listening at a door, anything that could need a dice roll), false for simple things whose result is obvious (follow me, wait here, sit down, hand me that, go stand over there)}. Otherwise "task": null.` : '',
-        mapOn ? '"thing": the object, door, window or creature on the map that the player (or the companion given the task) is about to touch, open, search, smash, take from, hide in, sit on, climb, unlock or attack, in the words the player used ("bookshelf", "the kennel", "north door", "the dog"), or "" if they only talk or move about.' : '',
-        companions.length ? `"warned": the name of the companion the player tells or warns about a trap or a dangerous spot (where it is, to watch out for it), or "".` : '',
-        companions.length && places.length ? `Rooms near the party: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}.` : '',
+        companions.length ? `"task": only if the player tells or asks a companion (${companions.map(s => JSON.stringify(s)).join(', ')}) to DO something now (not just talk): {"who": their name, "what": "a few words", "dm": true if what happens or what they find isn't known yet and the Dungeon Master has to decide it (searching, looking inside, checking for something, opening, picking a lock, sneaking, scouting, listening at a door, going to look at something and reporting back, anything that could need a dice roll), false for simple things whose result is obvious (follow me, wait here, sit down, hand me that, go stand over there)}. Otherwise "task": null.` : '',
         'Example: {"category":"banter","engaged":2,"stalled":false,"speakers":["Judy Hopps"],"addressed":"Judy Hopps"' + (companions.length ? ',"task":null' : '') + '}',
     ].filter(Boolean).join('\n');
     return { system, user };
@@ -132,121 +129,37 @@ export function parseHelperTriage(text, speakers = []) {
         speakers: picked.filter(s => speakers.some(x => x.toLowerCase() === s.toLowerCase())).slice(0, 2),
         addressed: typeof data.addressed === 'string' ? data.addressed.trim().slice(0, 60) : '',
         task: parseTask(data.task),
-        warned: typeof data.warned === 'string' ? data.warned.trim().slice(0, 60) : '',
-        thing: typeof data.thing === 'string' ? data.thing.trim().slice(0, 60) : '',
     };
 }
 
-/** The companion task in the helper's reply ({who, what, go, dm}), or null. */
+/** The companion task in the helper's reply ({who, what, dm}), or null. */
 function parseTask(t) {
     if (!t || typeof t !== 'object' || typeof t.who !== 'string' || !t.who.trim()) return null;
     return {
         who: t.who.trim().slice(0, 60),
         what: String(t.what ?? '').trim().slice(0, 120),
-        go: String(t.go ?? '').trim().slice(0, 40),
         dm: t.dm === true || t.dm === 'true',
     };
 }
 
 /** Ask the helper whether a companion's own reply attempts something that needs a roll. */
-/**
- * Ask the helper about a companion's reply: do they attempt something risky (askAttempt), go
- * somewhere on the map (places), and are they coming along with the player, sticking by their side,
- * or staying behind (askStance: the player asks in chat, the companion answers in character)?
- */
-export function companionActionPrompt({ name, message, scene, places = [], askAttempt = true, player = 'the player', askStance = false }) {
+export function companionActionPrompt({ name, message, scene }) {
     const system = 'You are a fast classifier for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
-    const questions = [
-        askAttempt ? `Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.` : '',
-        places.length ? `Does ${name} go somewhere right now, on their own (walks over to something, goes to hide somewhere, goes into another room)? Only if they actually go now (on their own or because they were asked to), not if they only suggest it or talk about it. If so, which of these: ${places.map(p => `${p.id} = ${p.name}`).join('; ')}; and are they hiding there (in it, under it or behind it), or sitting or lying down on it ("sit", "lie", "sleep", or "")?` : '',
-        askStance ? `Going by this reply, is ${name} now coming along with ${player}? "close" if they agree to stay right by ${player}'s side; "follow" if they agree to follow or come along; "stay" if they say they'll stay, wait here, or refuse to come; "" if the reply doesn't say.` : '',
-    ].filter(Boolean);
-    const fields = [
-        askAttempt ? '"attempt": true or false, "what": "a few words: what they try, or empty"' : '',
-        places.length ? '"go": "the id they go to, or empty", "hide": true or false, "pose": "sit, lie, sleep or empty"' : '',
-        askStance ? '"stance": "close, follow, stay or empty"' : '',
-    ].filter(Boolean);
     const user = [
         `Scene: ${scene || 'unknown'}`,
         `${name} (a companion in the party) just wrote:`,
         message,
         '',
-        ...questions.map((q, i) => `${i + 1}. ${q}`),
-        `JSON: {${fields.join(', ')}}`,
+        `1. Does ${name} ATTEMPT something with an uncertain outcome that would need a dice roll in D&D: sneaking, stealing or slipping something, picking a lock, lying to someone, a hard climb or jump, attacking, casting a spell on someone, forcing something open? Talking, feelings, looking around, simple everyday actions and agreeing do NOT count.`,
+        'JSON: {"attempt": true or false, "what": "a few words: what they try, or empty"}',
     ].join('\n');
     return { system, user };
 }
 
-/** Words that really mean a companion is staying behind (the classifier over-reads "I'll watch the door" as staying). */
-const STAY_WORDS = /\b(wait here|stay here|stay behind|stay put|staying here|staying behind|i('ll| will) stay|i('m| am) staying|i('ll| will) wait|not coming|go (on )?without me|leave me here|you go ahead|i('m| am) not (going|coming|leaving))\b/i;
-
-export function parseCompanionAction(text, places = [], message = '') {
+export function parseCompanionAction(text) {
     const data = extractJson(text) || {};
     const attempt = data.attempt === true || data.attempt === 'true';
-    const go = String(data.go ?? '').trim();
-    const ok = places.some(p => p.id === go);
-    const pose = String(data.pose ?? '').trim().toLowerCase();
-    let stance = String(data.stance ?? '').trim().toLowerCase();
-    if (stance === 'stay' && message && !STAY_WORDS.test(String(message))) stance = '';
-    return {
-        attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '', go: ok ? go : '',
-        ...(ok && (data.hide === true || data.hide === 'true') ? { hide: true } : {}),
-        ...(ok && ['sit', 'lie', 'sleep'].includes(pose) ? { pose } : {}),
-        ...(['close', 'follow', 'stay'].includes(stance) ? { stance } : {}),
-    };
-}
-
-// ---------- a map, asked for in the player's own words ----------
-
-const KIND_WORDS = [
-    [/\b(jungle|rainforest)\b/, 'jungle'], [/\b(swamp|marsh|bog)\b/, 'swamp'], [/\b(desert|dunes?)\b/, 'desert'], [/\b(snow|snowy|frozen|tundra)\b/, 'snow'],
-    [/\b(bandit camp|war camp|raiders?' camp|cannibal camp|camp)\b/, 'camp'], [/\b(town|village|city|hamlet)\b/, 'town'],
-    [/\b(woods?|forest|trees|woodland|grove|wooded)\b/, 'forest'], [/\b(downs|hills?|plains?|meadow|grass(land)?|fields?|moor|heath|prairie|steppe|open country|wilderness|wilds|countryside|standing stones)\b/, 'downs'],
-    [/\b(cave|cavern|grotto)\b/, 'cave'], [/\b(crypt|tomb|catacombs?)\b/, 'crypt'], [/\bdungeon\b/, 'dungeon'], [/\b(castle|keep|fortress|fort)\b/, 'castle'],
-    [/\b(mansion|manor|estate)\b/, 'mansion'], [/\b(tavern|inn)\b/, 'tavern'], [/\b(temple|church|shrine)\b/, 'temple'], [/\b(prison|jail|gaol)\b/, 'prison'], [/\b(house|cottage|cabin)\b/, 'house'], [/\b(ship|boat)\b/, 'ship'],
-];
-
-/** The kind of place some words describe ("a big forest with a stream" → forest), or ''. */
-export function kindFromWords(text) {
-    const w = String(text ?? '').toLowerCase();
-    return KIND_WORDS.find(([re]) => re.test(w))?.[1] ?? '';
-}
-
-/**
- * The player asking for a map ("make the map", "regenerate the map, a large map of woods with a
- * stream"): what they asked for, or null. kind and size come from their words when they gave any;
- * redo = they want the current map done again (not just one made).
- */
-export function mapRequest(text) {
-    const t = String(text ?? '').trim();
-    if (!t || !/\b(map|grid|battle ?map)\b/i.test(t)) return null;
-    // A question about the map ("do the guards on the map see me?") or a word about something on it ("I can't pick it up from the map") is not a request for one.
-    if (/^\s*(?:do|does|did|is|are|was|were|what|where|who|why|how|which|will|would|should)\b/i.test(t)) return null;
-    if (/\?\s*$/.test(t) && !/\b(?:can|could|would|will) you\b/i.test(t)) return null;
-    if (/\b(don'?t|do not|never|without|no need|stop)\b[^.?!]{0,40}\b(map|grid)\b/i.test(t) || /\b(can i see|where is|open|show|hide|close|minimi[sz]e)\b[^.?!]{0,30}\b(the )?map\b/i.test(t)) return null;
-    // The build word has to be about the map itself: "regenerate the map", "make a map of the woods", "a new map", "the map again".
-    const build = '(?:re-?gen(?:erate|erated|erating)?|regen\\w*|build|rebuild|make|remake|create|draw|redraw|render|redo|re-?roll|generate|fix|change|update|replace)';
-    const asks = new RegExp(`\\b${build}\\b[^.?!,;]{0,24}\\b(?:map|grid|battle ?map)\\b`, 'i').test(t)
-        || /\bnew (?:map|grid|battle ?map)\b/i.test(t)
-        || /\b(?:map|grid)\b[^.?!]{0,12}\b(?:again|please|now|correctly|properly|redo|regen\w*)\b/i.test(t)
-        || /\b(?:want|need|give (?:me|us)|can (?:i|we) (?:get|have))\b[^.?!]{0,16}\b(?:map|grid|battle ?map)\b/i.test(t);
-    if (!asks) return null;
-    const w = t.toLowerCase();
-    return {
-        text: t,
-        kind: kindFromWords(w),
-        size: /\b(large|big|huge|massive|wide|bigger|larger|vast|sprawling|great big)\b/.test(w) ? 'big' : /\b(small|tiny|little)\b/.test(w) ? 'small' : '',
-        redo: /\b(re-?gen\w*|regen\w*|rebuild|redo|re-?make|remake|again|change|fix|correctly|properly|new map|replace|different|other)\b/.test(w),
-    };
-}
-
-/** A place name out of a request's words: "regenerate the map: a small bandit camp by a river" → "Bandit Camp by a River". */
-export function nameFromWords(text) {
-    let t = String(text || '').replace(/^.*?\b(?:map|grid)\b\s*[:,-]?\s*/i, '').replace(/^(?:make it|make|build|with|of)\s+/i, '').replace(/[.!?].*$/, '').trim();
-    t = t.replace(/^(?:a|an|the|some)\s+/i, '').replace(/\b(large|big|huge|massive|small|tiny|little|wide|vast|sprawling|please|now|map)\b/gi, ' ').replace(/\s+/g, ' ').trim().replace(/^(?:a|an|the|some)\s+/i, '');
-    const words = t.split(' ').filter(Boolean).slice(0, 6);
-    if (!words.length) return '';
-    return words.map((w, i) => (i > 0 && /^(by|of|on|in|at|with|and|under|near|the|to|a|an)$/i.test(w) ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1))).join(' ');
+    return { attempt, what: attempt ? String(data.what ?? '').trim().slice(0, 120) : '' };
 }
 
 /**
@@ -346,6 +259,7 @@ export function attacksSomeone(text) {
         .replace(/\b(?:not (?:to |going to |gonna )?(?:attack|strike|hit|stab|swing|fight)\w*|without (?:attacking|striking|swinging)|(?:just|only) to (?:show|warn|scare|make a point)|no(?:t an?)? attack)\b[^.!?]*/gi, ' ');
     return ATTACK_WORDS.test(t);
 }
+
 /** "I end my turn.", "end turn", "done": the player hands the round on in words (the same as the End my turn button). */
 export function isEndTurn(text) {
     const s = String(text || '').trim().replace(/^[*_("\s]+|[*_)".!\s]+$/g, '').toLowerCase();

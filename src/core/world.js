@@ -20,7 +20,7 @@ export function createWorldState() {
         combat: null,     // {round, order: [{name, init}], enemies: {name: {hp, hp_max, ac}}}
         away: {},         // companion name -> where they are (split off from the player)
         sceneCard: null,  // {place, people: {name: body/position}, objects: {name: look}} (see state.js)
-        place: null,      // {key, floor} while the party is inside a mapped place (see st/atlas.js)
+        sketch: null,     // the picture of the scene drawn from the scene card (see core/sketch.js)
         others: {},       // name -> {conditions: []} for NPCs outside a fight (a tied-up prisoner)
     };
 }

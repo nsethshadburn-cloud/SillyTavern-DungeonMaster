@@ -1,6 +1,10 @@
 // The turn loop: what happens after the player sends a message.
 // 1) triage (code, then the local helper)  2) dice  3) maybe a random event
 // 4) DM (Claude) only if needed  5) actors reply  6) bookkeeping.
+//
+// The story is the truth outside a fight: the DM narrates, the code keeps the books (HP, conditions,
+// gold, items, the clock, the dice) and draws a sketch of the scene from the DM's scene card. In a
+// fight the grid is the truth: initiative, movement, reach and damage run on the battle map.
 
 import { ST } from './st.js';
 import { ensureAnimalFigures } from './figures.js';
@@ -16,40 +20,29 @@ import { DM_NAME, postNarration, postOoc, postPlayerOoc, postDiceCard, postNote,
 import { statsForName, levelCharacterSheet } from './sheets.js';
 import { pickNpcVoice, voiceLine, stopVoices } from './voices.js';
 import { normalizeMap, themeFor, applyPositions, placeMissing, placeNear, parseCoord, toCoord, clampMove, speedSquares, reachable } from '../core/grid.js';
-import { notAPerson, applyPlaceChanges, floorById, roomAt, computeVisible, placePerson, personByName, adoptStrays, openSquareNear, tellTraps, killPerson, markNoticed, inTheFight, matchPerson, EARSHOT, syncMounts, dismountsInText, propById, freeNear, makeNoise } from '../core/explore.js';
 import { isBeast } from '../core/sprites.js';
-import { isWildKind } from '../core/architect.js';
-import { restraintOf, standingRestraints } from '../core/restraints.js';
-import { applyMapEffects, fireTurn } from './fire-turn.js';
-import { mergeBurn } from '../core/fire.js';
-import { buildFromRequest, scheduleBodyClear, seizerAsking, answerSeizer, settleGrab, escortToCell, withinEarshot, playMoves, mentionedPeople, requestBuild, enterPlace, enterVehicle, findVehicle, loadPlace, climbInFromText, talkRange, playerGivesIn, leavePlace, currentPlace, savePlace, atlasEntry, tickPlace, watchTurn, partyOnMap, look, takeMapAction, peekMapAction, goTargets, companionGoTo, searchForTraps, takeTrapEvents, setStance, lockedReason, trappedIn, freeFromTrap, placeHeld, targetFor, rememberTarget, approachSpot, huntersTurn, resetWalked, applyMapSync, syncContext, syncSky, syncDownFromConditions, noteMapAction, releaseStalePins, codeRoll, enterOrLeaveFromText } from './atlas.js';
+import { notAPerson, notAPersonEntry } from '../core/people.js';
+import { buildSketch } from '../core/sketch.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
-import { openMap, refreshMap, closeMap, playAnim, chooseOnMap, setMapBusy } from '../ui/map.js';
-import { targetLine } from '../core/targets.js';
-import { mapSyncPrompt, parseMapSync } from '../core/mapsync.js';
+import { openMap, refreshMap, playAnim, setMapBusy } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, kindFromWords, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax, normalizeNotation } from '../core/dice.js';
-import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, isHere, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
+import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
 import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
-import { custodyOnPlayerText, custodyOnKeeperReply, custodyOnNarration, custodyUpkeep, custodyFreed, custodyFromStory, boundNow, settleCustody, settleTrip, settleHide } from './custody.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
 import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
-import { turnPromptsOn, askEndTurn, askReaction, askGiveIn } from './prompts.js';
-import { drainTalk } from './talk.js';
+import { turnPromptsOn, askEndTurn, askReaction } from './prompts.js';
 import { sfx } from '../ui/sound.js';
-import { readsAsRunning } from '../core/notice.js';
-import { lineRole } from '../core/lines.js';
 import { applySceneCard, pushTimeline, applyTableRules } from '../core/state.js';
 import { snapshotTurn, sealTurn } from './undo.js';
 import { expireConditions, takeRest, spend, dying, deathSave } from '../core/upkeep.js';
 import { mergeMind } from '../core/minds.js';
-import { standingOf, setStanding, standingFor } from '../core/access.js';
 
 let running = false;
-/** A turn (the DM, a walk the DM ordered, the opening) is in progress: the map shows it and takes no taps that move anyone. */
+/** A turn (the DM, the opening) is in progress: the map shows it and takes no taps that move anyone. */
 function setRunning(on) {
     running = on;
     setMapBusy(on);
@@ -76,10 +69,7 @@ export function isRunning() {
     return running;
 }
 
-/**
- * A player message sent while a side flow held the turn (a companion looking around, companions
- * reacting to you coming and going, the opening) asked for a rerun: run it now that we're free.
- */
+/** A player message sent while a side flow held the turn asked for a rerun: run it now that we're free. */
 function runQueuedTurn() {
     if (!rerunRequested) return;
     rerunRequested = false;
@@ -118,7 +108,7 @@ function recentForHelper(n = 6) {
 /**
  * Run one turn.
  * @param {{force?: string|null, oocText?: string, placeEvent?: string}} opts force = a reason to call the DM regardless;
- *  placeEvent = what just happened while exploring a map (a sprung trap, a guard coming into view)
+ *  placeEvent = something the code wants ruled on (a reaction to a hit)
  * A roll read from SillyTavern's dice waits in meta.pendingRoll.autoResult (see dicewatch.js).
  */
 export async function runTurn(opts = {}) {
@@ -137,10 +127,9 @@ export async function runTurn(opts = {}) {
     // The state before this turn, so deleting its narration can undo it (undo.js).
     const snap = snapshotTurn(c);
     try {
-        if (opts.moved) await movedTurn(c, status, controller.signal);
-        else await turnBody(c, opts, status, controller.signal);
-        // The books and the map: in the background, so the next move never waits on them.
-        if (!controller.signal.aborted) { queueBookkeeping(c, turnStart); queueMapSync(c, turnStart); }
+        await turnBody(c, opts, status, controller.signal);
+        // The books: in the background, so the next move never waits on them.
+        if (!controller.signal.aborted) queueBookkeeping(c, turnStart);
         sealTurn(snap);
         const left = await rotateIdleNpcs();
         if (left.length) status.note(`${left.join(', ')} left the scene`);
@@ -162,23 +151,19 @@ export async function runTurn(opts = {}) {
         ST.eventSource.removeListener(ST.eventTypes.GENERATION_STOPPED, onStop);
         saveMeta();
         setRunning(false);
-        // A companion set off a trap while walking somewhere after the DM had already ruled: rule on it now.
-        const sprung = takeTrapEvents();
-        if (sprung.length) setTimeout(() => runTurn({ force: 'explore', placeEvent: sprung.join(' ') }), 50);
-        else if (rerunRequested) {
+        if (rerunRequested) {
             rerunRequested = false;
             setTimeout(() => runTurn(), 50);
         }
     }
 }
 
-/** The climate where the party is: the world's setting and the map's theme. */
+/** The climate where the party is: the world's setting and the sketch's theme. */
 function climateHere(c) {
-    const here = currentPlace(c);
-    return climateOf(c.docs.world.setting, here ? floorById(here.place, here.place.state.positions[c.meta.persona.name]?.floor ?? here.place.state.floor).map.theme : '');
+    return climateOf(c.docs.world.setting, c.docs.world.sketch?.map?.theme || c.docs.world.combat?.map?.theme || '');
 }
 
-/** Minutes pass on the world's clock; the weather may turn; the map follows (night, rain). */
+/** Minutes pass on the world's clock; the weather may turn; the map follows. */
 async function tickClock(c, minutes, status) {
     const w = c.docs.world;
     const { weather } = passTime(w, minutes, { climate: climateHere(c) });
@@ -186,7 +171,6 @@ async function tickClock(c, minutes, status) {
         status?.note(`The weather turns: ${WEATHER_WORDS[weather]}`);
         await postDiceCard(`🌦️ The weather turns: ${WEATHER_WORDS[weather]}.`, { state: true });
     }
-    syncSky(c);
     refreshMap();
     saveDoc('world');
 }
@@ -196,17 +180,14 @@ async function turnBody(c, opts, status, signal) {
     const meta = c.meta;
     const pacing = meta.pacing;
     const autoRoll = meta.pendingRoll?.autoResult ?? null;
-    // Only a real player turn acts on their message. A forced turn (a sprung trap, a walk that went far,
-    // the end of a combat turn, a reaction) must not read the last message again: "searches the chest"
-    // would walk them back to the chest and run the search a second time, every time.
+    // Only a real player turn acts on their message. A forced turn (the end of a combat turn, a
+    // reaction) must not read the last message again.
     let playerText = opts.force || autoRoll ? '' : lastPlayerMessage();
     meta.stats.lastTurnUsd = 0;
     // "I end my turn." typed is the End my turn button.
     if (c.docs.world.combat && turnPromptsOn() && !opts.force && !autoRoll && isEndTurn(playerText)) { opts = { ...opts, force: 'end_turn' }; playerText = ''; c.docs.world.combat.phase = 'others'; saveDoc('world'); status.note('You ended your turn'); }
     // A fight is on when the code has one; a scene the DM labelled "combat" without one never freezes the map.
     if (pacing.inCombat && !c.docs.world.combat) { pacing.inCombat = false; status.note('No fight is running: the map moves again'); }
-    // Last turn's map sync finishes first, so this turn starts from a map that matches the story.
-    await mapSyncing;
     let turnUsd = 0;
 
     // Each player message is handled once, however many times a turn gets triggered for it.
@@ -230,9 +211,9 @@ async function turnBody(c, opts, status, signal) {
     } else if (opts.force !== 'manual' && opts.force !== 'opening') {
         meta.turn++;
         pacing.localTurnsSinceDM++;
-        const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat, companions: meta.party.map(p => p.name) });
-        // The clock ticks by turn: a few minutes of story each; a minute a round in a fight, and a minute for a turn the map forced mid-walk; nothing for a question out of character.
-        if (!rule.ooc && opts.force !== 'end_turn' && opts.force !== 'reaction') await tickClock(c, pacing.inCombat || c.docs.world.combat || opts.force === 'explore' ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
+        const rule = ruleTriage(playerText, { pendingRoll: meta.pendingRoll, inCombat: pacing.inCombat, companions: meta.party.map(p => p.name), player: meta.persona.name });
+        // The clock ticks by turn: a few minutes of story each; a minute a round in a fight; nothing for a question out of character.
+        if (!rule.ooc && opts.force !== 'end_turn' && opts.force !== 'reaction') await tickClock(c, pacing.inCombat || c.docs.world.combat ? 1 : Math.max(1, Number(s.minutesPerTurn) || 10), status);
         // "((it's the middle of the night))": the player's word on the time of day stands; the clock is set to it.
         const saidTime = rule.ooc ? /\b(?:it'?s|it is|now|make it|let'?s say it'?s|say it'?s|time is)\s+(?:the\s+)?(midnight|middle of the night|dead of night|small hours|late at night|first light|daybreak|dawn|sunrise|early morning|morning|mid-?morning|noon|midday|afternoon|late afternoon|early evening|dusk|sunset|evening|nightfall|late evening|night)\b/i.exec(rule.oocText || playerText) : null;
         if (saidTime) { ensureClock(c.docs.world); skipTo(c.docs.world, saidTime[1].toLowerCase(), { climate: climateHere(c) }); saveDoc('world'); status.note(`Clock set: ${clockText(c.docs.world)}`); }
@@ -241,15 +222,10 @@ async function turnBody(c, opts, status, signal) {
         if (rule.needsHelper && s.useHelper) {
             const step = status.step('Reading your move (local helper)');
             try {
-                const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n })).filter(n => talkRange(c, n) === 'near'); // nobody a conversation away chimes in on their own
-                // Companions here, and what's around them on the map, so the helper can spot a task ("Judy, search that crate").
+                const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n }));
                 const helpers = meta.party.map(p => p.name).filter(n => candidates.includes(n));
-                const onMap = currentPlace(c);
-                const places = c.docs.world.combat || !helpers.length || !onMap ? [] : goTargets(c, helpers[0]).filter(p => onMap.place.rooms[p.id]);
                 const { system, user } = helperTriagePrompt({
-                    mapOn: Boolean(onMap) && mapsOn() && !c.docs.world.combat,
                     companions: helpers,
-                    places,
                     player: meta.persona.name,
                     message: trimToTokens(playerText, 500),
                     recent: recentForHelper(),
@@ -260,15 +236,7 @@ async function turnBody(c, opts, status, signal) {
                 const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: Math.max(240, Number(s.helperMaxTokens) || 0), profileId: s.helperProfileId });
                 const h = parseHelperTriage(raw, candidates);
                 const who = h.task && matchName(h.task.who, helpers);
-                if (who) triage.task = { ...h.task, who, go: places.some(p => p.id === h.task.go) ? h.task.go : '' };
-                triage.thing = h.thing;
-                // Warned about a trap: they learn every trap the player knows about, and walk around them.
-                const warned = h.warned && matchName(h.warned, helpers);
-                const here = warned && currentPlace(c);
-                if (here) {
-                    const learned = tellTraps(here.place, warned);
-                    if (learned.length) { savePlace(here.key, c); status.note(`${warned} knows about the ${learned.map(t => t.kind).join(', ')} now`); }
-                }
+                if (who) triage.task = { ...h.task, who };
                 if (!rule.category) triage.category = h.category;
                 triage.stalled = h.stalled;
                 triage.speakers = h.speakers;
@@ -281,7 +249,7 @@ async function turnBody(c, opts, status, signal) {
                     const known = matchName(h.addressed, [...meta.party.map(p => p.name), ...npcNames, meta.persona.name]);
                     if (!known) triage.unknownAddressee = h.addressed;
                     else if (npcNames.includes(known)) {
-                        triage.speakers = [known, ...triage.speakers.filter(s => s !== known)].slice(0, 2);
+                        triage.speakers = [known, ...triage.speakers.filter(sp => sp !== known)].slice(0, 2);
                         touchNpc(c.docs.npcs.find(n => n.name === known));
                     }
                 }
@@ -301,86 +269,9 @@ async function turnBody(c, opts, status, signal) {
         }
     }
     if (signal.aborted) throw new Error('aborted');
-    // A new player turn: walking starts counting again, hunters may strike again.
-    if (!opts.force && !autoRoll) resetWalked();
     if (!opts.force && !autoRoll) await upkeepTurn(c, status);
-    // ---------- What they act on, exactly ----------
-    // "Smash the bookshelf", "Judy, open the kennel": which one, on the map. One clear match is it;
-    // several in reach and the player picks on the map. Then whoever does it walks up to it first,
-    // and the DM is told exactly which one.
-    let target = null;
+    let placeEvent = opts.placeEvent || '';
     let events = [];
-    // Only when they DO something to it (open, search, smash, hide behind, climb...); a line about leaning on a log is roleplay. A tap on the map already said which one.
-    const actsOnThing = Boolean(triage.task?.who) || /\b(open|close|shut|search|rummage|look (?:in|inside|into|through|under|behind)|check|examine|inspect|read|smash|break|bash|kick|force|pry|push|shove|pull|drag|lift|climb|hide|take|grab|pick (?:up|the|it)|unlock|lock|light|loot|rifle|empty|dig|cut|untie|tap|knock|jam|barricade|wedge|sit|lie down|sleep|rest on|attack|stab|hit|strike|smack)\b/i.test(playerText);
-    // "Amber climbs into the wagon": in by code, and the DM told so (never narrated from outside).
-    if (!autoRoll && !triage.ooc && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
-        const climbed = peekMapAction() ? '' : await climbInFromText(c, playerText, refreshMap).catch(error => { console.warn('[Dungeon Master] climb in failed', error); return ''; });
-        if (climbed) { events.push(climbed); status.note('Climbed into the wagon'); }
-    }
-    // "Amber goes into the inn", "steps out into the lane": through the door by code, from the words (the DM's enter_place does the same).
-    if (!autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted && !peekMapAction()) {
-        const moved = await enterOrLeaveFromText(c, triage.ooc ? triage.oocText : playerText, refreshMap, { ooc: Boolean(triage.ooc) }).catch(error => { console.warn('[Dungeon Master] door from the words failed', error); return ''; });
-        if (moved) { events.push(moved); status.note('Through the door, from the words'); }
-    }
-    // Held by a companion: the referee reads the line (run, along, give in, trip) and the code does it; "((Judy tries to grab Amber))" is her contest; "Amber hauls Judy to her feet" stands her up.
-    if (!autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
-        const held = await custodyOnPlayerText(c, playerText, { ooc: Boolean(triage.ooc), status }).catch(error => { console.warn('[Dungeon Master] custody failed', error); return ''; });
-        if (held) events.push(held);
-        if (!triage.ooc) await playerHelpsUp(c, playerText, status).catch(error => console.warn('[Dungeon Master] help up failed', error));
-    }
-    if (triage.thing && actsOnThing && !peekMapAction() && !autoRoll && mapsOn() && currentPlace(c) && !c.docs.world.combat && !signal.aborted) {
-        const actor = triage.task?.who || meta.persona.name;
-        const found = targetFor(c, actor, triage.thing);
-        let pick = found.pick ?? null;
-        if (found.choices) {
-            const step = status.step(`Which ${found.choices[0].name}? Pick it on the map`);
-            pick = await chooseOnMap({ title: `Which ${found.choices[0].name}${actor === meta.persona.name ? '' : ` for ${actor}`}?`, choices: found.choices, signal });
-            step.done(pick ? `${pick.name}, ${pick.where}` : 'none picked');
-        }
-        if (signal.aborted) throw new Error('aborted');
-        if (pick) {
-            rememberTarget(c, actor, pick.id);
-            target = { actor, id: pick.id, kind: pick.kind, name: pick.name, where: pick.where, line: targetLine(pick), reached: false };
-            if (triage.task && triage.task.who === actor) triage.task.go = pick.id;
-            else target.reached = await approachSpot(pick, () => refreshMap(), { inTurn: true });
-            status.note(`${actor} → the ${pick.name} (${pick.where})`);
-        }
-    }
-    let placeEvent = [opts.placeEvent, ...takeTrapEvents()].filter(Boolean).join(' ');
-    // The player picked something on the map (smash the bookshelf, pry the bars): the DM rules on it.
-    const picked = !autoRoll ? takeMapAction() : '';
-    if (picked) placeEvent = [picked, placeEvent].filter(Boolean).join(' ');
-    // Fire and effects move on one step each player turn (they never spread while you just walk).
-    if (!opts.force && !autoRoll) {
-        const burned = await fireTurn(c, status);
-        if (burned) placeEvent = [placeEvent, burned].filter(Boolean).join(' ');
-    }
-    if (!opts.force && !autoRoll && !pacing.inCombat) {
-        // Whoever the player is dealing with ("I attack the jailer", "Wren, wait") holds still until the DM has ruled.
-        const still = mentionedPeople(c, playerText);
-        const spotted = tickPlace(c, { still });
-        if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'}${g.down ? `, ${g.down === 'bound' ? 'tied up' : g.down}` : ''})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
-        const watched = watchTurn(c);
-        if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
-        // Anyone set on the party (a guard dog let loose) closes in a turn's worth.
-        const hunt = await huntersTurn(c, { still, fleeing: readsAsRunning(playerText) });
-        if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
-        // A companion keeper gets up, or searches for the prisoner who slipped her.
-        const kept = await custodyUpkeep(c).catch(error => { console.warn('[Dungeon Master] custody upkeep failed', error); return ''; });
-        if (kept) placeEvent = [placeEvent, kept].filter(Boolean).join(' ');
-        await playMoves(c);
-    }
-
-    // A companion was told to do something: they walk there now, in the background, while the DM
-    // (if the result needs deciding) works out what they find. Their reply waits for both.
-    let taskWalk = null, taskWent = '';
-    if (triage.task?.go && !signal.aborted) {
-        const { who, go } = triage.task;
-        // Told to hide there, or sit or lie down on it: they do when they get there.
-        const what = String(triage.task.what || '').toLowerCase();
-        const how = { hide: /\bhide|duck|crouch behind|get (in|under|behind)\b/.test(what), pose: /\bsleep\b/.test(what) ? 'sleep' : /\b(lie|lay) down\b/.test(what) ? 'lie' : /\bsit\b/.test(what) ? 'sit' : '' };
-        taskWalk = companionGoTo(c, who, go, how).then(went => { taskWent = went; if (went) status.note(`${who} goes to ${went}`); }).catch(() => { });
-    }
 
     // ---------- 2. Player roll resolution ----------
     let rollResolution = '';
@@ -397,13 +288,6 @@ async function turnBody(c, opts, status, signal) {
         events = await maybeDrawEvents(c, status, b.level === 'tight');
     }
 
-    // The companion's walk finishes before the DM rules: if they set off a trap on the way, that comes first.
-    if (taskWalk) {
-        await taskWalk;
-        const sprung = takeTrapEvents();
-        if (sprung.length) { placeEvent = [placeEvent, ...sprung].filter(Boolean).join(' '); if (triage.task) triage.task.dm = false; }
-    }
-
     // ---------- 4. Does the DM step in? ----------
     let reasons = dmReasons({
         pacing,
@@ -417,7 +301,6 @@ async function turnBody(c, opts, status, signal) {
     if (opts.force) reasons = [...new Set([opts.force, ...reasons])];
     // The world doesn't check in during a fight: the round is the whole world.
     if (c.docs.world.combat) reasons = reasons.filter(r => r !== 'checkin');
-    if (placeEvent && !reasons.includes('explore') && opts.force !== 'reaction') reasons.push('explore');
     // Calm turns after a fight or a capture: no random event, no pressure push; the player breathes.
     if (Number.isFinite(pacing.calmUntil) && meta.turn < pacing.calmUntil) reasons = reasons.filter(r => r !== 'event' && r !== 'drift' && r !== 'stalled');
     // Turn prompts: the player's message in a fight is THEIR turn (the DM resolves only that); "end_turn" hands the round on.
@@ -429,8 +312,6 @@ async function turnBody(c, opts, status, signal) {
         if (opts.force === 'end_turn' || opts.force === 'reaction') reasons = reasons.filter(r => r !== 'combat_round' && r !== 'combat_action');
     }
     if (triage.task?.dm && !reasons.includes('companion_task')) reasons.push('companion_task');
-    // The player went up to something to act on it: the DM says what happens.
-    if (target && target.actor === meta.persona.name && !reasons.length && triage.category !== 'banter') reasons.push('explore');
     // Nobody would answer this locally (alone, or nobody nearby would reply): the world responds.
     if (!reasons.length && !opts.force && !triage.rollResult && !localSpeakers(c, triage, playerText).length) reasons = ['solo'];
     if (b.level === 'blocked' && reasons.length) {
@@ -452,8 +333,7 @@ async function turnBody(c, opts, status, signal) {
                 events,
                 oocText: opts.oocText || triage.oocText || '',
                 placeEvent,
-                companionTask: triage.task?.dm ? { name: triage.task.who, what: triage.task.what, went: target?.actor === triage.task.who ? target.line : triage.task.go ? goTargets(c, triage.task.who).find(p => p.id === triage.task.go)?.name ?? '' : '' } : null,
-                target,
+                companionTask: triage.task?.dm ? { name: triage.task.who, what: triage.task.what } : null,
             }, { signal, model }));
             step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
             turnUsd += result.usd;
@@ -471,32 +351,13 @@ async function turnBody(c, opts, status, signal) {
         }
         if (reasons.includes('stalled')) pacing.fillerStreak = 0;
         if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
-        await taskWalk;
         // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
-        const quiet = !triage.ooc && !triage.speakers?.length && (['action', 'risky_action', 'scene_move'].includes(triage.category) || (opts.force === 'explore' && !/first meeting/.test(opts.placeEvent || '')));
-        // The player asked for the map to be done again: a build of the same name replaces it.
-        if (triage.mapRequest?.redo && result.turn.build_place) result.turn.build_place.replace = true;
+        const quiet = !triage.ooc && !triage.speakers?.length && ['action', 'risky_action', 'scene_move'].includes(triage.category);
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
-        // A companion taking hold of the player in the narration, with no roll asked: the code's contest (a card), never a narrated outcome.
-        if (!result.turn.player_roll && !result.turn.start_combat && !c.docs.world.combat && mapsOn() && !signal.aborted) {
-            const held = await custodyOnNarration(c, result.turn.narration || '', status).catch(error => { console.warn('[Dungeon Master] companion grab failed', error); return ''; });
-            if (held) { noteMapAction(c, held); status.note('A grab is being rolled'); }
-        }
         // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
-        if ((result.turn.player_roll || codeRoll(c)) && !signal.aborted && /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '')) {
-            meta.turnProblems = [...(meta.turnProblems || []), `${result.turn.player_roll ? `you asked ${meta.persona.name} to roll` : `the code asked ${meta.persona.name} to roll`} and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
+        if (result.turn.player_roll && !signal.aborted && /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '')) {
+            meta.turnProblems = [...(meta.turnProblems || []), `you asked ${meta.persona.name} to roll and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
             saveMeta();
-        }
-        // "((Corvin Shale arrives behind us))": someone the DM narrated arriving and never put on the map is put there by the code, on their way in.
-        if (triage.ooc && mapsOn() && !signal.aborted) {
-            const m = String(triage.oocText || '').match(/\b([A-Z][\w'-]+(?: [A-Z][\w'-]+){0,2}) (?:arrives?|shows? up|appears?|turns? up|catches up|comes? (?:up|in|along|round|around|into view)|rides? (?:in|up)|walks? (?:in|up)|closes? in)\b/);
-            const who = (m?.[1] || '').replace(/^(?:The|A|An|Then|Now|Also|Have|Let|Make|And|But|So|If|When|Our|My) /, '').trim();
-            const here = currentPlace(c);
-            if (who && here && !personByName(here.place, who) && !meta.party.some(p => p.name === who || p.name.split(' ')[0] === who.split(' ')[0]) && who.split(' ')[0] !== meta.persona.name.split(' ')[0]) {
-                const lead = here.place.state.positions[meta.persona.name];
-                const g = lead && placePerson(here.place, who, { floor: lead.floor, x: lead.x, y: lead.y }, { floor: lead.floor, info: { description: String(triage.oocText).slice(m.index + m[0].length).replace(/^[\s,.:;]+/, '').slice(0, 120), hostile: /\b(?:hostile|attacks?|kill|hunt(?:s|ing)?|after (?:me|us|him|her)|wants? (?:me|us|him|her))\b/i.test(triage.oocText) }, arrive: true });
-                if (g) { savePlace(here.key, c); refreshMap(); status.note(`${who} is on the map, on the way in (the DM left them off)`); meta.turnProblems = [...(meta.turnProblems || []), `you narrated ${who} arriving and never put them on the map: the code did, at the edge of it, on their way in (place_changes guards moves them from now on; put anyone you bring in on the map yourself).`]; saveMeta(); }
-            }
         }
         // The player attacked (in character: an aside in double brackets isn't the player's blow) and the DM neither started a fight nor asked for a roll: say so, to both.
         const attacked = attacksSomeone(playerText.replace(/\(\([\s\S]*?\)\)/g, ' '));
@@ -505,14 +366,10 @@ async function turnBody(c, opts, status, signal) {
             saveMeta();
         }
         if (attacked && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !result.turn.end_combat && !signal.aborted) {
-            meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and nothing happened: no start_combat, no player_roll. When the player attacks, that same turn: start_combat (the enemies by name, a map if outdoors with no built map) and player_roll "initiative". Never narrate the attack as pending.`];
+            meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and nothing happened: no start_combat, no player_roll. When the player attacks, that same turn: start_combat (the enemies by name) and player_roll "initiative". Never narrate the attack as pending.`];
             saveMeta();
             status.note('The DM let an attack go by: it has been told');
             await postNote(`⚠️ The DM didn't resolve that attack (no fight started, no roll asked). It has been told; say it again or end your turn.`);
-        }
-        // The player asked for a map and the DM didn't build one: the code does, from their own words.
-        if (triage.mapRequest && mapsOn() && !result.turn.build_place && !result.turn.enter_place && !signal.aborted) {
-            try { await buildFromRequest(triage.mapRequest, { status }); } catch (error) { status.note(`Map not built: ${error.message}`); }
         }
         // Their action is resolved: done with the turn, or more to do (movement, a bonus action)?
         const cb = c.docs.world.combat;
@@ -522,14 +379,6 @@ async function turnBody(c, opts, status, signal) {
                 saveDoc('world');
                 setTimeout(() => runTurn({ force: 'end_turn' }), 50);
             } else status.note('Your turn goes on: move or act, then end it');
-        }
-        // A guard has told the player to come along: go quietly, or not?
-        const asking = !signal.aborted && !c.docs.world.combat && !meta.pendingRoll ? seizerAsking(c) : null;
-        if (asking) {
-            const quiet = turnPromptsOn() ? await askGiveIn(asking.name, meta.persona.name) : false;
-            const went = await answerSeizer(c, asking, quiet);
-            if (went) setTimeout(() => runTurn({ force: 'explore', placeEvent: went }), 50);
-            else status.note(quiet ? `${asking.name} couldn't take you anywhere` : `${asking.name} comes after you`);
         }
         // A beat landed: the pressure ladder starts over from the bottom.
         if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
@@ -542,14 +391,10 @@ async function turnBody(c, opts, status, signal) {
             // A roll without a DM call can't happen (roll_result always calls the DM), but be safe.
             await postNote(rollResolution);
         }
-        await taskWalk;
         await localReplies(c, triage, playerText, status, signal);
-        await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal, { moved: taskWent ? [triage.task.who] : [] });
+        await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal);
     }
-    // A guard or local who saw the party this turn may say one short line through the local model.
-    if (!signal.aborted) await drainTalk();
 }
-
 
 /**
  * The start of each player turn: conditions that have run out come off, and anyone dying rolls their
@@ -589,103 +434,10 @@ async function deathSaves(c) {
     if (lines.length) { await postDiceCard(lines.join('\n'), { state: true }); refreshMap(); }
 }
 
-let mapSyncing = Promise.resolve();
-
-function queueMapSync(c, fromIndex) {
-    mapSyncing = mapSyncing.then(() => mapSync(c, fromIndex)).catch(error => console.warn('[Dungeon Master] map sync failed', error));
-}
-
-/**
- * After a turn, the story and the map are put back in step: a model (the local helper by default,
- * Haiku when there's no helper or the setting says so) reads what was just said next to what the
- * map shows and lists what's missing (a dog that burst out of a kennel, Judy walking over to it,
- * Judy ducking behind a crate, a door kicked in). Every change is checked against the real map in
- * code (core/mapsync.js) before anyone moves; party members walk there. Shown on a 🗺️ card.
- */
-async function mapSync(c, fromIndex) {
-    const s = settings();
-    const how = s.mapSync ?? 'local';
-    if (how === 'off' || campaign() !== c || !mapsOn() || c.docs.world.combat) return;
-    const said = ST.chat.slice(fromIndex).filter(m => m.mes && !m.is_user && !/^\s*(📜|🗺️|📈)/u.test(m.mes));
-    if (!said.length) return;
-    const ctx = syncContext(c);
-    if (!ctx) return;
-    const story = trimToTokens(said.map(m => `${m.name}: ${String(m.mes).replace(/<[^>]+>/g, ' ')}`).join('\n\n'), 1200, true);
-    const { system, user } = mapSyncPrompt({ ...ctx, story });
-    const local = how === 'local' && s.useHelper;
-    const raw = local
-        ? await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 400, profileId: s.helperProfileId })
-        : (await callClaude({ system, user, task: 'map_sync', maxTokens: 500, label: 'Map sync' })).text;
-    if (campaign() !== c) return;
-    const ops = parseMapSync(raw, ctx.known, { story });
-    if (!ops.length) return;
-    // Don't walk anyone while the player is mid-walk or a new turn is running: wait for it.
-    const log = await applyMapSync(c, ops);
-    if (!log.length) return;
-    saveDoc('world');
-    await postDiceCard(`🗺️ Map: ${log.join(' · ')}`, { state: true });
-    // Someone who just went for the party and is already on them: that's the next thing to rule on.
-    const sprung = takeTrapEvents();
-    if (sprung.length && !running) setTimeout(() => runTurn({ force: 'explore', placeEvent: sprung.join(' ') }), 50);
-}
-
-/**
- * The party walked a good way on the map (a dozen squares) without a chat turn: the world takes a
- * turn too. Fire spreads, patrols move, hunters close in, and the world's clock ticks. The DM is
- * called only when something happens, or when the world is due to act anyway.
- */
-async function movedTurn(c, status, signal) {
-    const meta = c.meta, pacing = meta.pacing;
-    status.note('You moved a good way: the world moves too');
-    await tickClock(c, 2, status);
-    let placeEvent = '';
-    const burned = await fireTurn(c, status);
-    if (burned) placeEvent = burned;
-    if (!pacing.inCombat) {
-        const spotted = tickPlace(c);
-        if (spotted.length) placeEvent = [placeEvent, `${spotted.map(g => `${g.name} (${g.description || 'a guard'}${g.down ? `, ${g.down === 'bound' ? 'tied up' : g.down}` : ''})`).join(' and ')} ${spotted.length > 1 ? 'come' : 'comes'} into view nearby. Decide whether they notice the party (roll for it) and what they do.`].filter(Boolean).join(' ');
-        const watched = watchTurn(c);
-        if (watched) placeEvent = [placeEvent, watched].filter(Boolean).join(' ');
-        const hunt = await huntersTurn(c);
-        if (hunt) placeEvent = [placeEvent, hunt].filter(Boolean).join(' ');
-        const kept = await custodyUpkeep(c).catch(error => { console.warn('[Dungeon Master] custody upkeep failed', error); return ''; });
-        if (kept) placeEvent = [placeEvent, kept].filter(Boolean).join(' ');
-        await playMoves(c);
-    }
-    refreshMap();
-    if (Number.isFinite(pacing.worldClock)) pacing.worldClock -= 1;
-    else pacing.localTurnsSinceDM++;
-    const b = budget();
-    const due = dmReasons({ pacing, triage: {}, eventDue: false, checkinEvery: Number(settings().checkinEvery) || 5, budgetBlocked: b.level === 'blocked', budgetTight: b.level === 'tight', lastDriftStageCalled: meta.lastDriftStageCalled }).filter(r => r === 'checkin');
-    // Roaming is quiet: the world's own pushes (events, pressure, check-ins) wait for the player's next
-    // message. Only something that happened on the map calls the DM here.
-    const reasons = placeEvent ? ['explore'] : [];
-    if (!reasons.length || b.level === 'blocked' || signal.aborted) return;
-    const here = currentPlace(c);
-    const lead = here?.place.state.positions[meta.persona.name];
-    const room = lead ? roomAt(here.place, lead.floor, lead.x, lead.y)?.name : '';
-    const event = [placeEvent, `The party has been moving about ${here?.place.name ?? 'the area'} on the map${room ? ` and is now in ${room}` : ''}.`].join(' ');
-    const model = modelFor(reasons, {});
-    const step = status.step(`DM is thinking (${modelLabel(model)}) · ${reasons.join(', ')}`);
-    try {
-        const result = await withDmThinking('The Dungeon Master is thinking', () => askDm({ reasons, placeEvent: event }, { signal, model }));
-        step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}`, result.usd);
-        await applyDmTurn(c, result.turn, status, signal, { reasons });
-        meta.stats.lastTurnUsd = result.usd;
-    } catch (error) {
-        step.fail(error);
-        if (error instanceof BudgetError) throw error;
-    }
-}
-
-/**
- * The companions in a fight around the player: with them (not away, not held somewhere else) and, on
- * a map, on the same floor and in sight or close by. A companion caged across the dungeon, or waiting
- * two floors up, is not in it: no initiative, no square beside the player, no turns.
- */
+/** The companions in a fight around the player: with them (not away). */
 export function fighters(c) {
-    const w = c.docs.world, here = currentPlace(c);
-    return c.meta.party.map(p => p.name).filter(n => !isAway(w, n) && (!here || inTheFight(here.place, c.meta.persona.name, n)));
+    const w = c.docs.world;
+    return c.meta.party.map(p => p.name).filter(n => !isAway(w, n));
 }
 
 /** The party members in the current fight (the player first). */
@@ -694,8 +446,8 @@ function fightParty(c) {
 }
 
 /**
- * Each round: a companion who wasn't in the fight but is now (freed from her cage, came down the
- * stairs, caught up) joins it: the code rolls her initiative and she takes her square. Returns lines.
+ * Each round: a companion who wasn't in the fight but is now (came back to the player) joins it:
+ * the code rolls her initiative and she takes a square beside the player. Returns lines.
  */
 function joinLateFighters(c) {
     const w = c.docs.world, meta = c.meta;
@@ -708,20 +460,15 @@ function joinLateFighters(c) {
         const r = roll(`1d20${mod >= 0 ? '+' : ''}${mod}`);
         addToInitiative(w, name, r?.total ?? 10);
         w.combat.party.push(name);
-        const here = currentPlace(c);
-        const p = here?.place.state.positions[name];
-        if (w.combat.map && p && w.combat.inPlace && p.floor === w.combat.inPlace.floor) w.combat.positions[name] = toCoord(p.x, p.y);
         lines.push(`${name} joins the fight: initiative **${r?.total ?? 10}**`);
     }
     return lines;
 }
 
-/** Who an attack is at: the DM's target, or someone its own words name, or (an enemy attacking) the player. */
 /**
  * Someone in the fight who isn't on its roster yet (they joined after it started, or the DM named
  * them for the first time): put them on it with their NPC stats when there are any (HP 10, AC 12
- * otherwise), roll their initiative in, and on a built map let them fight from where they stand.
- * Returns their name on the roster, or null (the party, nobody, or no fight).
+ * otherwise) and roll their initiative in. Returns their name on the roster, or null (the party, nobody, or no fight).
  */
 async function enemyHere(c, name, status = null) {
     const world = c.docs.world, meta = c.meta;
@@ -733,13 +480,9 @@ async function enemyHere(c, name, status = null) {
     if (known) return known;
     const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(clean)) ?? (c.docs.npcs || []).find(n => matchName(clean, [n.name]));
     const stats = String(npc?.stats || '');
-    const here = currentPlace(c);
-    const onMap = here ? personByName(here.place, npc?.name ?? clean) : null;
-    const hp = Number(/\bHP\s*(\d+)/i.exec(stats)?.[1]) || onMap?.hp || 10, ac = Number(/\bAC\s*(\d+)/i.exec(stats)?.[1]) || onMap?.ac || 12;
+    const hp = Number(/\bHP\s*(\d+)/i.exec(stats)?.[1]) || 10, ac = Number(/\bAC\s*(\d+)/i.exec(stats)?.[1]) || 12;
     const added = ensureEnemy(world, npc?.name ?? clean, { hp, ac, sprite: npc?.sprite || '' });
     if (!added) return null;
-    const g = here ? personByName(here.place, added) : null;
-    if (g) { g.hostile = true; g.state = 'alert'; if (world.combat.map) world.combat.positions[added] = toCoord(g.x, g.y); }
     status?.note(`${added} joins the fight (HP ${hp}, AC ${ac})`);
     await postDiceCard(`⚔️ **${added}** joins the fight: HP ${hp}, AC ${ac}, initiative ${world.combat.order.find(o => o.name === added)?.init ?? '?'}.`, { combat: true });
     saveDoc('world');
@@ -800,26 +543,22 @@ function queueBookkeeping(c, fromIndex) {
 }
 
 /**
- * After a turn, the local model reads what was just said (the DM's narration, companions' and NPCs'
- * replies) next to the tracked status, and fills in what the story says happened that isn't on the
- * books yet (someone passed out or can't walk, an item changed hands). Checked in code first (known
- * conditions, people who are here, nothing twice); shown on a 📜 card.
+ * After a turn, the local model reads what was just said (the DM's narration) next to the tracked
+ * status, and fills in what the story says happened that isn't on the books yet (someone passed out
+ * or can't walk, an item changed hands, coin paid). Checked in code first (known conditions, people
+ * who are here, nothing twice); shown on a 📜 card.
  */
 async function bookkeep(c, fromIndex) {
     const s = settings();
     if (!s.useHelper || s.bookkeeper === false || campaign() !== c) return;
-    // Only the DM's narration is evidence: what companions and NPCs say is the local model's own
-    // guesswork ("open the latch" doesn't open it), and enemies' and map people's state is the DM's.
+    // Only the DM's narration is evidence: what companions and NPCs say is the local model's own guesswork.
     const said = ST.chat.slice(fromIndex).filter(m => !m.is_user && m.mes && dmType(m) === 'narration');
     if (!said.length) return;
     const story = trimToTokens(said.map(m => `${m.name}: ${m.mes}`).join('\n\n'), 1200, true);
     const w = c.docs.world;
     const party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
-    // The people on the map near the party are on the books too: knocked out, tied up or asleep in the
-    // narration takes them out of it on the map.
-    const here = currentPlace(c);
-    const lead = here?.place.state.positions[c.meta.persona.name];
-    const present = here && lead ? Object.values(here.place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && g.floor === lead.floor && Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) <= 12).map(g => g.name) : [];
+    // The people of the scene are on the books too: knocked out, tied up or asleep in the narration.
+    const present = Object.keys(w.sceneCard?.people || {}).filter(n => !matchName(n, party));
     const own = n => w.inventory?.[matchName(n, Object.keys(w.inventory || {})) ?? ''] ?? [];
     const { system, user } = bookkeeperPrompt({
         status: party.map(n => ({ name: n, hp: w.party[n] ? `${w.party[n].hp}/${w.party[n].hp_max}` : '', conditions: conditionsOf(w, n), items: own(n) })),
@@ -837,153 +576,13 @@ async function bookkeep(c, fromIndex) {
         allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
     });
     if (!changes) return;
-    // The bookkeeper keeps to the party and to states the narration can plainly show (poisoned, prone,
-    // grappled...): never unconscious, dead, asleep, caged or cuffed, which the dice, the DM and the map own.
-    const tidy = tidyBookkeeping(changes, { party: [c.meta.persona.name, ...c.meta.party.map(p => p.name)] });
+    const tidy = tidyBookkeeping(changes, { party });
     if (!tidy) return;
-    // The one doing the holding isn't the one held: a keeper, or whoever has the player pinned, is never "grappled" by the books.
-    {
-        const holders = new Set([...Object.values(currentPlace(c)?.place.state.custody || {}).map(r => r.by), ...conditionsOf(w, c.meta.persona.name).map(x => x.match(/held (?:down )?by ([^)]+)\)?\s*$/i)?.[1]?.trim()).filter(Boolean)]);
-        for (const [who, list] of Object.entries(tidy.conditions_add || {})) {
-            if (!holders.has(who) && !matchName(who, [...holders])) continue;
-            const kept = (Array.isArray(list) ? list : [list]).filter(x => !/grappled|pinned|grabbed|held/i.test(String(x)));
-            if (kept.length) tidy.conditions_add[who] = kept; else delete tidy.conditions_add[who];
-        }
-    }
-    // "Grappled" or "pinned" on the player needs hands on them: someone beside them on the map (or a fight on). Words alone ("they seize your arms") hold nobody.
-    {
-        const me = c.meta.persona.name, list = tidy.conditions_add?.[me];
-        const here = currentPlace(c), pos = here?.place.state.positions[me];
-        if (list && here && pos && !w.combat) {
-            const near = [...Object.entries(here.place.state.positions).filter(([n]) => n !== me).map(([, p]) => p), ...Object.values(here.place.guards).filter(g => g.state !== 'gone' && g.state !== 'dead' && !g.down)].some(p => p && p.floor === pos.floor && Math.max(Math.abs(p.x - pos.x), Math.abs(p.y - pos.y)) <= 1);
-            if (!near) { const kept = (Array.isArray(list) ? list : [list]).filter(x => !/grappled|pinned|grabbed|held/i.test(String(x))); if (kept.length) tidy.conditions_add[me] = kept; else delete tidy.conditions_add[me]; }
-        }
-    }
-    Object.keys(changes).forEach(k => delete changes[k]);
-    Object.assign(changes, tidy);
-    const log = applyStateChanges(w, changes, c.meta.party.map(p => p.name), { turn: c.meta.turn });
+    const log = applyStateChanges(w, tidy, c.meta.party.map(p => p.name), { turn: c.meta.turn });
     if (!log.length) return;
     saveDoc('world');
-    syncDownFromConditions(c);
     await postDiceCard(`📜 Bookkeeping: ${log.join(' · ')}`, { state: true });
     refreshMap();
-}
-
-/**
- * Walking into a new room, a companion may go and look at something there on their own (about one
- * room in three): only if they haven't agreed to stick by the player's side, aren't hurt, held or
- * staying behind, and something there would catch their eye. They walk over, roll their own
- * Investigation (it can turn up a trap or something hidden in the room), and say what they found.
- * All local: the helper decides, the dice are code, the actor speaks. No Claude call.
- */
-export async function companionCuriosity(c, roomId) {
-    const s = settings();
-    const cur = currentPlace(c);
-    if (running || !cur || !s.useHelper || c.docs.world.combat || random01() > 1 / 3) return;
-    const { key, place } = cur;
-    const lead = place.state.positions[c.meta.persona.name];
-    const room = place.rooms[roomId];
-    if (!lead || !room) return;
-    const free = c.meta.party.map(p => p.name).filter(n => {
-        const p = place.state.positions[n];
-        return p && p.floor === lead.floor && roomAt(place, p.floor, p.x, p.y)?.id === roomId && !place.state.waiting?.[n] && c.meta.stance?.[n] !== 'close' && !lockedReason(c, n);
-    });
-    if (!free.length) return;
-    const name = free[Math.floor(random01() * free.length)];
-    const things = goTargets(c, name).filter(t => !/next door/.test(t.name));
-    if (!things.length) return;
-    setRunning(true);
-    const status = beginTurn(`${name} looks around`);
-    try {
-        const member = c.meta.party.find(p => p.name === name);
-        const system = 'You decide one thing about a character in a roleplay. Reply with JSON only.';
-        const user = [
-            `${name}: ${trimToTokens(member?.summary || '', 200)}`,
-            c.meta.standing ? `Right now: ${c.meta.standing}` : '',
-            `${name} just walked into ${room.name} with ${c.meta.persona.name}.${room.description ? ` ${trimToTokens(room.description, 120)}` : ''}`,
-            `Things here: ${things.map(t => `${t.id} = ${t.name}`).join('; ')}`,
-            `Would ${name}, being who they are, go and look at one of these on their own right now (curious, suspicious, drawn to it)? Most of the time they just stay with the group: only if one would really catch their eye.`,
-            'JSON: {"go": "the id, or empty", "why": "a few words"}',
-        ].filter(Boolean).join('\n');
-        const pick = extractJson(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 60, profileId: s.helperProfileId })) || {};
-        const thing = things.find(t => t.id === String(pick.go ?? '').trim());
-        if (!thing) { status.finish(`${name} stays with you`); return; }
-        const went = await companionGoTo(c, name, thing.id, { stay: false });
-        if (!went) { status.finish(`${name} stays with you`); return; }
-        // Their own check.
-        const stats = statsForName(name, c.meta);
-        const { mod } = lookupModifier(stats, { kind: 'check', skill: 'Investigation', ability: 'INT' });
-        const die = roll('1d20');
-        const total = (die?.total ?? 10) + mod;
-        await postDiceCard(`🎲 **${name}** · Investigation (looking at the ${went} on their own): d20 (${die?.natural ?? '?'}) ${formatModifier(mod)} = **${total}**`);
-        c.docs.rolls_log.push({ at: new Date().toISOString(), who: name, what: 'Investigation (on their own)', kind: 'check', natural: die?.natural ?? null, mod, total, dc: null, success: null });
-        saveDoc('rolls_log');
-        const search = searchForTraps(c, name, total, { dc: 12 });
-        // Something hidden in this room turns up for a good look.
-        const items = total >= 12 ? Object.values(place.items).filter(i => i.room === roomId && i.state !== 'taken' && !i.found) : [];
-        for (const i of items) i.found = true;
-        if (items.length) savePlace(key, c);
-        if (search?.found.length) { await postNote(`⚠️ ${name} spots: ${search.found.join(', ')}.`); refreshMap(); }
-        const found = [...items.map(i => i.name), ...(search?.found ?? [])];
-        const brief = `You went over to look at the ${went} on your own (${String(pick.why || 'it caught your eye').slice(0, 80)}). Your Investigation roll was ${total}. ${found.length ? `You found: ${found.join(', ')}. ` : 'You found nothing special. '}Say it to ${c.meta.persona.name} in a line or two, in character.`;
-        const step = status.step(`${name} is responding`);
-        await makeSpeak(name, brief, { signal: new AbortController().signal, length: 'short' });
-        step.done();
-        status.finish(`${name} looked at the ${went}`);
-    } catch (error) {
-        console.warn('[Dungeon Master] companion curiosity failed', error);
-        status.finish('');
-    } finally {
-        setRunning(false);
-        runQueuedTurn();
-    }
-}
-
-/**
- * You came back to a companion you'd left (or walked in on one who's locked up), or walked away
- * from one who's staying. Each one decides, in character, whether they'd say anything right now
- * (local model; often they won't); if so they speak, all locally (no Claude call): asking what you
- * found, begging to be let out, telling you to be careful.
- * list: [{name, kind: 'back' | 'held' | 'left' | 'left-held', room, since?, turns?, why?, refused?}]
- */
-export async function companionsSeeYou(c, list) {
-    const s = settings();
-    if (running || !s.useHelper || c.docs.world.combat || !list.length) return;
-    setRunning(true);
-    const player = c.meta.persona.name;
-    const status = beginTurn('Your companions');
-    try {
-        for (const g of list.slice(0, 2)) {
-            const member = c.meta.party.find(p => p.name === g.name);
-            if (!member) continue;
-            const moment = g.kind === 'back' ? `${player} just came back to ${g.room || 'where you were'}, where you stayed behind${g.turns > 0 ? ` (${g.turns} turn${g.turns > 1 ? 's' : ''} ago)` : ''}${g.since?.length ? `; since leaving you they went through ${g.since.slice(-4).join(', ')}` : ''}. You're coming along with them again.`
-                : g.kind === 'held' ? `${player} just walked into ${g.room || 'the room'} where you are locked up${g.why ? ` (${g.why.replace(/\s*\(on the map:.*\)$/, '')})` : ''}. You can't get out by yourself.`
-                    : g.kind === 'left-held' ? `${player} is walking out of ${g.room || 'the room'} and leaving you here, still locked up.`
-                        : `${player} is walking out of ${g.room || 'the room'}; you're staying here${g.refused ? ' (your choice)' : ''}.`;
-            // Would they say anything? Often not.
-            const decide = [
-                `${g.name}: ${trimToTokens(member.summary || '', 200)}`,
-                c.meta.standing ? `Right now: ${c.meta.standing}` : '',
-                `Moment: ${moment}`,
-                `Would ${g.name}, being who they are, say something to ${player} right now? Only if it fits: someone left alone a short while may just nod; someone trapped and desperate will call out. Reply JSON: {"speak": true or false, "what": "a few words: what they'd want to say"}`,
-            ].filter(Boolean).join('\n');
-            const pick = extractJson(await callLocal({ system: 'You decide one thing about a character in a roleplay. Reply with JSON only.', messages: [{ role: 'user', content: decide }], maxTokens: 60, profileId: s.helperProfileId })) || {};
-            if (!(pick.speak === true || pick.speak === 'true')) { status.note(`${g.name} says nothing`); continue; }
-            const brief = g.kind === 'back' ? `${moment} React in a line or two, in character${g.since?.length ? ': ask what they found or what happened, if you would' : ''}. You want to say: ${String(pick.what || '').slice(0, 100)}.`
-                : g.kind === 'held' ? `${moment} React in character, a line or two: plead with ${player} to get you out, tell them anything you know that would help (who has the key, how the lock works). You want to say: ${String(pick.what || '').slice(0, 100)}.`
-                    : `${moment} Say one short line as they go, in character. You want to say: ${String(pick.what || '').slice(0, 100)}.`;
-            const step = status.step(`${g.name} speaks`);
-            await makeSpeak(g.name, brief, { signal: new AbortController().signal, length: 'short' });
-            step.done();
-        }
-        status.finish('');
-    } catch (error) {
-        console.warn('[Dungeon Master] companion reaction failed', error);
-        status.finish('');
-    } finally {
-        setRunning(false);
-        runQueuedTurn();
-    }
 }
 
 /** Rewrite a companion's sheet for a new level and keep their HP in step. */
@@ -1033,7 +632,7 @@ function summarizeTurn(t) {
  * else a companion who is with the player. Companions who split off never answer.
  */
 function localSpeakers(c, triage, playerText) {
-    const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n })).filter(n => talkRange(c, n) === 'near'); // nobody a conversation away chimes in on their own
+    const candidates = speakerCandidates().filter(n => !isBeast((c.docs.npcs || []).find(x => x.name === n) ?? { name: n }));
     if (!candidates.length) return [];
     if (triage.speakers?.length) return triage.speakers.filter(n => candidates.includes(n));
     if (triage.helperChoseSpeakers) return [];
@@ -1048,7 +647,7 @@ function localSpeakers(c, triage, playerText) {
  * pocket, sneaking off, lying. Then the DM rules on it with a roll, like for the player.
  * Only free replies are checked; replies the DM directed were already ruled on.
  */
-async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } = {}) {
+async function ruleOnCompanionAttempts(c, names, status, signal) {
     const s = settings();
     if (!s.useHelper) return;
     for (const name of names) {
@@ -1056,20 +655,11 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
         const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
         if (!msg?.mes) continue;
         let attempt;
-        // Already walked where the player told them: don't move them again.
-        const places = c.docs.world.combat || moved.includes(name) ? [] : goTargets(c, name);
         try {
-            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}`, places, player: c.meta.persona.name, askStance: Boolean(currentPlace(c)) && !c.docs.world.combat });
-            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }), places, msg.mes);
+            const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: `${c.docs.world.location || 'unknown'}; ${c.meta.standing || ''}` });
+            attempt = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 100, profileId: s.helperProfileId }));
         } catch {
             continue;
-        }
-        // Coming along, sticking close, or staying behind: what they said in their reply.
-        if (askedToWait(c, name)) await setStance(c, name, 'stay', status);
-        else if (attempt.stance && !attempt.go) await setStance(c, name, attempt.stance, status);
-        if (attempt.go && !signal.aborted) {
-            const went = await companionGoTo(c, name, attempt.go, { hide: attempt.hide, pose: attempt.pose });
-            if (went) status.note(attempt.hide ? `${name} hides ${went}` : `${name} goes to ${went} and stays there`);
         }
         if (!attempt.attempt || signal.aborted) continue;
         const reasons = ['companion_action'];
@@ -1087,77 +677,6 @@ async function ruleOnCompanionAttempts(c, names, status, signal, { moved = [] } 
     }
 }
 
-
-/** A keeper's own reply sets how she holds her prisoner (the referee reads it): "stay put" is guard mode, "lead on" is companion mode. */
-async function companionKeeps(c, name, status, signal) {
-    if (signal?.aborted) return;
-    await custodyOnKeeperReply(c, name, status);
-}
-
-/** "Wait here, Judy. I'll be back" (the player's words, or the map's menu) and no refusal in her reply: she stays. Her own words still rule a refusal. */
-function askedToWait(c, name) {
-    const asked = String(lastPlayerMessage() || '').replace(/[*_~`]/g, ' ');
-    if (!/\b(?:wait|stay) (?:here|there|put|behind|right here|by the \w+)\b|\b(?:wait|stay) for me\b|\bdon'?t (?:follow|come)\b/i.test(asked)) return false;
-    const first = name.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (c.meta.party.length > 1 && !new RegExp(`\\b${first}\\b`, 'i').test(asked)) return false;
-    const reply = String([...ST.chat].reverse().find(m => !m.is_user && m.name === name)?.mes || '').replace(/[*_~`]/g, ' ');
-    return !/\b(?:no\b|not (?:a chance|staying|waiting|leaving you|letting you)|like hell|i'?m (?:coming|with you|not staying|not waiting)|right behind you|wherever you go|not on your life|forget it)\b/i.test(reply);
-}
-
-/** "Amber hauls Judy up onto her feet": a companion on the ground, hands free and awake, is up by the player's own hand (no roll). */
-async function playerHelpsUp(c, text, status) {
-    const w = c.docs.world;
-    const t = String(text || '').replace(/[*_~`]/g, ' ');
-    for (const m of c.meta.party) {
-        const conds = conditionsOf(w, m.name);
-        if (!conds.some(x => /^prone\b/i.test(String(x))) || /unconscious|knocked out|dead/i.test(conds.join(' '))) continue;
-        const first = m.name.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (!new RegExp(`\\b(?:helps?|hauls?|pulls?|drags?|lifts?|hoists?|heaves?|gets?)\\s+${first}\\b[^.!?]{0,30}?\\b(?:up|upright|(?:to|onto) (?:her|his|their) feet)\\b`, 'i').test(t)) continue;
-        applyStateChanges(w, { conditions_remove: { [m.name]: ['prone'] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
-        saveDoc('world');
-        syncDownFromConditions(c);
-        await postNote(`📜 ${m.name} is up (−prone): ${c.meta.persona.name} helped them to their feet.`);
-        status.note(`${m.name} helped up`);
-    }
-}
-
-/** "Judy rises from the grass": a companion on the ground whose hands are free gets up by their own words (no roll); cuffed, caged or held, they need the roll. */
-async function companionGetsUp(c, name, status) {
-    const w = c.docs.world;
-    const conds = conditionsOf(w, name);
-    if (!conds.some(x => /^prone\b/i.test(String(x)))) return;
-    const r = restraintOf(conds);
-    if (r.bound || r.caged || /grappled|pinned/i.test(conds.join(' '))) return;
-    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
-    if (!msg?.mes || !/\b(?:rises?|rising|gets? (?:back )?up|getting up|scrambles? (?:up|upright|to (?:her|his|their) feet)|stands? up|standing up|pushes? (?:herself|himself|themselves) up|(?:back )?(?:on|to) (?:her|his|their) feet|hauls? (?:herself|himself|themselves) up(?:right)?)\b/i.test(msg.mes)) return;
-    applyStateChanges(w, { conditions_remove: { [name]: ['prone'] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
-    saveDoc('world');
-    syncDownFromConditions(c);
-    await postNote(`📜 ${name} gets up (−prone, from their own words).`);
-    status.note(`${name} gets up`);
-}
-
-/** After a companion's reply (the DM's brief or their own): if they said they go somewhere, they walk there on the map. */
-async function companionMovesOnMap(c, name, status, signal) {
-    const s = settings();
-    if (!s.useHelper || c.docs.world.combat || !c.meta.party.some(p => p.name === name)) return;
-    const places = goTargets(c, name);
-    if (!currentPlace(c)) return;
-    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
-    if (!msg?.mes) return;
-    try {
-        const { system, user } = companionActionPrompt({ name, message: trimToTokens(msg.mes, 500), scene: c.docs.world.location || '', places, askAttempt: false, player: c.meta.persona.name, askStance: true });
-        const { go, hide, pose, stance } = parseCompanionAction(await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 80, profileId: s.helperProfileId }), places, msg.mes);
-        if (askedToWait(c, name)) await setStance(c, name, 'stay', status);
-        else if (stance && !go) await setStance(c, name, stance, status);
-        if (!go || signal.aborted) return;
-        const went = await companionGoTo(c, name, go, { hide, pose });
-        if (went) status.note(hide ? `${name} hides ${went}` : `${name} goes to ${went} and stays there`);
-    } catch (error) {
-        console.warn('[Dungeon Master] companion move check failed', error);
-    }
-}
-
 /** No DM this turn: the right character(s) answer locally. */
 async function localReplies(c, triage, playerText, status, signal) {
     const speakers = localSpeakers(c, triage, playerText);
@@ -1169,34 +688,10 @@ async function localReplies(c, triage, playerText, status, signal) {
         try {
             await makeSpeak(sp, '', { signal });
             step.done();
-            await companionDrinks(c, sp, status);
-            await companionGetsUp(c, sp, status);
-            await companionKeeps(c, sp, status, signal);
-            await companionMovesOnMap(c, sp, status, signal);
         } catch (error) {
             step.fail(error);
         }
     }
-}
-
-/** A companion's own words say she drinks a potion she carries (outside a fight; in one her choices do it): HP up by the code, once, and the potion is gone. */
-async function companionDrinks(c, name, status) {
-    if (c.docs.world.combat || !c.meta.party.some(p => p.name === name)) return;
-    const msg = [...ST.chat].reverse().find(m => !m.is_user && m.name === name);
-    const text = String(msg?.mes || '');
-    if (!/\b(?:drinks?|downs?|gulps?|swallows?|quaffs?|drains?|uncorks?|knocks? back)\b[^.!?]{0,40}\b(?:potion|elixir|draught|philt\w*|vial|flask|tonic)\b/i.test(text)) return;
-    const w = c.docs.world;
-    const item = (w.inventory?.[name] || []).find(i => /potion|elixir|philt|draught|tonic/i.test(i));
-    if (!item || !w.party[name]) { status.note(`${name} drinks a potion she doesn't carry: nothing happens`); return; }
-    const dice = /superior/i.test(item) ? '8d4+8' : /greater/i.test(item) ? '4d4+4' : '2d4+2';
-    const r = roll(dice);
-    if (!r) return;
-    const line = changeHp(w, name, r.total, [c.meta.persona.name, ...c.meta.party.map(p => p.name)]);
-    applyStateChanges(w, { items_remove: { [name]: [item] } }, c.meta.party.map(p => p.name), { turn: c.meta.turn });
-    saveDoc('world');
-    await postDiceCard(`🧪 **${name}** drinks the ${item}: **+${r.total}** HP${line ? ` (${line})` : ''}.`, { state: true });
-    noteMapAction(c, `${name} drank the ${item} (+${r.total} HP by the code, from her own words; the potion is gone)`);
-    status.note(`${name} drank the ${item}: +${r.total} HP`);
 }
 
 /** Ask the player for a roll: the card, and from here on their dice are read automatically. */
@@ -1246,8 +741,6 @@ async function resolvePlayerRoll(c, parsed, status) {
         const noticed = matchName(meta.persona.name, [pr.spot.seer]) ? judged.success : !judged.success;
         noteSeen(c.docs.world, pr.spot.seer, pr.spot.seen, noticed);
         saveDoc('world');
-        const here = currentPlace(c);
-        if (here && markNoticed(here.place, pr.spot.seer, pr.spot.seen, noticed)) savePlace(here.key, c);
     }
     const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
     const flair = natural === 20 ? ' — **natural 20!**' : natural === 1 ? ' — natural 1…' : '';
@@ -1275,7 +768,6 @@ async function resolvePlayerRoll(c, parsed, status) {
         }
     }
     status.note(`You rolled ${total}${mark ? ` ${mark}` : ''}`);
-    // A grab: a miss means cuffs and the cell; a slip means the chase goes on (the third, a fight).
     let saveHurt = afterInit;
     // A hit: the damage roll is asked for right away (the DM used to forget).
     if (pr.kind === 'attack' && judged.success === true) {
@@ -1284,48 +776,6 @@ async function resolvePlayerRoll(c, parsed, status) {
             await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: normalizeNotation(dice) || dice, half: false, bonus: null, spot: null, target: playerTarget(c, pr) });
             saveHurt += ` The code has already asked ${meta.persona.name} to roll damage (${dice}): don't ask again; narrate the hit and wait for the total.`;
         }
-    }
-    if (pr.grab) {
-        const settled = await settleGrab(c, pr, judged.success === true);
-        if (settled) saveHurt += ` ${settled}`;
-    }
-    if (pr.custody) {
-        const settled = await settleCustody(c, pr, judged.success === true);
-        if (settled) saveHurt += ` ${settled}`;
-    }
-    if (pr.trip) {
-        const settled = await settleTrip(c, pr, judged.success === true);
-        if (settled) saveHurt += ` ${settled}`;
-    }
-    if (pr.hide) {
-        const settled = await settleHide(c, pr, judged.success === true);
-        if (settled) saveHurt += ` ${settled}`;
-    }
-    // Something the DM had break or come open on this roll (the crate, the door): now, and only on a success.
-    if (pr.then?.place_changes) {
-        const here = currentPlace(c);
-        if (here && judged.success === true) {
-            const log = applyPlaceChanges(here.place, pr.then.place_changes, { floor: here.place.state.floor, turn: meta.turn, stealth: withAt(stealthOf(meta), here.place) });
-            savePlace(here.key, c);
-            refreshMap();
-            if (log.length) { status.note(`Map: ${log.join(', ')}`); saveHurt += ` The map now: ${log.join(', ')}.`; }
-        } else if (here) saveHurt += ' Nothing on the map broke or came open: the roll failed, so it held.';
-    }
-    // Throwing your weight at a door or a cage and failing is still a noise (unless your Stealth this turn covers it): whoever is near hears it.
-    if (pr.kind === 'check' && judged.success === false && /\b(?:force|forces|forcing|bash|break|smash|kick|shoulder|batter|pry|ram|throws? (?:his|her|their|your) weight)\b/i.test(`${pr.reason || ''} ${pr.skill || ''}`)) {
-        const here = currentPlace(c);
-        const me = here?.place.state.positions[meta.persona.name];
-        if (here && me) {
-            const heard = makeNoise(here.place, me.floor, me.x, me.y, { what: `${meta.persona.name} heaving at something and failing`, loud: 1, stealth: withAt(stealthOf(meta), here.place), turn: meta.turn });
-            savePlace(here.key, c);
-            saveHurt += heard.length ? ` The failed attempt was loud: heard by ${heard.join(', ')} (alert now; decide what they do).` : ' Nobody near enough, or awake enough, heard the failed attempt.';
-        }
-    }
-    // Caught in a trap: a save or a check that works gets you loose (whichever the DM asked for).
-    if ((pr.kind === 'save' || pr.kind === 'check') && judged.success === true && freeFromTrap(c, meta.persona.name)) {
-        await postNote(`🪤 ${meta.persona.name} gets loose!`);
-        saveHurt += ` ${meta.persona.name} got loose from the trap.`;
-        refreshMap();
     }
     // A save with damage: the code takes the HP off (all on a failure, half on a success if it says so).
     if (pr.kind === 'save' && pr.damage) {
@@ -1338,9 +788,6 @@ async function resolvePlayerRoll(c, parsed, status) {
             saveHurt = ` The code already applied ${hurt.total} damage${hurt.half ? ' (half, for the success)' : ''}: ${line || 'done'}. Don't apply it again.`;
         }
     }
-    const search = pr.kind !== 'damage' && /perception|investigation|search/i.test(`${pr.skill} ${pr.reason || ''}`) ? searchForTraps(c, meta.persona.name, total, { dc: pr.dc }) : null;
-    if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${meta.persona.name} spots: ${search.found.join(', ')}.`); refreshMap(); }
-    const searchText = search ? ` Searching with that roll (${search.radius ? `${search.radius} squares around them` : 'a failed roll: nothing'}), the code revealed: ${search.found.length ? search.found.join(', ') : 'no traps'} (traps the roll didn't beat stay hidden; say nothing about them).` : '';
     if (pr.kind === 'damage') {
         const cap = diceMax(pr.damage);
         if (cap && total > cap) { await postNote(`⚠️ ${total} is more than ${pr.damage} can roll: ${cap} taken.`); total = cap; }
@@ -1357,7 +804,7 @@ async function resolvePlayerRoll(c, parsed, status) {
         }
         return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
     }
-    return searchText + saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
+    return saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
 }
 
 /**
@@ -1422,33 +869,26 @@ function outcomeText(r, judged, noticed = null) {
     return text ? ` → ${text}` : '';
 }
 
-/** Apply everything the DM decided, in a sensible order. */
-/**
- * A fight the DM didn't start: someone rolled an attack. The enemies are whoever attacks the party
- * and whoever the party attacks, with their stats from the NPC list when the DM gave them.
- */
-/**
- * Anyone in the fight at 0 HP is dead: killed on the map (a body for a moment, then gone for good),
- * dead in the roster, and the body clear is scheduled. The DM narrates a death, never a knockout.
- */
+/** Anyone in the fight at 0 HP is dead: out of the order, dead in the roster. The DM narrates a death, never a knockout. */
 function fallenInFight(c) {
     const world = c.docs.world;
     if (!world.combat) return;
-    const here = currentPlace(c);
     let any = false;
     for (const [name, e] of Object.entries(world.combat.enemies || {})) {
         if (!(e.hp <= 0) || e.dead) continue;
         e.dead = true;
         any = true;
-        const pname = world.combat.aliases?.[name] ?? name;
-        if (here) { killPerson(here.place, pname, c.meta.turn); syncMounts(here.place); }
         dropFallen(world);
-        const npc = (c.docs.npcs || []).find(x => nameKey(x.name) === nameKey(pname) || nameKey(x.name) === nameKey(name));
+        const npc = (c.docs.npcs || []).find(x => nameKey(x.name) === nameKey(name));
         if (npc) npc.dead = true;
     }
-    if (any) { if (here) savePlace(here.key, c); saveDoc('npcs'); scheduleBodyClear(c); }
+    if (any) saveDoc('npcs');
 }
 
+/**
+ * A fight the DM didn't start: someone rolled an attack. The enemies are whoever attacks the party
+ * and whoever the party attacks, with their stats from the NPC list when the DM gave them.
+ */
 export function combatFromAttacks(c, t) {
     const partyNames = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
     const inParty = n => Boolean(matchName(String(n || ''), partyNames));
@@ -1457,6 +897,7 @@ export function combatFromAttacks(c, t) {
     const foes = new Map();
     const add = n => { const name = String(n || '').trim(); if (name && !inParty(name) && !foes.has(nameKey(name))) foes.set(nameKey(name), name); };
     for (const r of attacks) inParty(r.who) ? add(r.target) : add(r.who);
+    if (t.player_roll?.kind === 'attack') add(t.player_roll.target);
     const enemies = [...foes.values()].map(name => {
         const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
         const stats = String(npc?.stats || '');
@@ -1465,24 +906,35 @@ export function combatFromAttacks(c, t) {
     return { enemies, map: null };
 }
 
+/** Redraw the sketch of the scene from the scene card (the story is the truth; this is its picture). */
+function redrawSketch(c) {
+    const world = c.docs.world, meta = c.meta;
+    if (!mapsOn()) { world.sketch = null; return; }
+    world.sketch = buildSketch(world.sceneCard, {
+        world,
+        player: meta.persona.name,
+        party: meta.party.map(p => p.name),
+        away: meta.party.map(p => p.name).filter(n => isAway(world, n)),
+        previous: world.sketch,
+        npcs: (c.docs.npcs || []).map(n => n.name),
+    });
+}
+
+/** Apply everything the DM decided, in a sensible order. */
 export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [], quiet = false } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
-    // What the DM asked for that the code had to drop (a name nobody has, an id that isn't there): the
-    // player sees it, and the DM is told next turn, instead of a claim the tracker doesn't show.
+    // What the DM asked for that the code had to drop (a name nobody has): the player sees it, and the
+    // DM is told next turn, instead of a claim the tracker doesn't show.
     const problems = [];
     // Things the DM is told next turn without a warning to the player (the code already did the right thing).
     const dmOnly = [];
-    // Bound or held before this turn's changes: when the restraints come off, custody ends (custodyFreed).
-    const boundBefore = boundNow(c);
     // The DM's own tics ("wrists still locked behind you", nine turns running): named, so they stop.
     const dmTics = repeatedPhrases(recentRepliesOf(DM_NAME, 6), { exclude: [meta.persona.name, ...meta.party.map(p => p.name)] });
     if (dmTics.length) dmOnly.push(`You've repeated these in your last turns: ${dmTics.map(p => `"${p}"`).join(', ')}. Say it differently or leave it out: a standing fact (cuffed hands, the dark, a danger ahead) is stated once, when it changes or matters, not every turn.`);
     // A roll the DM asked the player to make for a companion ("Judy's DEX save"): the code rolls it for
     // the companion, in the open, like any npc roll. The player rolls only their own.
     if (t.player_roll && (t.player_roll.kind === 'save' || t.player_roll.kind === 'check')) {
-        const said = nameKey(`${t.player_roll.reason} ${t.player_roll.skill}`);
-        const first = n => nameKey(n).split(' ')[0];
         const rawSaid = `${t.player_roll.reason} ${t.player_roll.skill}`.toLowerCase();
         const forWhom = rollBelongsTo(rawSaid, meta.persona.name, meta.party.map(p => p.name));
         if (forWhom) {
@@ -1493,17 +945,16 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             t.player_roll = null;
         }
     }
-    // Maps off: anything about maps in the DM's answer is ignored (the story stays in the chat).
+    // Maps off: nothing about squares in the DM's answer is used (the story stays in the chat).
     if (!mapsOn()) {
-        Object.assign(t, { build_place: null, enter_place: '', scene_map: null, place_changes: null, map_effects: null, positions: {}, escort: null, dashing: [], free_move: [] });
+        Object.assign(t, { positions: {}, dashing: [], free_move: [] });
         if (t.start_combat) t.start_combat.map = null;
     }
 
-    // New NPCs (with voices).
+    // New NPCs (with voices). A shop or a candlestick is never one.
     if (t.new_npcs.length) {
-        const herePlace = currentPlace(c)?.place ?? null;
-        const things = t.new_npcs.filter(n => notAPerson(herePlace, n?.name));
-        if (things.length) status.note(`Not people, not added: ${things.map(n => n.name).join(', ')}`);
+        const things = t.new_npcs.filter(n => notAPersonEntry(n));
+        if (things.length) { status.note(`Not people, not added: ${things.map(n => n.name).join(', ')}`); problems.push(`new_npcs dropped ${things.map(n => `"${n.name}"`).join(', ')}: a place or a thing is never an NPC (it belongs in the scene card's place or objects)`); }
         const added = addNpcs(c.docs.npcs, t.new_npcs.filter(n => !things.includes(n)), t.scene?.location || world.location);
         for (const npc of added) {
             npc.voice = pickNpcVoice(npc, c.docs.npcs);
@@ -1528,15 +979,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     // Scene.
     const prevLocation = world.location;
-    // Inside a built place the location IS the place: a room name the DM sends would make every NPC
-    // "elsewhere" and wipe the scene card. Rooms are tracked by the map. Leaving or moving on still counts.
-    const stayingInside = Boolean(currentPlace(c)) && !t.leave_place && !t.build_place && !t.enter_place;
     if (t.scene) {
-        if (t.scene.location && stayingInside && nameKey(t.scene.location) !== nameKey(world.location)) { status.note(`Location stays ${world.location} (the map tracks the room)`); t.scene.location = world.location; }
         if (t.scene.location) world.location = t.scene.location;
         if (t.scene.setting) world.setting = guessSetting(world.location, t.scene.setting);
-        const hereNow1 = currentPlace(c);
-        if (t.scene.changed && t.scene.location && hereNow1 && !hereNow1.place.parent && !t.build_place && !t.enter_place && !t.leave_place && nameKey(t.scene.location) !== nameKey(hereNow1.place.name) && !nameKey(hereNow1.place.name).includes(nameKey(t.scene.location)) && !nameKey(t.scene.location).includes(nameKey(hereNow1.place.name))) problems.push(`scene.location changed to "${t.scene.location}" but the party is still on the map of ${hereNow1.place.name}: the story moved and the map didn't. Send the move with it: leave_place (travel), enter_place (a map in the ATLAS) or build_place (a new place).`);
         // The time of day is the clock's, not the scene's: a DM that says "morning" at night is ignored (it skips time with "clock").
         if (t.scene.time && !new RegExp(String(world.time), 'i').test(t.scene.time)) status.note(`Time stays ${world.time} (the clock keeps it; use "clock" to skip ahead)`);
     }
@@ -1544,26 +989,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     const newPlace = Boolean(t.scene?.location && prevLocation && nameKey(t.scene.location) !== nameKey(prevLocation));
     const newScene = newPlace || Boolean(t.scene?.changed);
     world.sceneCard = applySceneCard(world.sceneCard, t.scene_card, { newPlace, partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
+    if (newPlace && !t.scene_card) dmOnly.push(`the party moved to "${t.scene.location}" and you sent no scene_card: send the full card for the new place (place, people with spots, objects) so the companions and the sketch know where everyone is.`);
     // Who split off from the player, and who is back.
     applyPresence(world, meta.party.map(p => p.name), t.party_away, t.party_back);
-    // Back with the player: no longer held or waiting anywhere on the map.
-    const herePlace = currentPlace(c);
-    if (herePlace && t.party_back.length) {
-        for (const n of t.party_back) { const m = matchName(n, meta.party.map(p => p.name)); if (m) { delete herePlace.place.state.waiting?.[m]; delete herePlace.place.state.held?.[m]; } }
-    }
-    // A companion who is with the player (arrived, or there from the start) and has no figure on the map gets one beside them.
-    if (herePlace && !world.combat) {
-        const lead = herePlace.place.state.positions[meta.persona.name];
-        for (const n of meta.party.map(p => p.name)) {
-            if (!lead || isAway(world, n) || herePlace.place.state.positions[n]) continue;
-            const spot = freeNear(herePlace.place, lead.floor, lead.x, lead.y);
-            if (spot) { herePlace.place.state.positions[n] = { floor: lead.floor, ...spot }; status.note(`${n} is on the map beside ${meta.persona.name}`); }
-        }
-        savePlace(herePlace.key, c);
-    }
-    // Taken somewhere in this place (caged in the dungeon): they're put in a real room to find.
-    const held = placeHeld(c);
-    if (held.length) status.note(`${held.join(', ')} put on the map where the story keeps them`);
     // NPCs who get briefs are "here".
     for (const d of t.directions) {
         const npc = c.docs.npcs.find(n => nameKey(n.name) === nameKey(d.speaker));
@@ -1580,56 +1008,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     fallenInFight(c);
-    syncDownFromConditions(c);
-    // What the story did to the player is a condition whether or not the DM sent it: knocked down is prone, cuffed is cuffed, tied is tied (the code owns the facts; the DM is told).
-    {
-        const player = meta.persona.name;
-        const text = `${t.narration || ''} ${t.scene_card ? JSON.stringify(t.scene_card.people?.[player] ?? '') : ''}`;
-        const have = conditionsOf(world, player).join(' ').toLowerCase();
-        const adds = [];
-        const opening = reasons.includes('opening');
-        if (!/prone|fallen|on the ground|unconscious|dead/.test(have) && /\b(?:you(?:'re| are)? (?:face ?down|flat on your back|on the ground|sprawl(?:ed|ing)?|knocked (?:down|flat|off your feet)|thrown (?:down|to the ground)|down in the (?:dirt|mud|grass|snow))|(?:tackles?|trips?|knocks?|throws?|slams?|shoves?|drives?|puts?) you (?:down|to the ground|flat|off your feet|into the (?:dirt|mud|ground))|knee in your back|face ?down in the (?:dirt|mud|grass|snow)|you (?:hit|go) (?:the ground|down hard))\b/i.test(text)) adds.push('prone');
-        if (!/cuff|manacle|shackl|irons/.test(have) && /\b(?:cuffs? (?:click|snap|close|lock|bite|go) [^.]{0,30}?(?:your|around your) wrists?|cuffs? you\b|cuffed your|(?:puts?|snaps?|locks?|clamps?) (?:the )?(?:cuffs|manacles|irons) (?:on|around) (?:you|your wrists?))\b/i.test(text)) adds.push('cuffed');
-        // The opening says they're already bound ("the cuffs are cold on your wrists"): a standing fact, the books' from the start.
-        if (opening && !/cuff|manacle|shackl|irons|tied|restrained|rope/.test(have)) for (const w of standingRestraints(text)) if (!adds.includes(w)) adds.push(w);
-        // Hands free (the cuffs came off) but the narration still has them bound: the DM is reminded, and nothing re-cuffs them but a new arrest.
-        if (!opening && !/cuff|manacle|shackl|irons|tied|restrained|rope|grappled|pinned/.test(have) && /\b(?:your (?:cuffed|bound|tied|shackled|manacled) (?:wrists?|hands?|arms?)|your (?:wrists?|hands?|arms?) (?:are |still |remain )*(?:cuffed|bound|tied|shackled|manacled|locked) (?:behind|together|at your back)|(?:cuffs|manacles|irons|ropes?) (?:still )?(?:on|around|at) your (?:wrists?|hands?)|(?:wrists?|hands?) (?:still )?(?:locked|cuffed|bound|tied) behind (?:you|your back))\b/i.test(t.narration || '')) dmOnly.push(`${player}'s hands are FREE: the cuffs (or rope) came off and the state shows no restraint, yet your narration still has them bound. Write them with free hands from now on; nothing you narrate re-cuffs them (that takes a new arrest in the story, sent with conditions_add).`);
-        if (!/restrain|tied|bound|rope/.test(have) && /\b(?:ties? (?:you(?:r hands| up)|your wrists)|binds? your (?:hands|wrists)|rope (?:around|round) your wrists|you(?:'re| are) (?:tied up|bound hand and foot|trussed))\b/i.test(text)) adds.push('restrained (rope)');
-        // Held down: a knee on your back, someone sitting on you, pinning you. Who, when the words say.
-        const pinWords = /\b(?:knee (?:in|on|between|against|into) your (?:back|spine|shoulder|shoulders|shoulder blades|neck)|pins? you (?:down|flat|to the ground)?|holds? you (?:down|flat|still)|holding you (?:down|flat)|sits? on (?:you|your back)|sitting on (?:you|your back)|weight (?:on|across|settles on) your back|kneel(?:s|ing)? on (?:you|your back))\b/i;
-        if (!/pinned|grappled|held down/.test(have) && pinWords.test(text)) {
-            // Who: named in the sentence that pins them (not anyone named elsewhere in the turn); failing that, whoever stands beside them.
-            const sentence = text.split(/(?<=[.!?])\s+/).find(x => pinWords.test(x)) || text;
-            const inSentence = n => new RegExp(`\\b${n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(sentence);
-            const herePlace = currentPlace(c)?.place ?? null;
-            const adjacent = () => {
-                const w = c.docs.world;
-                const at = n => (w.combat?.map && w.combat.positions?.[n] ? parseCoord(w.combat.positions[n], w.combat.map) : herePlace?.state.positions[n] ?? (herePlace ? personByName(herePlace, n) : null)) || null;
-                const me = at(player);
-                if (!me) return null;
-                const near = n => { const p = at(n); return p && Number.isFinite(p.x) && Math.max(Math.abs(p.x - me.x), Math.abs(p.y - me.y)) <= 1; };
-                return [...Object.keys(w.combat?.enemies || {}).filter(n => !(w.combat.enemies[n].hp <= 0)), ...Object.values(herePlace?.guards || {}).filter(g => g.state !== 'gone' && g.state !== 'dead' && !g.down).map(g => g.name), ...meta.party.map(p => p.name)].find(near) ?? null;
-            };
-            const holder = meta.party.map(p => p.name).find(inSentence) ?? Object.values(herePlace?.guards || {}).map(g => g.name).find(inSentence) ?? Object.keys(c.docs.world.combat?.enemies || {}).find(inSentence) ?? adjacent();
-            adds.push(holder ? `pinned (held down by ${holder})` : 'pinned (held down)');
-        }
-        const pinned = conditionsOf(world, player).find(x => /pinned/i.test(x));
-        if (pinned && /\b(?:(?:gets?|climbs?|rolls?|eases?|lifts?|takes?) (?:off|up off|her weight off|his weight off|the knee off) (?:of )?(?:you|your back)|lets? you (?:up|go)|releases? you|stands? (?:up )?off (?:of )?you|off your back now)\b/i.test(text)) {
-            applyStateChanges(world, { conditions_remove: { [player]: [pinned] } }, meta.party.map(p => p.name), { turn: meta.turn });
-            status.note(`${player}: no longer pinned (from the story)`);
-        }
-        if (adds.length) {
-            applyStateChanges(world, { conditions_add: { [player]: adds } }, meta.party.map(p => p.name), { turn: meta.turn });
-            syncDownFromConditions(c);
-            status.note(`${player}: ${adds.join(', ')} (from the story)`);
-            await postNote(`📜 ${player}: ${adds.join(', ')} (from the story).`);
-            dmOnly.push(`your story ${adds.includes('prone') ? 'put the player on the ground' : ''}${adds.includes('prone') && adds.length > 1 ? ' and ' : ''}${adds.filter(a => a !== 'prone').length ? `put ${adds.filter(a => a !== 'prone').join(' and ')} on the player` : ''} with no state_changes: the code added ${adds.map(a => `"${a}"`).join(', ')}. Send conditions_add yourself when your narration does it; remove them only when the story frees them (getting up off the ground is a roll when cuffed or held).`);
-        }
-    }
-    // The restraints came off this turn and nobody holds them: custody is over (both told).
-    if (!t.place_changes?.custody) { const freedLine = await custodyFreed(c, boundBefore).catch(error => { console.warn('[Dungeon Master] custody end failed', error); return ''; }); if (freedLine) dmOnly.push(freedLine); }
-    // A companion who cuffs or ties the player in the story has them in custody: the map keeps them close (the DM can say otherwise with place_changes.custody).
-    if (!t.place_changes?.custody) { const nudge = await custodyFromStory(c, `${t.narration || ''} ${(t.directions || []).map(d => d.brief || '').join(' ')} ${t.scene_card ? JSON.stringify(t.scene_card) : ''}`, status).catch(error => { console.warn('[Dungeon Master] custody from the story failed', error); return ''; }); if (nudge) dmOnly.push(nudge); }
     let initiativeCard = '';
     let mapChanged = false;
     // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.
@@ -1641,17 +1019,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
     }
     if (t.start_combat && !world.combat) {
-        // Striking someone helpless (asleep, out cold, tied up) is not a fight: no initiative, the blow just lands.
-        const hereNow0 = currentPlace(c);
-        const named = (t.start_combat.enemies || []).map(e => e.name);
-        const helpless = n => { const g = hereNow0 && personByName(hereNow0.place, n); return g ? (g.state === 'dead' || g.state === 'gone' || Boolean(g.down)) : false; };
-        if (named.length && named.every(helpless)) { status.note(`No fight: ${named.join(', ')} ${named.length > 1 ? 'are' : 'is'} helpless (resolve the blow, no initiative)`); t.start_combat = null; }
-    }
-    if (t.start_combat && !world.combat) {
-        // Only companions with the player are in it: not one caged elsewhere, away, or out of reach.
         const inFight = fighters(c);
         const left = meta.party.map(p => p.name).filter(n => !inFight.includes(n));
-        if (left.length) status.note(`Not in the fight (elsewhere or out of reach): ${left.join(', ')}`);
+        if (left.length) status.note(`Not in the fight (away): ${left.join(', ')}`);
         const companions = inFight.map(n => ({ name: n, stats: statsForName(n, meta) }));
         const combat = startCombat(world, t.start_combat, companions);
         combat.party = inFight;
@@ -1659,46 +1029,22 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         combat.speed = Object.fromEntries([meta.persona.name, ...inFight].map(n => [n, speedSquares(statsForName(n, meta))]));
         combat.moved = {};
         combat.dash = {};
-        // Inside a place the fight is always on the place's own map, where everyone already stands
-        // (never a new battle map). Elsewhere: a mapped room becomes the battle map unless the DM sent one.
-        const here = currentPlace(c);
-        const roomMap = !here && !t.start_combat.map && world.sceneMap?.map ? world.sceneMap : null;
-        if (here) {
-            const floorId = here.place.state.positions[meta.persona.name]?.floor ?? here.place.state.floor;
-            combat.map = JSON.parse(JSON.stringify(floorById(here.place, floorId).map));
-            combat.inPlace = { key: here.key, floor: floorId };
-            combat.positions = Object.fromEntries(Object.entries(here.place.state.positions).filter(([n, p]) => p.floor === floorId && (n === meta.persona.name || inFight.includes(n))).map(([n, p]) => [n, toCoord(p.x, p.y)]));
-            // The place's people on this floor join the board where they stand: the enemies among
-            // them, and anyone the party can see (bystanders stay on the map during the fight).
-            const seen = computeVisible(here.place, floorId, Object.values(here.place.state.positions).filter(p => p.floor === floorId));
-            // An enemy the DM names is the person already on the map ("Watchman" is Turnkey Wren):
-            // they fight from where they stand, and are the same person when the fight ends.
-            combat.aliases = {};
-            for (const ename of Object.keys(combat.enemies || {})) {
-                const g = matchPerson(here.place, floorId, ename, seen);
-                if (!g) continue;
-                if (nameKey(g.name) !== nameKey(ename)) combat.aliases[ename] = g.name;
-                combat.positions[ename] = toCoord(g.x, g.y);
-                if (g.wasHostile === undefined) g.wasHostile = g.hostile === true;
-                g.hostile = true; g.state = 'alert'; delete g.down; delete g.fought; delete g.seize;
+        if (mapsOn()) {
+            if (t.start_combat.map) {
+                // The DM drew the field: its squares, its starting positions.
+                combat.map = normalizeMap({ ...t.start_combat.map, theme: t.start_combat.map.theme || themeFor(world.setting, world.location) });
+                combat.positions = {};
+            } else if (world.sketch?.map) {
+                // The fight is where the party stands: the sketch becomes the battle map, everyone keeps their square.
+                combat.map = JSON.parse(JSON.stringify(world.sketch.map));
+                combat.positions = { ...world.sketch.positions };
+                combat.onSketch = true;
+                // The DM's starting squares are for a drawn field; on the sketch everyone starts where they stand.
+                t.positions = {};
+            } else {
+                combat.map = normalizeMap({ theme: themeFor(world.setting, world.location), width: 10, height: 8, rows: [] });
+                combat.positions = {};
             }
-            const foeKeys = new Set(Object.keys(combat.enemies || {}).map(nameKey));
-            const standIns = new Set(Object.values(combat.aliases).map(nameKey));
-            for (const g of Object.values(here.place.guards)) {
-                if (g.state === 'gone' || g.floor !== floorId || standIns.has(nameKey(g.name))) continue;
-                if (foeKeys.has(nameKey(g.name)) || seen[g.y * combat.map.w + g.x]) combat.positions[g.name] = toCoord(g.x, g.y);
-            }
-            // A fight is loud: whoever belongs here, awake and not in it, within earshot, can hear it (the DM decides if they come).
-            const lead = here.place.state.positions[meta.persona.name];
-            const inIt = new Set([...foeKeys, ...standIns]);
-            const dist = g => (lead ? Math.max(Math.abs(g.x - lead.x), Math.abs(g.y - lead.y)) : 99);
-            const hears = Object.values(here.place.guards)
-                .filter(g => g.state !== 'gone' && g.state !== 'dead' && !g.down && g.hostile !== true && g.floor === floorId && !inIt.has(nameKey(g.name)) && dist(g) <= EARSHOT * 2)
-                .map(g => `${g.name} (${g.description || 'someone who belongs here'}, ${dist(g)} squares away${g.role === 'guard' ? ', a guard' : ''})`);
-            here.place.state.fight = { turn: meta.turn, hears };
-        } else if (mapsOn()) {
-            combat.map = roomMap ? roomMap.map : normalizeMap({ ...(t.start_combat.map || {}), theme: t.start_combat.map?.theme || themeFor(world.setting, world.location) });
-            combat.positions = roomMap ? { ...(roomMap.positions || {}) } : {};
         }
         mapChanged = true;
         initiativeCard = `⚔️ **Initiative**\n${combat.order.map(o => `- ${o.name}: **${o.init}**`).join('\n')}\n*(${meta.persona.name}: roll your own initiative when asked)*`;
@@ -1710,15 +1056,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const lead = parseCoord(world.combat.positions?.[meta.persona.name], world.combat.map);
         const nowhere = foes.filter(n => !world.combat.positions?.[n] && !(t.positions || {})[n] && !(world.combat.enemies[n].hp <= 0));
         if (nowhere.length && lead) { world.combat.positions = placeNear(world.combat.map, world.combat.positions, nowhere, lead, 3); status.note(`${nowhere.join(', ')} had no square: placed near the party`); mapChanged = true; }
-        // On a built map they're the place's people too, so the place and the fight agree (and they're still there when it ends).
-        if (nowhere.length && lead && world.combat.inPlace) { const here = currentPlace(c); if (here) { for (const n of nowhere) { const p = parseCoord(world.combat.positions[n], world.combat.map); if (p && !personByName(here.place, n)) placePerson(here.place, n, { floor: world.combat.inPlace.floor, x: p.x, y: p.y }, { floor: world.combat.inPlace.floor, info: { hostile: true, force: true } }); } savePlace(here.key, c); } }
         // The party moves at most their speed each round (twice that when dashing), around walls.
         const moves = { ...(t.positions || {}) };
         for (const name of friends) {
             const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
             if (!from || !to) continue;
-            // When a fight starts on a built map everyone stands where they already stood: the DM's squares are for a fresh battle grid only.
-            if (t.start_combat) { if (world.combat.inPlace) delete moves[name]; continue; }
+            if (t.start_combat) continue;
             // Not walking (a teleport, a shove, carried): wherever they land, no movement spent.
             if (t.free_move.some(n => nameKey(n) === nameKey(name))) { status.note(`${name} moves without walking (free move)`); continue; }
             const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== name && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
@@ -1730,14 +1073,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (ok.x !== to.x || ok.y !== to.y) status.note(`${name} can only get to ${toCoord(ok.x, ok.y)} this round (${budget.left} of ${budget.max} squares were left)`);
             moves[name] = toCoord(ok.x, ok.y);
         }
-        // Enemies walk too: their speed a round (twice when dashing), never across the map in one go; the dead stay put;
-        // and when a fight starts on a built map, the people already on it keep their squares.
+        // Enemies walk too: their speed a round (twice when dashing), never across the map in one go; the dead stay put.
         for (const name of foes) {
             if (!moves[name]) continue;
             if (world.combat.enemies[name]?.hp <= 0) { delete moves[name]; problems.push(`positions for ${name} ignored: they're dead`); continue; }
             const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
             if (!from || !to) continue;
-            if (t.start_combat) { if (world.combat.inPlace) delete moves[name]; continue; }
+            if (t.start_combat) continue;
             if (t.free_move.some(n => nameKey(n) === nameKey(name))) continue;
             const others = new Set(Object.entries(world.combat.positions || {}).filter(([n]) => n !== name && !(world.combat.enemies?.[n]?.hp <= 0)).map(([, cd]) => parseCoord(cd, world.combat.map)).filter(Boolean).map(p => `${p.x},${p.y}`));
             const ok = clampMove(world.combat.map, from, to, t.dashing.some(n => nameKey(n) === nameKey(name)) ? 12 : 6, others);
@@ -1745,12 +1087,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             moves[name] = toCoord(ok.x, ok.y);
         }
         const { positions, rejected } = applyPositions(world.combat.map, world.combat.positions, moves);
-        if (world.combat.inPlace) {
-            const lead = parseCoord(positions[meta.persona.name], world.combat.map);
-            world.combat.positions = placeNear(world.combat.map, placeNear(world.combat.map, positions, friends, lead, 1), foes, lead, 3);
-        } else {
-            world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
-        }
+        world.combat.positions = placeMissing(world.combat.map, placeMissing(world.combat.map, positions, friends, 'party'), foes, 'enemy');
         fallenInFight(c);
         if (rejected.length) console.warn('[Dungeon Master] Ignored invalid map moves:', rejected);
         mapChanged = true;
@@ -1778,7 +1115,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const r = t.clock ? { weather: null } : passTime(world, t.rest === 'long' ? 8 * 60 : 60, { climate: climateHere(c) });
         await postDiceCard(`📜 ${t.rest === 'long' ? 'Long rest' : 'Short rest'}${rested.length ? `: ${rested.join(' · ')}` : ''} · now ${clockText(world)}${r.weather ? ` · the weather turns: ${WEATHER_WORDS[r.weather]}` : ''}`, { state: true });
     }
-    syncSky(c);
     // Time that passed just now (a skip, a rest) ends what has run out.
     if (t.clock || t.rest) {
         const ended = expireConditions(world, { turn: meta.turn, round: world.combat?.round ?? null });
@@ -1795,191 +1131,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
         if (lines.length) await postDiceCard(`📜 ${lines.join(' · ')}`, { state: true });
     }
-    if (t.end_combat && world.combat?.inPlace) {
-        // Back to exploring: the party stays where the fight left them, on the map the fight was on
-        // (a fight that began inside the shop never puts the shop's squares on the town map).
-        const here = currentPlace(c);
-        if (here && here.key !== world.combat.inPlace.key) status.note(`The fight was on ${world.combat.inPlace.key}, the party is on ${here.key}: the fight's positions stay there`);
-        if (here && here.key === world.combat.inPlace.key) {
-            const floorId = world.combat.inPlace.floor, map = floorById(here.place, floorId).map;
-            mergeBurn(world.combat.map, map);
-            const party = new Set([meta.persona.name, ...meta.party.map(p => p.name)].map(nameKey));
-            for (const name of partyOnMap(c)) {
-                const pt = parseCoord(world.combat.positions?.[name], map);
-                if (pt) here.place.state.positions[name] = { floor: floorId, x: pt.x, y: pt.y };
-            }
-            const deadNames = new Set((t.npcs_dead || []).map(nameKey));
-            for (const [name, e] of Object.entries(world.combat.enemies || {})) {
-                // The map's own person when the DM called them something else.
-                const pname = world.combat.aliases?.[name] ?? name;
-                const pt = parseCoord(world.combat.positions?.[name], map);
-                if (pt) placePerson(here.place, pname, { floor: floorId, x: pt.x, y: pt.y }, { info: { hostile: true } });
-                const g = personByName(here.place, pname);
-                if (e.hp <= 0) {
-                    // 0 HP is death: the body lies a moment, then it's gone, and they never return.
-                    killPerson(here.place, pname, meta.turn);
-                    const npc = (c.docs.npcs || []).find(x => nameKey(x.name) === nameKey(pname) || nameKey(x.name) === nameKey(name));
-                    if (npc) npc.dead = true;
-                    scheduleBodyClear(c);
-                    continue;
-                }
-                // Alive at the end: someone who wasn't an enemy before the fight (a guard who yielded) isn't one now,
-                // unless the DM sets an intent; the DM is told they fought.
-                if (g) {
-                    if (g.wasHostile === false) { g.hostile = false; g.state = 'alert'; g.fought = true; delete g.intent; delete g.target; }
-                    delete g.wasHostile;
-                }
-            }
-            delete here.place.state.fight;
-            for (const [name, cd] of Object.entries(world.combat.positions || {})) {
-                const g = personByName(here.place, name), pt = parseCoord(cd, map);
-                if (g && pt && !party.has(nameKey(name)) && !world.combat.enemies?.[name]) Object.assign(g, { floor: floorId, x: pt.x, y: pt.y, room: roomAt(here.place, floorId, pt.x, pt.y)?.id ?? g.room });
-            }
-            savePlace(here.key, c);
-        }
-    }
     if (t.end_combat && world.combat) {
-        const finalPositions = world.combat.positions;
-        const sameRoom = world.sceneMap?.map && world.combat.map === world.sceneMap.map;
+        // Back to the story: the sketch is drawn again from the scene card (the fight's squares were the fight's).
         endCombat(world);
-        if (sameRoom) {
-            world.sceneMap.positions = finalPositions;
-            refreshMap();
-        } else {
-            // Inside a place the map stays up (the place's own map); only with nothing left to show does it go.
-            refreshMap();
-        }
         status.note('Combat over');
         // After a fight the story breathes: a few turns with no new people, no alarms, no next guard.
         meta.pacing.calmUntil = (meta.turn || 0) + 3;
-    }
-    // Scene maps outside combat (a dungeon room where exact squares matter).
-    if (t.scene_map === 'close' && world.sceneMap) {
-        world.sceneMap = null;
-        refreshMap();
-    } else if (t.scene_map && typeof t.scene_map === 'object') {
-        // On a built map the place IS the scene: a drawn room would kick the party onto a little grid out of nowhere.
-        if (currentPlace(c)) { status.note('Scene map ignored: the party is on a built map'); problems.push('scene_map was dropped: the party is on a built map, which IS the scene (never send a scene_map there)'); }
-        else {
-            world.sceneMap = { title: t.scene_map.title || world.location || 'Map', map: normalizeMap({ ...t.scene_map, theme: t.scene_map.theme || themeFor(world.setting, world.location) }), positions: {} };
-            mapChanged = true;
-        }
-    }
-    const inside = currentPlace(c);
-    const partyNames = [meta.persona.name, ...meta.party.map(p => p.name)];
-    const strays = inside ? adoptStrays(inside.place, partyNames) : 0;
-    if (inside && (strays || t.place_changes || t.escort || (!world.combat && Object.keys(t.positions || {}).length))) {
-        const { key, place } = inside;
-        const floorId = place.state.positions[meta.persona.name]?.floor ?? place.state.floor;
-        if (t.place_changes) {
-            // Inside a wagon: the wagon itself and its horses are on the map outside; what's aimed at them goes there.
-            const host = place.parent?.key && (t.place_changes.props || t.place_changes.guards || t.place_changes.ride) ? await loadPlace(place.parent.key, c) : null;
-            if (host) {
-                const out = {};
-                for (const [id, v] of Object.entries(t.place_changes.props || {})) if (!propById(place, id) && propById(host, id)) { (out.props ??= {})[id] = v; delete t.place_changes.props[id]; }
-                for (const [n, v] of Object.entries(t.place_changes.guards || {})) if (!personByName(place, n) && personByName(host, n)) { (out.guards ??= {})[n] = v; delete t.place_changes.guards[n]; }
-                for (const [n, v] of Object.entries(t.place_changes.ride || {})) if (!personByName(place, n) && !place.state.positions[n] && (personByName(host, n) || host.state.positions[n])) { (out.ride ??= {})[n] = v; delete t.place_changes.ride[n]; }
-                if (Object.keys(out).length) {
-                    const hl = applyPlaceChanges(host, out, { floor: host.state.floor, turn: meta.turn, stealth: withAt(stealthOf(meta), host) });
-                    if (hl.length) status.note(`Outside: ${hl.join(', ')}`);
-                    problems.push(...hl.filter(l => l.startsWith('⚠️')).map(l => `place_changes (outside) ${l.slice(2).trim()}`));
-                    syncMounts(host);
-                    savePlace(place.parent.key, c);
-                }
-            }
-            // Forcing, smashing or picking something the player is asked to roll for: the map waits for the dice (the crate doesn't break before the roll).
-            if (t.player_roll && t.player_roll.kind === 'check' && !world.combat) {
-                const held = {};
-                for (const [id, v] of Object.entries(t.place_changes.props || {})) { const st = String((v && typeof v === 'object' ? v.state : v) || '').toLowerCase(); if (/^(broken|smashed|destroyed|debris|open|opened|unlocked|forced)$/.test(st)) { (held.props ??= {})[id] = v; delete t.place_changes.props[id]; } }
-                for (const [id, v] of Object.entries(t.place_changes.doors || {})) { const st = String((v && typeof v === 'object' ? v.state : v) || '').toLowerCase(); if (/^(broken|smashed|open|opened|unlocked|forced)$/.test(st)) { (held.doors ??= {})[id] = v; delete t.place_changes.doors[id]; } }
-                if (Object.keys(held).length) { t.player_roll.then = { place_changes: held }; status.note('The map waits for the roll before anything breaks open'); }
-            }
-            const me = meta.persona.name;
-            // The opening's prisoner, bound, is under guard: a companion-mode op there would set them free to roam before a word was said.
-            if (reasons.includes('opening') && t.place_changes.custody && restraintOf(conditionsOf(world, me)).bound) for (const [who, spec] of Object.entries(t.place_changes.custody)) if (spec && typeof spec === 'object' && spec.mode === 'companion' && matchName(who, [me])) { spec.mode = 'guard'; dmOnly.push(`custody for ${me} at the opening was set to GUARD mode by the code: they're bound and under guard, and companion mode is for when she lets them walk where they like (her words, theirs or your op can change it later).`); }
-            const before = place.state.custody?.[me] ? `${place.state.custody[me].by}|${place.state.custody[me].mode}|${Boolean(place.state.custody[me].chase)}` : '';
-            const log = applyPlaceChanges(place, t.place_changes, { floor: floorId, turn: meta.turn, stealth: withAt(stealthOf(meta), place) });
-            if (log.length) status.note(`Map: ${log.join(', ')}`);
-            // The DM changed who holds the player, or how (she's down, she let go, she's told them to stay): the player sees it, as they see every other change of hands.
-            const now = place.state.custody?.[me];
-            const after = now ? `${now.by}|${now.mode}|${Boolean(now.chase)}` : '';
-            if (before !== after) {
-                if (!now) await postNote(`🔓 Nobody holds you now (the DM's call): walk where you like until someone takes you again.`);
-                else if (now.chase) await postNote(`🔒 ${now.by} is after you (the DM's call): she grabs when she reaches you.`);
-                else if (now.mode === 'companion') await postNote(`🚶 ${now.by} goes along with you (the DM's call): walk where you like; "I run" is the only run.`);
-                else await postNote(`🔒 ${now.by} has you${before ? ' stay put' : ''} (the DM's call): a step beyond ${now.radius} squares is an escape.`);
-            }
-            problems.push(...log.filter(l => l.startsWith('⚠️')).map(l => `place_changes ${l.slice(2).trim()}`));
-            syncMounts(place);
-        }
-        // Riders the story got down from their horses without the DM sending ride "".
-        for (const who of dismountsInText(place, `${t.narration || ''} ${t.directions.map(d => d.brief || '').join(' ')}`)) status.note(`${who} dismounts (from the story)`);
-        // The player gave in: a guard takes them, no guard attacks them for it.
-        if (!world.combat && playerGivesIn(lastPlayerMessage())) {
-            for (const [n, raw] of Object.entries(t.place_changes?.guards || {})) {
-                const g = personByName(place, n);
-                const intent = raw && typeof raw === 'object' ? raw.intent : /^(hunting|chasing|attacking|attack)$/i.test(String(raw)) ? 'attack' : '';
-                if (g && intent === 'attack' && (!raw.target || matchName(String(raw.target), [meta.persona.name]))) { delete g.intent; delete g.target; problems.push(`guards.${n} intent "attack" dropped: the player just gave themselves up; a guard takes a prisoner (escort), they don't attack one who surrenders`); }
-            }
-        }
-        // The player gave in to a guard: walked to their cell, door locked (the code checks their words).
-        if (t.escort && !world.combat) {
-            const note = await escortToCell(c, t.escort, lastPlayerMessage());
-            if (note) status.note(note);
-            if (/^escort ignored/.test(note)) { console.warn('[Dungeon Master]', note); problems.push(`${note} (the player stays where they are: don't narrate the walk to a cell)`); }
-        }
-        if (!world.combat) {
-            const map = floorById(place, floorId).map;
-            const missed = [];
-            // Caught and taken somewhere: access set to "prisoner" or "none" this turn lets the DM move them.
-            const captured = new Set();
-            for (const [who, spec] of Object.entries(t.place_changes?.access || {})) {
-                if (typeof spec !== 'string' || !/^(prisoner|none|intruder|nowhere)$/i.test(spec.trim())) continue;
-                for (const n of (who === '*' || who === 'party' ? partyNames : [matchName(who, partyNames)].filter(Boolean))) captured.add(n);
-            }
-            for (const [name, coord] of Object.entries(t.positions || {})) {
-                if (coord === null || /^(gone|removed|dead|fled|left)$/i.test(String(coord))) {
-                    const g = personByName(place, name);
-                    if (g) g.state = 'gone';
-                    continue;
-                }
-                const member = partyNames.find(n => nameKey(n) === nameKey(name));
-                if (member) {
-                    const pt = parseCoord(coord, map);
-                    // Outside a fight the party moves itself (the map, or the sync walking them). The DM still sets
-                    // the scene at the opening, puts a companion beside the player (kneeling on them, at their side),
-                    // nudges one a square or two, or moves someone who can't move on their own (carried, dragged).
-                    const gap = (a, b) => (a && b && a.floor === floorId ? Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) : 99);
-                    const lead0 = place.state.positions[meta.persona.name], own = place.state.positions[member];
-                    const staging = reasons.includes('opening') || (pt && ((member !== meta.persona.name && gap(lead0, pt) <= 1) || gap(own, pt) <= 2));
-                    if (!staging && !lockedReason(c, member) && !captured.has(member)) { missed.push(`${name} → ${coord} (they move themselves; the DM may put a companion beside the player or a square or two along, and move only someone restrained or just captured with access "prisoner"/"none")`); continue; }
-                    const spot = pt && openSquareNear(place, floorId, pt.x, pt.y);
-                    if (spot) {
-                        place.state.positions[member] = { floor: floorId, ...spot };
-                        if (place.state.hidden?.[member]) delete place.state.hidden[member];
-                        if (place.state.pose?.[member]) delete place.state.pose[member];
-                        // Locked up again: wherever they were put is their cell now.
-                        const cell = captured.has(member) && standingOf(place, member).label === 'prisoner' ? roomAt(place, floorId, spot.x, spot.y) : null;
-                        if (cell) { setStanding(place, member, standingFor('prisoner', { home: cell.id })); status.note(`${member} is held in ${cell.name}`); }
-                    }
-                    else missed.push(`${name} → ${coord}`);
-                    continue;
-                }
-                const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(name));
-                const info = { description: npc ? [npc.role, npc.description].filter(Boolean).join('. ') : '', hostile: npc?.attitude === 'hostile', gender: npc?.gender };
-                if (!placePerson(place, npc?.name ?? name, coord, { floor: floorId, info, arrive: !personByName(place, npc?.name ?? name) })) missed.push(`${name} → ${coord}`);
-            }
-            if (missed.length) { status.note(`Couldn't place on the map: ${missed.join(', ')}`); dmOnly.push(`positions not applied: ${missed.join('; ')}`); }
-        }
-        look(c, key, place);
-        savePlace(key, c);
-        mapChanged = true;
-    }
-    if (t.map_effects && applyMapEffects(c, t.map_effects, status)) mapChanged = true;
-    if (!world.combat && world.sceneMap?.map) {
-        const friends = [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))];
-        const { positions } = applyPositions(world.sceneMap.map, world.sceneMap.positions, t.positions);
-        world.sceneMap.positions = placeMissing(world.sceneMap.map, positions, friends, 'party');
         mapChanged = true;
     }
     // NPCs who died leave the group chat.
@@ -1987,13 +1144,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const dead = new Set(t.npcs_dead.map(n => n.toLowerCase()));
         const fallen = (c.docs.npcs || []).filter(n => dead.has(n.name.toLowerCase()));
         for (const npc of fallen) npc.dead = true;
-        // Their body stays on the map where they fell for a few turns.
-        const where = currentPlace(c);
-        if (where) { for (const n of t.npcs_dead) killPerson(where.place, n, meta.turn); savePlace(where.key, c); }
         if (fallen.length) {
             saveDoc('npcs');
             await removeNpcsFromGroup(fallen);
         }
+        // The dead leave the scene card too.
+        if (world.sceneCard) for (const n of Object.keys(world.sceneCard.people || {})) if (dead.has(n.toLowerCase())) { delete world.sceneCard.people[n]; delete world.sceneCard.spots?.[n]; }
     }
     applyDmPacing(meta.pacing, t, { worldEvery: Number(settings().checkinEvery) || 5 });
     if (t.beats_completed.length) {
@@ -2031,9 +1187,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     // What just visibly changed: companions see it until the DM's next turn, so they don't redo it,
     // and then in their timeline with when and where it happened.
     meta.happened = t.happened || '';
-    // The DM has had what was done on the map: the next in-character turn starts a fresh record (an out-of-character answer doesn't use it up).
     const oocNow = reasons.includes('ooc') || /^\s*(?:\*?\(\s*ooc\s*\)\*?|\(\(|ooc\s*[:\-]|@?dm\s*[,:\-]|\/rule\b)/i.test(lastPlayerMessage());
-    if (!oocNow) meta.mapLog = [];
     if (t.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: t.happened });
     // Table rules come only from the player's own out-of-character words: the premise and the plot are the DM's private plan, and companions read the rules.
     if (t.table_rules_add.length) {
@@ -2066,6 +1220,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
         if (member) await levelUp(c, member, level, status);
     }
+    // The sketch follows the scene card (outside a fight; a fight has its own board).
+    if (!world.combat) { redrawSketch(c); mapChanged = true; }
     refreshStandingPrompt();
     saveDoc('world');
 
@@ -2089,15 +1245,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.noticed) {
         const seen = applyNoticed(world, t.noticed);
         if (seen.length) status.note(seen.join('; '));
-        const here = currentPlace(c);
-        if (here) {
-            for (const [seer, list] of Object.entries(t.noticed)) {
-                for (const n of [].concat(list ?? [])) markNoticed(here.place, seer, String(n), true);
-                const g = [].concat(list ?? []).length ? personByName(here.place, seer) : null;
-                if (g && lineRole(g) !== 'prisoner') g.alertAt = meta.turn;
-            }
-            savePlace(here.key, c);
-        }
     }
     if (initiativeCard) { sfx('drum'); await postDiceCard(initiativeCard, { combat: true }); }
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
@@ -2132,7 +1279,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                     applyStateChanges(world, { items_remove: { [n]: [ch.item] } }, meta.party.map(p => p.name), { turn: meta.turn });
                     (meta.combatChoices.used ??= {})[n] = true;
                     await postDiceCard(`🧪 **${n}** drinks the ${ch.item}: **+${r.total}** HP${line ? ` (${line})` : ''}.`, { state: true });
-                    noteMapAction(c, `${n} drank the ${ch.item} (+${r.total} HP, applied by the code; the potion is gone)`);
                 }
                 continue;
             }
@@ -2150,7 +1296,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (r.kind !== 'attack' && /\b(?:get|gets|getting|stand|stands|standing|scramble|scrambles|rise|rises|haul|hauls|push|pushes|struggle|struggles|climb|climbs)\b[^.]{0,30}?\b(?:up|feet|upright)\b|\bfrom prone\b/i.test(String(r.what || '')) && !/\b(?:cuff|tied|bound|grappled|pinned|held|caged|trapped|pit|snare|climb out|wall|ledge|rope|slope|bank)\b/i.test(String(r.what || ''))) {
             const who = matchName(r.who, meta.party.map(p => p.name)) ?? r.who;
             const conds = conditionsOf(world, who);
-            if (conds.some(x => /^prone\b/i.test(String(x))) && !restraintOf(conds).bound && !/grappled|pinned/i.test(conds.join(' '))) { applyStateChanges(world, { conditions_remove: { [who]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); saveDoc('world'); syncDownFromConditions(c); await postNote(`📜 ${who} gets up (−prone): no roll for that.`); }
+            if (conds.some(x => /^prone\b/i.test(String(x))) && !/cuff|tied|bound|restrain|rope|grappled|pinned/i.test(conds.join(' '))) { applyStateChanges(world, { conditions_remove: { [who]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); saveDoc('world'); await postNote(`📜 ${who} gets up (−prone): no roll for that.`); }
             problems.push(`npc_rolls "${r.what}" for ${r.who} was dropped: standing up is never a roll (it costs the move; the code removed "prone"). Roll only what's contested or uncertain.`);
             continue;
         }
@@ -2223,8 +1369,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const noticed = watcherRolled ? judged.success : !judged.success;
             spotNoticed = noticed;
             noteSeen(world, r.spot.seer, r.spot.seen, noticed);
-            const here = currentPlace(c);
-            if (here && markNoticed(here.place, r.spot.seer, r.spot.seen, noticed)) savePlace(here.key, c);
         }
         // A save with damage (a trap, a Fireball): taken by the one who rolled, all on a failure, half on a success if it says so.
         // (Dice written only in the failure text, "takes 2d4 piercing damage", count too.)
@@ -2237,11 +1381,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 playAnim(r.who, 'hurt');
             }
         }
-        // Caught in a trap: a save or a check that works gets them loose.
-        const caughtWho = r.kind === 'save' || r.kind === 'check' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
-        if (caughtWho && judged.success === true && trappedIn(c, caughtWho) && freeFromTrap(c, caughtWho)) damageText += ' · gets loose!';
-        // Getting up: a check that works puts them on their feet (the DM forgets conditions_remove, and then they're stuck on the map).
-        if (caughtWho && judged.success === true && /\b(?:get(?:s|ting)? (?:back )?up|stand(?:s|ing)? up|(?:back )?(?:on|to) (?:his|her|their) feet|rises?|scrambles?)\b/i.test(`${r.what} ${r.on_success}`) && conditionsOf(world, caughtWho).some(x => /^prone\b/i.test(String(x)))) { applyStateChanges(world, { conditions_remove: { [caughtWho]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); syncDownFromConditions(c); damageText += ' · up on their feet'; }
+        // Getting up: a check that works puts them on their feet (the DM forgets conditions_remove).
+        const roller = r.kind === 'save' || r.kind === 'check' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
+        if (roller && judged.success === true && /\b(?:get(?:s|ting)? (?:back )?up|stand(?:s|ing)? up|(?:back )?(?:on|to) (?:his|her|their) feet|rises?|scrambles?)\b/i.test(`${r.what} ${r.on_success}`) && conditionsOf(world, roller).some(x => /^prone\b/i.test(String(x)))) { applyStateChanges(world, { conditions_remove: { [roller]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); damageText += ' · up on their feet'; }
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
         const vs = r.dc !== null ? ` vs ${r.kind === 'attack' ? 'AC' : 'DC'} ${r.dc}` : '';
         const nat = result.natural === 20 ? ' (natural 20!)' : result.natural === 1 ? ' (natural 1)' : '';
@@ -2249,11 +1391,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         await postDiceCard(card, { roll: { ...r, total: result.total, natural: result.natural, success: judged.success } });
         if (r.kind === 'attack') playAnim(matchName(r.who, Object.keys(world.combat?.positions || {})) ?? r.who, 'attack');
         c.docs.rolls_log.push({ at: new Date().toISOString(), who: r.who, what: r.what, notation: r.notation, total: result.total, natural: result.natural, dc: r.dc, success: judged.success });
-        if (/perception|investigation|search/i.test(r.what || '')) {
-            const searcher = matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]);
-            const search = searcher ? searchForTraps(c, searcher, result.total, { dc: r.dc }) : null;
-            if (search?.found.length) { await postNote(`⚠️ Searching within ${search.radius} squares, ${searcher} spots: ${search.found.join(', ')}.`); refreshMap(); }
-        }
         const outcome = r.spot && spotNoticed !== null ? `${r.spot.seer} ${spotNoticed ? 'noticed' : 'did not notice'} ${r.spot.seen}` : judged.success === false ? r.on_fail : r.on_success;
         if (outcome) {
             const key = matchName(r.who, [...meta.party.map(p => p.name), ...c.docs.npcs.map(n => n.name)]) || r.who;
@@ -2266,48 +1403,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         saveDoc('rolls_log');
         saveDoc('world');
     }
-    if (mapChanged && (world.combat || world.sceneMap || currentPlace(c))) {
-        if (t.start_combat || (t.scene_map && typeof t.scene_map === 'object')) openMap();
+    if (mapChanged && (world.combat || world.sketch)) {
+        if (t.start_combat) openMap();
         else refreshMap();
     }
-    // Leaving a place, going back to one that's already built.
-    if (t.leave_place) {
-        leavePlace(c);
-        // Travel with no map at the other end: outdoors (a road, the woods, a camp, a town) the code builds one, so the party is never off the map.
-        const loc = String(t.scene?.location || '').trim();
-        const outdoors = loc && (isWildKind(kindFromWords(loc), loc) || /\b(road|trail|path|track|woods?|forest|trees|hills?|moor|downs|field|meadow|clearing|river|stream|lake|shore|beach|bridge|crossroads|ford|camp|village|town|hamlet|gate|ruins?|cliff|valley|pass|plain|marsh|swamp)\b/i.test(loc));
-        if (!t.build_place && !t.enter_place && !world.combat && mapsOn() && outdoors) {
-            status.note(`No map at ${loc}: building one`);
-            try { await buildFromRequest({ text: loc, kind: kindFromWords(loc) || '', size: 'small' }, { status }); } catch (error) { problems.push(`the party left the map for "${loc}" and no map could be built there (${error.message}): send build_place for it`); }
-        } else if (!t.build_place && !t.enter_place && mapsOn()) problems.push(`leave_place took the party off the map${loc ? ` to "${loc}"` : ''} with nothing built there: send build_place (or enter_place for a place in the ATLAS) in the same turn, so they are never without a map`);
-    }
-    if (t.enter_place && !t.build_place) {
-        const entry = atlasEntry(t.enter_place, c);
-        // Already there (the DM named it again): nobody moves, the map stays as it is.
-        const here = currentPlace(c);
-        const already = here && (here.key === entry?.key || here.place.parent?.key === entry?.key);
-        const wagon = !entry ? findVehicle(c, t.enter_place) : null;
-        if (wagon) { await enterVehicle(wagon.id, { quiet: true, byDm: true }); status.note(`Into the ${wagon.label || PROPS[wagon.type].name}`); }
-        else if (!entry) problems.push(`enter_place "${t.enter_place}" was dropped: no such place in the ATLAS (build it with build_place, or name one that is listed)`);
-        if (entry && !already) await enterPlace(entry.key, { quiet: true }).catch(error => status.note(`Couldn't open ${t.enter_place}: ${error.message}`));
-    }
 
-    // Someone still on their way in whom the DM has speaking now has arrived.
-    const hereNow = currentPlace(c);
-    if (hereNow) {
-        for (const d of t.directions) {
-            const g = personByName(hereNow.place, d.speaker);
-            if (!g || g.intent !== 'goto' || !g.goal) continue;
-            const spot = openSquareNear(hereNow.place, g.floor, g.goal.x, g.goal.y, new Set(Object.values(hereNow.place.state.positions).filter(p => p.floor === g.floor).map(p => `${p.x},${p.y}`)));
-            if (spot) Object.assign(g, spot, { room: roomAt(hereNow.place, g.floor, spot.x, spot.y)?.id ?? g.room });
-            delete g.goal; delete g.intent;
-            g.met = true;
-        }
-    }
-    // Companions and NPCs speak, in order, each with only their brief. Away companions stay silent.
     // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
-    if (t.player_roll && meta.pendingRoll && (meta.pendingRoll.grab || meta.pendingRoll.custody || meta.pendingRoll.trip || meta.pendingRoll.hide) && !meta.pendingRoll.autoResult) { const k = meta.pendingRoll.custody?.keeper || meta.pendingRoll.grab?.guard || meta.pendingRoll.trip?.keeper || meta.pendingRoll.hide?.keeper; dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: ${meta.persona.name} is already rolling ${meta.pendingRoll.trip ? `their ${meta.pendingRoll.trip.what} of ${k}` : meta.pendingRoll.hide ? `Stealth to hide from ${k}` : `to slip free of ${k}'s grab`} (${meta.pendingRoll.skill} against ${k}'s ${meta.pendingRoll.dc}); a trip, a shove or a twist is that roll. Never decide it yourself: wait for the total.`); status.note('A contest is being rolled: the DM\'s roll request is dropped'); }
-    else if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
+    if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;
         if (pr.kind === 'damage') pr.die = 100;
@@ -2317,8 +1419,8 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             pr.damage = attackDamage(statsForName(meta.persona.name, meta), `${pr.reason} ${pr.skill}`, { critical: lastHit?.natural === 20 });
             if (pr.damage) status.note(`Damage dice from the sheet: ${pr.damage}`);
         }
+        if (pr.kind === 'damage' && pr.damage) pr.damage = normalizeNotation(pr.damage) || pr.damage;
         if (pr.kind === 'initiative') pr.dc = null;
-        // An attack is against the target's real AC: the fight's roster or their sheet, not a number from memory.
         // Getting up, slipping free, working a lock: pinned or cuffed hands make it a roll at disadvantage, and getting up from under someone is DC 15 at least.
         {
             const conds = conditionsOf(world, meta.persona.name).join(' ').toLowerCase();
@@ -2342,7 +1444,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (signal.aborted) throw new Error('aborted');
         const speaker = d.speaker;
         // A trap, a chest or a ledger can't be briefed to speak, whatever the DM called it.
-        if (notAPerson(hereNow?.place ?? null, speaker) && !c.meta.party.some(p => p.name === speaker)) { status.note(`${speaker} is a thing, not someone: no line`); continue; }
+        if (notAPerson(speaker) && !c.meta.party.some(p => p.name === speaker)) { status.note(`${speaker} is a thing, not someone: no line`); continue; }
         const deadNpc = (c.docs.npcs || []).find(n => n.dead && nameKey(n.name) === nameKey(speaker));
         if (deadNpc) {
             status.note(`${deadNpc.name} is dead`);
@@ -2352,63 +1454,27 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             status.note(`${speaker} isn't with you right now`);
             continue;
         }
-        // Someone on the map the party hasn't seen, or too far to hear, is a voice in the narration at most, not a speaker.
-        if (!withinEarshot(c, speaker)) {
-            status.note(`${speaker} is out of sight or out of earshot: no line`);
-            continue;
-        }
         const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
         // A roll the player is about to make: the speaker doesn't settle it or act on them first.
         // In her words, not the table's: she doesn't know what a roll is.
         const pendingLine = t.player_roll && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is in the middle of ${t.player_roll.kind === 'initiative' ? 'the first moment of a fight that is just breaking out; nobody has struck yet' : t.player_roll.kind === 'attack' ? 'a swing at someone, not yet landed' : 'trying something, not yet done'}. Don't settle how it goes, and don't act on ${meta.persona.name} until it has; ${speaker} speaks of what she sees, never of dice, rolls or turns.)` : '';
         // In a fight, or while just exploring (nobody talking to them): one short line.
-        // Out of talking range: a shout of a few words, or nothing.
-        const far = c.meta.party.some(p => p.name === speaker) && talkRange(c, speaker) === 'far';
-        const farLine = far ? `(${meta.persona.name} is far off across the map: only a shout carries. A few words called out, or none: act instead.)` : '';
-        const length = meta.pacing.inCombat || quiet || far ? 'short' : d.length;
+        const length = meta.pacing.inCombat || quiet ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);
         try {
-            await makeSpeak(speaker, [d.direction, extra, pendingLine, farLine].filter(Boolean).join(' '), { signal, length });
+            await makeSpeak(speaker, [d.direction, extra, pendingLine].filter(Boolean).join(' '), { signal, length });
             step.done();
-            await companionDrinks(c, speaker, status);
-            await companionGetsUp(c, speaker, status);
-            await companionKeeps(c, speaker, status, signal);
-            await companionMovesOnMap(c, speaker, status, signal);
         } catch (error) {
             step.fail(error);
         }
     }
 
     saveMeta();
-    // A new map: asks first for big ones, plays the building animation, then opens it.
-    if (t.build_place) {
-        if (world.combat && !t.end_combat) { problems.push(`build_place "${t.build_place.name}" during a fight was dropped: finish the fight first (end_combat, in the same turn if the fight is over), then build`); t.build_place = null; }
-        if (t.build_place) try {
-            if (atlasEntry(t.build_place.name, c) && !t.build_place.replace) problems.push(`build_place "${t.build_place.name}" built nothing: that map already exists (the party was sent back to it). To build it again, send it with "replace": true.`);
-            await requestBuild(t.build_place, { status, signal });
-            // Who the new place won't let leave (a captive, the tribe's god): set on it the moment it's built.
-            if (t.build_place.kept && typeof t.build_place.kept === 'object') { const here = currentPlace(c); if (here) { const kl = applyPlaceChanges(here.place, { kept: t.build_place.kept }, { floor: here.place.state.floor, turn: meta.turn }); if (kl.length) status.note(`Map: ${kl.join(', ')}`); savePlace(here.key, c); } }
-        } catch (error) {
-            status.note(`Map not built: ${error.message}`);
-            problems.push(`build_place "${t.build_place.name}" FAILED in the code (${error.message}): the map was not built. The party is where they were. Don't narrate it as built; try a different kind or name, or carry on without it.`);
-            toastr.error(String(error?.message || error), 'Dungeon Master');
-        }
-    }
-    // A pin only holds while the holder is right there.
-    for (const line of releaseStalePins(c)) status.note(line);
-    // Names the story has said aloud: from now on a companion may use them (till then she knows people by their looks).
-    {
-        const here = currentPlace(c);
-        const said = `${t.narration || ''} ${t.ooc || ''} ${t.directions.map(d => `${d.speaker} ${d.brief || ''} ${d.direction || ''}`).join(' ')} ${lastPlayerMessage()}`;
-        const known = new Set(meta.namesKnown || []);
-        for (const g of Object.values(here?.place.guards || {})) { const f = String(g.name).split(' ')[0]; if (f.length >= 3 && new RegExp(`\\b${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(said)) known.add(nameKey(g.name)); }
-        meta.namesKnown = [...known].slice(-120);
-    }
     // The panel shows the clock, HP and hints as they are now.
     refreshMap();
-    // Loud failure: what was dropped is shown to the player now and to the DM next turn.
     // Animals the library can't draw (a parrot, a monkey) get a figure from Claude, in the background.
-    ensureAnimalFigures(c, [...(c.docs.npcs || []), ...Object.values(currentPlace(c)?.place.guards || {})]).catch(() => { });
+    ensureAnimalFigures(c, c.docs.npcs || []).catch(() => { });
+    // Loud failure: what was dropped is shown to the player now and to the DM next turn.
     meta.turnProblems = [...problems, ...dmOnly];
     if (problems.length) {
         status.note(`Dropped: ${problems.join(' · ')}`);
@@ -2427,30 +1493,16 @@ export async function runOpening(openingIn) {
     const status = beginTurn('Opening scene');
     try {
         if (!String(opening?.narration || '').trim()) {
-            // The design came without an opening (or the map pass lost it): the DM writes one now; failing that, the chat still says how to begin.
+            // The design came without an opening: the DM writes one now; failing that, the chat still says how to begin.
             status.note('No opening narration in the design: asking the DM for one');
             try {
                 const r = await askDm({ reasons: ['opening'], placeEvent: 'The campaign starts now. Write the opening scene: where the party is, what they see, and what is happening, so the player can act.' }, { model: modelFor(['opening']) });
-                if (r.turn?.narration) opening = { ...r.turn, new_npcs: [...(opening?.new_npcs || []), ...(r.turn.new_npcs || [])], scene: r.turn.scene || opening?.scene, standing_direction: r.turn.standing_direction || opening?.standing_direction, directions: r.turn.directions?.length ? r.turn.directions : opening?.directions || [] };
+                if (r.turn?.narration) opening = { ...r.turn, new_npcs: [...(opening?.new_npcs || []), ...(r.turn.new_npcs || [])], scene: r.turn.scene || opening?.scene, scene_card: r.turn.scene_card || opening?.scene_card, standing_direction: r.turn.standing_direction || opening?.standing_direction, directions: r.turn.directions?.length ? r.turn.directions : opening?.directions || [], state_changes: { ...(opening?.state_changes || {}), ...(r.turn.state_changes || {}) } };
             } catch (error) { console.warn('[Dungeon Master] opening narration failed', error); }
             if (!String(opening?.narration || '').trim()) opening = { ...(opening || {}), narration: 'The adventure begins. Say what you do, or ask the DM to set the scene.' };
         }
         await applyDmTurn(c, opening, status, new AbortController().signal, { reasons: ['opening'] });
-        // The adventure starts on a map: when the opening didn't build one, the code does, from where the story begins.
-        if (mapsOn() && !currentPlace(c) && !c.docs.world.combat) {
-            const loc = String(c.docs.world.location || opening?.scene?.location || '').trim() || String(c.meta.standing || '').split(/[,.]/)[0].trim();
-            if (loc) {
-                try {
-                    const kind = kindFromWords(loc) || '';
-                    const outdoors = isWildKind(kind, loc) || /\b(road|trail|path|woods?|forest|trees|hills?|moor|downs|field|meadow|clearing|river|stream|lake|shore|beach|bridge|crossroads|camp|village|town|hamlet|ruins?|cliff|valley|pass|plain|marsh|swamp)\b/i.test(`${loc} ${c.meta.standing || ''}`);
-                    status.note(`Building the first map: ${loc}`);
-                    if (outdoors) await buildFromRequest({ text: `${loc}. ${c.meta.standing || ''}`.trim(), kind, size: 'small' }, { status });
-                    else await requestBuild({ name: loc, kind: kind || 'house', size: 'small', why: c.meta.standing || String(opening?.narration || '').slice(0, 200), start: 'where the party is right now' }, { status, confirm: false });
-                } catch (error) { status.note(`First map not built: ${error.message}`); }
-            }
-        }
-        // The premise's cuffs: a companion the opening has holding the player keeps them, by the code, now that the map is up.
-        if (mapsOn() && currentPlace(c) && !c.docs.world.combat) await custodyFromStory(c, `${opening?.narration || ''} ${(opening?.directions || []).map(d => d.brief || '').join(' ')}`, status).catch(error => console.warn('[Dungeon Master] custody from the opening failed', error));
+        if (c.docs.world.sketch) openMap();
         status.finish('The adventure begins');
     } catch (error) {
         console.error(error);
@@ -2495,13 +1547,15 @@ export function syncPartyHp() {
     saveDoc('world');
 }
 
-export { dmType };
-
-/** The Stealth roll the player made this turn, for noise and for hostiles' eyes. */
-function stealthOf(meta) {
-    const r = meta.lastRoll;
-    return r && r.turn === meta.turn && /stealth/i.test(r.skill || '') ? { total: r.total, natural: r.natural, who: meta.persona.name } : null;
+/** The sketch for a campaign that was loaded without one (an older save, maps turned on later). */
+export function ensureSketch() {
+    const c = campaign();
+    if (!c || c.docs.world.sketch || c.docs.world.combat) return;
+    redrawSketch(c);
+    if (c.docs.world.sketch) saveDoc('world');
 }
+
+export { dmType };
 
 /**
  * Each companion in the fight decides their own turn (the local model), from what the code knows:
@@ -2535,63 +1589,4 @@ async function decideCompanionTurns(c, status) {
     meta.combatChoices = { turn: meta.turn, choices: out };
     saveMeta();
     return out;
-}
-
-/**
- * A companion who watched the player do something on the map (pick a lock, hide, smash a thing)
- * may say a word about it: one companion who can see them, half the time, never twice within three
- * turns, a short line or nothing. The local model decides; no DM call.
- */
-export async function companionSaw(c, what) {
-    const s = settings();
-    const cur = currentPlace(c);
-    if (running || !cur || !s.useHelper || c.docs.world.combat || !what) return;
-    const meta = c.meta, player = meta.persona.name;
-    if (Number.isFinite(meta.sawTurn) && meta.turn - meta.sawTurn < 3) return;
-    if (random01() > 0.5) return;
-    const { place } = cur;
-    const lead = place.state.positions[player];
-    if (!lead) return;
-    const map = floorById(place, lead.floor).map;
-    const watchers = meta.party.map(p => p.name).filter(n => {
-        const p = place.state.positions[n];
-        if (!p || p.floor !== lead.floor || isAway(c.docs.world, n) || lockedReason(c, n) || place.state.pose?.[n]?.pose === 'sleep') return false;
-        return computeVisible(place, p.floor, [{ x: p.x, y: p.y }], { radius: 8 })[lead.y * map.w + lead.x];
-    });
-    const quiet = watchers.filter(n => !ST.chat.slice(-3).some(m => m && !m.is_user && m.name === n));
-    if (!quiet.length) return;
-    const name = quiet[Math.floor(random01() * quiet.length)];
-    const member = meta.party.find(p => p.name === name);
-    meta.sawTurn = meta.turn;
-    saveMeta();
-    setRunning(true);
-    const status = beginTurn(`${name} saw that`);
-    try {
-        const decide = [
-            `${name}: ${trimToTokens(member?.summary || '', 200)}`,
-            meta.standing ? `Right now: ${meta.standing}` : '',
-            `Moment: ${player} just ${what}, right in front of ${name}.`,
-            `Would ${name}, being who they are, say anything about it right now? Usually not; only if it matters to them (it's against what they stand for, it's dangerous, it's funny, it helps). Reply JSON: {"speak": true or false, "what": "a few words"}`,
-        ].filter(Boolean).join('\n');
-        const pick = extractJson(await callLocal({ system: 'You decide one thing about a character in a roleplay. Reply with JSON only.', messages: [{ role: 'user', content: decide }], maxTokens: 60, profileId: s.helperProfileId })) || {};
-        if (pick.speak === true || pick.speak === 'true') {
-            const step = status.step(`${name} speaks`);
-            await makeSpeak(name, `${player} just ${what}, right in front of you. One short line, in character, about that and nothing else. You want to say: ${String(pick.what || '').slice(0, 100)}.`, { signal: new AbortController().signal, length: 'short' });
-            step.done();
-        } else status.note(`${name} says nothing`);
-        status.finish('');
-    } catch (error) {
-        console.warn('[Dungeon Master] companion reaction failed', error);
-        status.finish('');
-    } finally {
-        setRunning(false);
-        runQueuedTurn();
-    }
-}
-
-/** The player's Stealth roll with where they stand, so it covers only what they did there. */
-function withAt(stealth, place) {
-    if (!stealth) return null;
-    const at = place?.state?.positions?.[stealth.who];
-    return at ? { ...stealth, at: { x: at.x, y: at.y } } : stealth;
 }

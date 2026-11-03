@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS, OLD_DEFAULTS } from '../core/notes.js';
-import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, REFEREE_MODEL, LIGHT_V24, LIGHT_V25, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
+import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, LIGHT_V25, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -31,11 +31,8 @@ export const DEFAULTS = Object.freeze({
     helperProfileId: '',        // '' = same as actors (current connection)
     helperMaxTokens: 160,
     useHelper: true,
-    mapTier: 'some',            // 'off' (no maps, all in the chat) | 'some' (where needed or asked) | 'always' (every new location)
-    bookkeeper: true,
-    mapBuilder: 'algorithm',   // new maps: 'algorithm' (a short brief, the code builds it: fast, nearly free) or 'claude' (Claude plans every room)
-    mapBrief: 'local',          // who writes the brief: 'local' (the helper; Haiku if there's none) or 'haiku'
-    mapSync: 'local',           // after each turn the map is put in step with the story: 'local' (the helper; Haiku without one), 'claude' (Haiku), 'off'           // after each turn the helper checks the story against HP, conditions and items
+    mapTier: 'some',            // 'off' (no map: the whole campaign stays in the chat) | 'some' (the sketch of the scene, and the battle map in fights)
+    bookkeeper: true,           // after each turn the helper checks the story against HP, conditions and items
 
     // Budget (USD) and Claude prices (USD per million tokens)
     monthlyCap: 20,
@@ -73,7 +70,6 @@ export const DEFAULTS = Object.freeze({
     mapAmbience: true,          // weather and ambient particles on the map (fire and spells always show)
     mapBubbles: true,           // speech bubbles over figures on the map when companions and NPCs speak
     turnPrompts: true,          // in a fight: ask "done with your turn?" after your action, and whether you react before a hit lands
-    guardsTalk: true,           // a guard or local who sees you may say one short line through the local model (else canned lines only)
     sounds: false,              // EXPERIMENTAL: synthesized sound effects and ambient beds for the map (no files)
     sfxVolume: 0.6,             // 0..1
     ambientVolume: 0.3,         // 0..1
@@ -124,21 +120,11 @@ export function settings() {
         }
         s.defaultsV7 = true;
     }
-    // v0.30: the room note gained the rooms a companion knows and a no-invention line (untouched old default only).
-    if (!s.roomV30) {
-        if (s.templates?.room === OLD_DEFAULTS.room) s.templates.room = DEFAULT_TEMPLATES.room;
-        s.roomV30 = true;
-    }
     // v0.31: dialogue in quotation marks (so the map's speech bubbles know what was said aloud); untouched defaults only.
     if (!s.quotesV31) {
         if (s.templates?.scene === OLD_DEFAULTS.sceneV30) s.templates.scene = DEFAULT_TEMPLATES.scene;
         if (s.templates?.npc === OLD_DEFAULTS.npcV30) s.templates.npc = DEFAULT_TEMPLATES.npc;
         s.quotesV31 = true;
-    }
-    // v0.35: the room note names who is right there with the companion (untouched old default only).
-    if (!s.roomV35) {
-        if (s.templates?.room === OLD_DEFAULTS.roomV33 || s.templates?.room === OLD_DEFAULTS.room) s.templates.room = DEFAULT_TEMPLATES.room;
-        s.roomV35 = true;
     }
     // v0.63.2: a companion never talks dice (untouched old defaults only).
     if (!s.noDiceV63) {
@@ -170,13 +156,8 @@ export function settings() {
         }
         s.lightV25 = true;
     }
-    // v0.66: the referee's model. v0.65 gave it the light model (Haiku 5.5), which thinks before it
-    // answers and, with five tokens to answer in, came back empty most of the time. A referee left on
-    // that default moves to Haiku 4.5 (no thinking); one someone chose stays.
-    if (!s.refereeV66) {
-        if (s.taskModels?.referee === DEFAULT_LIGHT_MODEL) s.taskModels.referee = REFEREE_MODEL;
-        s.refereeV66 = true;
-    }
+    // v0.70: the map tiers are off or on (the "always" tier built a place for every location; places are gone).
+    if (s.mapTier === 'always') s.mapTier = 'some';
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();
     for (const [k, v] of Object.entries(DEFAULTS)) {

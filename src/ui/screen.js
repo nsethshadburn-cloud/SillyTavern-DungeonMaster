@@ -88,7 +88,7 @@ export function renderScreen() {
     <div class="menu_button" id="dm-scr-force" title="Have the DM step in now">DM step in</div>
     <div class="menu_button" id="dm-scr-recap" title="Previously on…">Recap</div>
     <div class="menu_button" id="dm-scr-resync" title="After deleting or editing messages: Claude re-reads the chat and fixes what it has logged">Fix mismatch</div>
-    ${w.combat || w.sceneMap ? '<div class="menu_button" id="dm-scr-map" title="Map">Map</div>' : ''}
+    ${w.combat || w.sketch ? '<div class="menu_button" id="dm-scr-map" title="Map">Map</div>' : ''}
     <div class="menu_button" id="dm-scr-figures" title="See and redraw your party's little map figures">Map figures</div>
     <div class="menu_button" id="dm-scr-pause">${m.paused ? 'Resume' : 'Pause'}</div>
   </div>

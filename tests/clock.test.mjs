@@ -4,13 +4,10 @@ import assert from 'node:assert/strict';
 
 import { wordFor, parseTime, parseDuration, createClock, ensureClock, advanceClock, setClock, passTime, skipTo, clockText, hhmm, parseWeather, climateOf, driftWeather, weatherAmbience, weatherFlags, WEATHERS } from '../src/core/clock.js';
 import { createWorldState, worldFlags, isNight, isLate } from '../src/core/world.js';
-import { computeVisible, FOG_SIGHT } from '../src/core/explore.js';
 import { normalizeDmTurn } from '../src/core/protocol.js';
 import { applyStateChanges } from '../src/core/world.js';
 import { expireConditions, untilWords } from '../src/core/upkeep.js';
-import { dampen, ignite, tickFire } from '../src/core/fire.js';
 import { whenLabel } from '../src/core/state.js';
-import { renderTemplate, DEFAULT_TEMPLATES, OLD_DEFAULTS } from '../src/core/notes.js';
 import { parseBookkeeping } from '../src/core/bookkeeper.js';
 
 test('the time of day in words follows the hour', () => {
@@ -111,19 +108,6 @@ test('weather: read from words, drifts by climate as hours pass, shows on outdoo
     assert.equal(isLate('dawn'), false);
 });
 
-test('fog outdoors: nobody sees past a few squares', () => {
-    const rows = [];
-    for (let i = 0; i < 3; i++) rows.push('.'.repeat(20));
-    const place = { name: 'Road', kind: 'wild', fog: true, floors: [{ id: 'F0', name: 'Road', level: 0, map: { w: 20, h: 3, rows, theme: 'forest', props: [], version: 0 } }], rooms: {}, doors: {}, traps: {}, items: {}, exits: [], stairs: [], buildings: {}, windows: {}, guards: {}, state: { positions: {}, explored: {}, visited: [], floor: 'F0' } };
-    const map = place.floors[0].map;
-    let vis = computeVisible(place, 'F0', [{ x: 2, y: 1 }]);
-    assert.equal(vis[1 * map.w + 10], 1, 'a clear day: eight squares down the road');
-    place.state.weather = 'fog';
-    vis = computeVisible(place, 'F0', [{ x: 2, y: 1 }]);
-    assert.equal(vis[1 * map.w + 2 + FOG_SIGHT], 1, 'fog: four squares');
-    assert.equal(vis[1 * map.w + 2 + FOG_SIGHT + 1], 0, 'and no more');
-});
-
 test('the DM\'s turn carries clock and weather fields', () => {
     const t = normalizeDmTurn({ narration: 'x', clock: { advance: '3 hours' }, weather: 'rain' });
     assert.deepEqual(t.clock, { advance: '3 hours', set: '' });
@@ -155,33 +139,12 @@ test('a condition that lasts an hour ends by the clock: a night\'s sleep or a ti
     assert.equal(expireConditions(old, { turn: 7 }).length, 1);
 });
 
-test('rain damps a fire down and nothing catches', () => {
-    const rows = [];
-    for (let i = 0; i < 5; i++) rows.push('_'.repeat(9));
-    const map = { w: 9, h: 5, rows, theme: 'forest', props: [], version: 0 };
-    ignite(map, 4, 2, { heat: 2, fuel: 6 });
-    assert.equal(Object.keys(map.fire).length, 1);
-    assert.deepEqual(dampen(map, 1), [], 'damped, not out');
-    assert.equal(map.fire['4,2'].heat, 1);
-    const r = tickFire(map, { rng: () => 1 });
-    assert.equal(r.caught.length, 0, 'in the rain nothing catches');
-    assert.deepEqual(dampen(map, 2), ['4,2'], 'a storm puts it out');
-    assert.equal(Object.keys(map.fire).length, 0);
-});
-
 test('timeline labels follow the clock: a night entry remembered by day is "last night"', () => {
     assert.equal(whenLabel({ day: 2, time: 'night' }, { day: 2, time: 'night' }), 'Earlier tonight');
     assert.equal(whenLabel({ day: 2, time: 'night' }, { day: 2, time: 'morning' }), 'Last night');
     assert.equal(whenLabel({ day: 2, time: 'afternoon' }, { day: 2, time: 'night' }), 'Earlier today');
     assert.equal(whenLabel({ day: 1, time: 'evening' }, { day: 2, time: 'morning' }), 'Last night');
     assert.equal(whenLabel({ day: 1, time: 'noon' }, { day: 4, time: 'morning' }), '3 days ago');
-});
-
-test('the room note names who is right there, and the old default template moves to it', () => {
-    const text = renderTemplate(DEFAULT_TEMPLATES.room, { char: 'Judy', room: 'Cell block', here: 'Turnkey Wren (a turnkey, 3 squares away, asleep); Amber (1 squares away)', things: 'a bench', exits: 'door to the yard', known: 'Cell block' });
-    assert.match(text, /Right here with \{\{char\}\}: Turnkey Wren .*asleep/);
-    assert.notEqual(OLD_DEFAULTS.roomV33, DEFAULT_TEMPLATES.room, 'the migration has something to move from');
-    assert.ok(DEFAULT_TEMPLATES.room.includes('{{here}}'));
 });
 
 test('the books cover the people on the map: the narration knocks a guard out', () => {

@@ -1,5 +1,5 @@
 // When a campaign's chat is deleted, its campaign goes with it: the campaign files (bible, plot,
-// notes, story, world, logs), every map in its atlas, and the NPC character cards made for it.
+// notes, story, world, logs), any maps an older version built, and the NPC character cards made for it.
 // The extension keeps a small index (campaign id -> chat) in its settings so it knows which
 // campaign a deleted chat belonged to, since the chat's own data is already gone by then.
 // It always asks first.
@@ -38,8 +38,9 @@ export async function onChatDeleted(chatId) {
     const hits = Object.entries(s.campaignIndex || {}).filter(([, e]) => e.chat === id);
     for (const [campaignId, entry] of hits) {
         const files = Object.keys(FILES).map(k => fileName(campaignId, k));
-        const atlasDoc = await readJson(fileName(campaignId, 'atlas'), { places: {} });
-        const placeFiles = Object.values(atlasDoc?.places || {}).map(p => p.file).filter(Boolean);
+        // Maps built by versions before 0.70 (the atlas and its places) go with the rest.
+        const atlasDoc = await readJson(`dm_${campaignId}_atlas.json`, { places: {} });
+        const placeFiles = [...Object.values(atlasDoc?.places || {}).map(p => p.file).filter(Boolean), `dm_${campaignId}_atlas.json`];
         const npcs = await readJson(fileName(campaignId, 'npcs'), []);
         const avatars = (Array.isArray(npcs) ? npcs : []).map(n => n.avatar).filter(Boolean);
         const ok = await ST.callGenericPopup(
