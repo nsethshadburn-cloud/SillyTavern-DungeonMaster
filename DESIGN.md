@@ -974,3 +974,111 @@ Wizard → campaign build (Judy's sheet + bible/plot/opening) → group chat wit
 - Actor connection profile switching (`/profile` swap), which wasn't exercised because your saved profiles point at `127.0.0.1` addresses that only exist on the laptop/server.
 - Real prompt-caching savings and Haiku's DM quality in real play (needs the `config.yaml` switches and a session; check the Anthropic console's cache-read numbers).
 - Running on the AI server itself.
+
+## 20. The referee split (the plan for v0.80)
+
+*Written after live test 13, before any of it is built. Nothing below is in the code yet.*
+
+### 20.1 The problem, honestly
+
+Thirteen live tests on the slim build each ended the same way: the DM got one thing wrong, and the fix was a regex for that thing. "Hand closes on", "five silver it is", "took no turn this round", "already carries it". Each catches one past mistake. The list is now most of `orchestrator.js`, and it will never be complete, because the next campaign shape has a mistake nobody has made yet. The owner put it plainly: we can't write code for every scenario; that is what the model is for.
+
+The cause is not that the model can't judge the rules. It is that one call is asked to do two different jobs at once: judge the rules **and** write the story, inside one JSON reply, with 42,000 characters of rules in front of it and the prose behind. Under that load Haiku writes the story and skims the rules, and the three things a turn has to do (rule, roll, tell) come out in the wrong order inside the one reply: the hit is narrated before the roll, the grab closes by say-so, the enemy who should act is mentioned and not rolled. Every regex in the list is a symptom of that order.
+
+### 20.2 The shape: rule, then roll, then tell
+
+A turn becomes three steps, each with one owner, in a fixed order the code enforces:
+
+1. **The referee** (Claude, a small prompt, structured output) reads the state and the player's line and rules on mechanics only: what roll is needed, who acts, what changed on the books, whether the scene moved, whether a fight starts or ends. It writes no prose. It never sees the bible, the plot, the companions' minds or the memory book.
+2. **The code** does what the ruling says: asks the player's roll, rolls everyone else's dice, applies damage, moves figures within reach, keeps the books and the clock, draws the sketch. All of this exists today and does not change.
+3. **The storyteller** (Claude) gets the ruling and the dice results as settled facts, plus everything about the story (bible, plot, notes, minds, transcript), and writes the narration, the companions' briefs, "happened", and the plot, notes and mind updates. It never sends state changes, rolls, positions or combat keys: those keys are dropped if present.
+
+The storyteller cannot narrate a hit before the roll because it is not called until the roll is in. The referee cannot skip an enemy because the code names every living enemy and asks for each one's action by name. Nothing holds anyone by say-so because the referee's only way to say "held" is a contest it has to list, which the code rolls first. The order is the fix; the regex list was the code trying to impose that order on a single reply after the fact.
+
+### 20.3 What each piece decides
+
+| Decision | Today | After the split |
+|---|---|---|
+| Is a roll needed, which, what DC | DM (prose rules, often skipped) + code after-checks | **Referee** |
+| Who acts this round, at whom, with what | DM + `enemiesDue` after-check + companion choices (local) | **Referee** for enemies; companions keep their own local choice; the code lists everyone by name and the referee answers per name |
+| Dice, damage, HP, reach, initiative order, death | Code | Code (unchanged) |
+| Items, gold, conditions, slots, rests, clock | DM `state_changes` + the local bookkeeper after the turn | **Referee** only; the local bookkeeper is retired (two writers on one ledger charged the lantern twice) |
+| Scene moved; who is here; spots; object names | DM `scene_card` | **Referee** (the card is state); descriptions one short phrase each |
+| Fight starts/ends, who is in it | DM + code auto-start/auto-end | **Referee**, with the code's auto-end kept |
+| Narration, briefs, happened, notes, plot beats, minds | DM | **Storyteller** |
+| OOC answers to the player | DM | Referee for rules ("a grab is a contest"); storyteller for story questions |
+| Random event choice | DM | Storyteller (it is a story choice) |
+| Banter with no mechanics | Local model, no DM call | Unchanged: the rules triage gates it; a line with trade, contest or attack words goes to the referee |
+
+### 20.4 The referee's contract
+
+Input: the mechanics rules (the "Rules", "Combat" and "Going in and out" sections of today's `DM_RULES`, rewritten as rulings, about 10,000 characters), the state block that `volatilePrompt` already builds under WHERE THINGS STAND, the last six messages, the player's line, and when there is one: the companion task, the roll result, the list of names who must act this round.
+
+Output, one JSON object:
+
+```
+{
+  "rolls": [ { "who": "Amber", "kind": "check|attack|save|contest", "skill": "Sleight of Hand", "dc": 15,
+               "vs": "Olwen Tusk's Perception", "why": "the lock is good work" } ],
+  "acts":  { "Scald": { "do": "attack", "target": "Amber", "weapon": "knife", "move": "h3" },
+             "Hob":   { "do": "hold", "why": "winded" } },
+  "changes": { "hp": {}, "conditions_add": {}, "conditions_remove": {}, "items_add": {}, "items_remove": {}, "gold": 0, "spend": {} },
+  "clock": null, "rest": null,
+  "scene": { "moved": true, "place": "front room of the locksmith's shop", "people": { "Olwen Tusk": "behind the counter" },
+             "spots": { "Olwen Tusk": "across", "Judy Hopps": "outside" }, "objects": ["counter", "back door"] },
+  "fight": { "start": [ { "name": "Hob", "ac": 12, "hp": 11 } ] } | { "end": true } | null,
+  "ooc": "A grab is a contest: roll Acrobatics against his Athletics.",
+  "fact": "The lock holds; the scrape carries into the back room."
+}
+```
+
+"fact" is the one line the storyteller is given as what is now true, besides the dice. Rolls for the player are asked by the code with "why" on the 🎲 card; rolls for everyone else are rolled by the code at once. "acts" is answered for every name the code listed, or the code asks again for the missing ones, once, then logs "holds".
+
+The referee is called on every player line the rules triage does not settle as banter, on every roll result, on every end of turn in a fight, and once for the opening of round 1 with the names who beat the player. It is cheap: about 4,000 tokens in and 200 out, one to two seconds on Haiku, a tenth of a cent.
+
+### 20.5 The storyteller's contract
+
+Input: today's prompt without the mechanics: the bible, plot, NPCs met, notes, story so far, companions' knowledge and minds, memory entries, the transcript, and a new block, THE TABLE'S RULING: the referee's "fact", the scene change if any, every roll with its result (already on cards the player has seen), every act with its outcome, HP after. Then: "Tell it. These are settled; do not change them, do not re-roll, do not add a wound or a coin the ruling doesn't have."
+
+Output: `narration`, `directions`, `happened`, `notes_add`, `story_add`, `beats_completed`, `mind_update`, `knowledge_update`, `event`, `objective`, `standing_direction`. Nothing else. A `state_changes`, `player_roll`, `npc_rolls`, `positions` or `scene_card` key in its reply is dropped with a note to it next turn.
+
+On a turn whose ruling is only "ask the player a roll", the storyteller is **not called**: the 🎲 card carries the referee's "why" as its line, the roll comes in, the referee rules the outcome, and then the storyteller tells it with the outcome known. One fewer call, and the moment before the roll can't leak the result. The cost is a little less prose around a roll; the benefit is that the single most common finding of thirteen tests becomes impossible rather than caught.
+
+### 20.6 A turn, concretely
+
+*"Amber slips to the back door and works the lock."*
+1. Rules triage: risky. Referee: `rolls: [Amber Sleight of Hand DC 15, why: "good work, and Tusk is two rooms away"]`. Code posts the 🎲 card with that line. End of turn.
+2. The player rolls 14. Referee (roll result): `fact: "The lock holds. Tusk heard the scrape."`, `acts: {}`, `scene: null`. Storyteller: narrates the failed pick and Tusk's step toward the door, briefs Judy. Companions speak.
+
+*End of Amber's turn in a fight, order Amber 12, Scald 11, Judy 8, Hob 3 (down).*
+1. Code: names who must act: Scald, Judy (Judy's choice comes from her own local decision, as now). Referee: `acts: { Scald: { do: "attack", target: "Amber", weapon: "knife", move: "h3" } }`.
+2. Code: walks Scald within reach, rolls the attack against Amber's AC with the roster's dice, applies damage, posts the 🎲 and 💥 cards, rolls Judy's attack. New round.
+3. Storyteller: narrates Scald's knife and Judy's bolt with the results as facts, hands the turn to Amber.
+
+*"((we sleep till morning))"*
+1. Referee: `clock: {set: "dawn"}, rest: "long", fact: "A night's sleep."`. Code: moves the clock, takes the rest, posts 🕰️ and 📜.
+2. Storyteller: grey light at the shutters.
+
+### 20.7 What is deleted, what stays
+
+Deleted: `REASON_TEXT`'s mechanics texts; the after-checks in `turnBody` (`toldHit`, `toldHold`, the contest check, the brief-only check, the two attack checks, `enemiesDue`); `meta.afterInitiative` and `meta.openingRound` (the referee is told who beat the player and answers per name); the local bookkeeper and `goldBooked`; the "roll already asked by the code" dance; `combatFromAttacks`; the DM-side half of `applySceneCard`'s merging rules (the referee sends the card whole when the scene moves and nothing when it doesn't).
+
+Stays, unchanged: dice, `judge`, `changeHp`, `closeToTarget`, reach, initiative order, `finishCombat`, `takeRest`, the clock, `applyStateChanges` (with the once-per-name item rule), the sketch, the figures, the tiles, the companions' local replies and combat choices, the rules triage as the cheap gate, the cost log, the budget.
+
+Rewritten: `turnBody` (the order above), `applyDmTurn` split into `applyRuling` (state) and `applyStory` (chat), `dm.js` into `referee.js` and `storyteller.js` sharing the state block, `protocol.js` into two schemas, the smoke harness with two scripted queues (`llm.referee`, `llm.story`) and the thirteen smoke tests rewritten against the new order.
+
+### 20.8 Models and cost
+
+Two new jobs in the settings table: **referee** and **storyteller**, each with its own model. Defaults: Haiku for both, Sonnet for the setup jobs as now. The bet is that Haiku judges well when judging is all it is asked to do; if it doesn't, Sonnet as referee costs about a cent a turn and the storyteller stays cheap. Per turn: one referee call (about $0.001, one to two seconds) plus one storyteller call (today's DM cost), and no bookkeeper call. Turn time goes up by the referee's one to two seconds on turns that call both, and down on roll-asking turns, which call only the referee.
+
+### 20.9 Risks
+
+- **Disagreement.** The storyteller may contradict a ruling (narrate a hit the dice missed). It is given the results as facts and told not to change them; the books are the code's either way, so a contradiction is flavour drift, not a broken game. One generic check stays: a narration that names an HP, a coin or a condition the ruling doesn't have is told off. That is one check, not a list.
+- **The referee misjudges.** A wrong DC or a missed contest is still possible. It is a smaller prompt doing one job, which is the whole bet; the model is a setting, so the answer to a bad referee is a better model, not more code.
+- **Latency.** One more call on most turns. Measured, not guessed, in the first live test.
+- **A third restructuring.** The books, dice, map, sketch, figures and companions are untouched; the DM protocol and the turn order are what change. Two to three days of work, then two live tests on the town track, then the owner's own campaign.
+- **What it doesn't fix.** The local companions' discipline, SillyTavern dropping a message typed while a companion generates, and the time the local model takes. Those are the same after the split.
+
+### 20.10 Build order
+
+1. `referee.js`: prompt and schema, with unit tests on the parse. 2. `storyteller.js`: today's prompt minus mechanics, with the ruling block. 3. `turnBody` rewritten; `applyRuling` / `applyStory`. 4. The harness with two queues; the smoke tests rewritten. 5. Delete the after-checks and the bookkeeper. 6. Settings: two jobs, migration from `taskModels`. 7. Live test 14 on the town track; 15 on a different premise with three companions. Built on a branch (`referee`) so `main` stays at v0.74 and playable throughout.
