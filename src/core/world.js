@@ -133,7 +133,10 @@ export function applyStateChanges(world, changes, knownNames = [], { turn = null
     for (const [who, items] of byOwner(changes.items_add)) {
         const pack = who ? packOf(who) : null;
         for (const item of arrayOf(items)) {
-            (pack?.list ?? world.items).push(String(item));
+            const list = pack?.list ?? world.items;
+            // Already there: the DM restating the ledger a turn later is not a second ledger ("2 torches" is two).
+            if (list.some(x => nameKey(x) === nameKey(item))) continue;
+            list.push(String(item));
             log.push(`+ ${item}${pack ? ` (${pack.name})` : ''}`);
         }
     }

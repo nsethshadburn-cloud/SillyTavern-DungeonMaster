@@ -1,6 +1,19 @@
 // Run with: node --test tests/
 // v0.11: what the local model is told is true right now (from the "Lantern and the Glass" session).
 import test from 'node:test';
+import { createWorldState, applyStateChanges } from '../src/core/world.js';
+
+test('v0.74: an item is added to a pack once, however many turns the DM restates it', () => {
+    const w = createWorldState();
+    w.party = { Amber: { hp: 20, hp_max: 20, conditions: [] } };
+    assert.deepEqual(applyStateChanges(w, { items_add: { Amber: ['Customs ledger (three pages torn out)'] } }, ['Amber']), ['+ Customs ledger (three pages torn out) (Amber)']);
+    assert.deepEqual(applyStateChanges(w, { items_add: { Amber: ['customs ledger (three pages torn out)'] } }, ['Amber']), [], 'the restated ledger is no second ledger');
+    assert.equal(w.inventory.Amber.length, 1);
+    assert.deepEqual(applyStateChanges(w, { items_add: { Amber: ['2 torches'] } }, ['Amber']), ['+ 2 torches (Amber)'], 'two of a kind is said as two');
+    applyStateChanges(w, { items_add: ['rope'] }, ['Amber']);
+    assert.deepEqual(applyStateChanges(w, { items_add: ['rope'] }, ['Amber']), [], 'the shared pack too');
+    assert.deepEqual(w.items, ['rope']);
+});
 import assert from 'node:assert/strict';
 
 import { normalizeSceneCard, applySceneCard, renderSceneCard, pushTimeline, renderTimeline, renderPeople, applyTableRules } from '../src/core/state.js';

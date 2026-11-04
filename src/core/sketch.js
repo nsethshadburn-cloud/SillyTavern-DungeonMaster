@@ -116,7 +116,7 @@ function zoneRings(zone) {
  *  party = companion names; away = companions not with the player; previous = the last sketch (world.sketch), kept where it still fits
  * @returns {{key:string, map:object, positions:Record<string,string>, zones:Record<string,string>, objects:Record<string,string>}|null}
  */
-export function buildSketch(card, { world, player, party = [], away = [], previous = null, npcs = [] }) {
+export function buildSketch(card, { world, player, party = [], away = [], previous = null, npcs = [], carried = [] }) {
     if (!card || (!card.place && !Object.keys(card.people || {}).length)) return null;
     const theme = sketchTheme(card, world);
     const key = sketchKey(card, theme);
@@ -138,6 +138,8 @@ export function buildSketch(card, { world, player, party = [], away = [], previo
     const spotsForProps = [];
     for (let y = H - 2; y >= 1; y--) for (let x = 1; x < W - 1; x++) spotsForProps.push({ x, y });
     for (const [name, look] of Object.entries(card.objects || {}).slice(0, 8)) {
+        // A thing in someone's pack is not on the floor (the bought lantern was drawn in the shop).
+        if (carried.some(i => nameKey(i) === nameKey(name))) continue;
         const type = propForObject(name, look);
         if (!type) continue;
         const [pw, ph] = PROPS[type].size || [1, 1];

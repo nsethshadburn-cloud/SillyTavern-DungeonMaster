@@ -272,6 +272,37 @@ test('v0.73: an enemy whose turn it was and who got no roll and no move is told 
     assert.equal(cards('note').filter(t => /took no turn/.test(t)).length, notes === 0 ? 0 : cards('note').slice(0, notes).filter(t => /took no turn/.test(t)).length, 'a "positions" entry at his square counts as his turn');
 });
 
+test('v0.74: a night slept through is a long rest even when the DM sent only the clock; an enemy rolls its own dice; the ledger lands once', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    const w = c.docs.world;
+    // The ledger: taken once, restated the next turn.
+    await playerSays('*Amber tries to pry the box open and take the ledger.*', [turn({ narration: 'The lid gives. The ledger is yours.', state_changes: { items_add: { Amber: ['Customs ledger'] } } })]);
+    await playerSays('*Amber tries to read the ledger by the lamp.*', [turn({ narration: 'Names and sums, page after page.', state_changes: { items_add: { Amber: ['Customs ledger'] } } })]);
+    assert.deepEqual(w.inventory.Amber.filter(i => /ledger/i.test(i)), ['Customs ledger'], 'one ledger');
+    assert.equal(cards('roll').filter(t => /\+ Customs ledger/.test(t)).length, 1, 'one card for it');
+    assert.ok(c.meta.turnProblems.some(x => /already carries it/.test(x)), 'the DM is told');
+    // The night: a clock skip to dawn with no "rest" is a long rest all the same.
+    w.party.Amber.hp = 10;
+    await playerSays('((we sleep till morning))', [turn({ ooc: 'Sleeping till morning: I\'ll skip the clock to dawn.', narration: 'Grey light at the shutters.', clock: { set: 'dawn' } })]);
+    assert.equal(w.party.Amber.hp, w.party.Amber.hp_max, 'a night\'s sleep is a long rest: HP back');
+    assert.ok(cards('roll').some(t => /📜 Long rest: Amber: HP 10 → 24/.test(t)), cards('roll').filter(t => /rest/i.test(t)).join(' | '));
+    assert.ok(cards('roll').some(t => /🕰️ Time passes until dawn/.test(t)));
+    assert.ok(c.meta.turnProblems.some(x => /that is a long rest, and the code took it/.test(x)));
+    // An hour's nap at noon is not.
+    w.party.Amber.hp = 10;
+    await playerSays('((an hour passes while Amber dozes on the bench))', [turn({ narration: 'You doze.', clock: { advance: '1 hour' } })]);
+    assert.equal(w.party.Amber.hp, 10, 'an hour is no long rest');
+    // The enemy's dice are the roster's, whatever the DM wrote for the swing.
+    await playerSays('((Hob comes at Amber with his club))', [turn({ narration: 'Hob swings the club up.', scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, start_combat: { enemies: [{ name: 'Hob', ac: 12, hp: 11, dex: 1, damage: '1d8+2' }] }, player_roll: { kind: 'initiative', skill: 'Initiative', reason: 'roll initiative' } })]);
+    await playerSays('1', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'Hob is quicker.', npc_rolls: [{ who: 'Hob', what: 'club swing at Amber', notation: '1d20+9', kind: 'attack', target: 'Amber', damage: '1d4+3', on_success: 'the club lands', on_fail: 'it whistles past' }] })]);
+    const swing = cards('roll').find(t => /\*\*Hob\*\* · club swing/.test(t));
+    assert.ok(swing, 'Hob swung');
+    const dmg = Number(/\*\*(\d+)\*\* damage/.exec(swing)?.[1] || 0);
+    if (dmg) assert.ok(dmg >= 3 && dmg <= 10, `within the roster's 1d8+2, not the DM's 1d4+3: ${swing}`);
+    assert.ok(c.meta.turnProblems.some(x => /replaced by their stat block's 1d8\+2/.test(x)), c.meta.turnProblems.join(' | '));
+});
+
 test('a dropped roll: the code asked first; a roll for a companion is rolled by the code', async () => {
     const c = await freshCampaign();
     await orchestrator.runOpening(opening());

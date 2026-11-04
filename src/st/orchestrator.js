@@ -608,6 +608,17 @@ function armorOf(c, name) {
 }
 
 /** Damage dice for an attack the DM sent without any: from its own words, the attacker's stats, or a plain 1d6. */
+/** An enemy's damage dice as the roster has them (start_combat's "damage", else the NPC card's stat block), or null: a party member's weapons are their own choice each turn. */
+function rosterDice(c, who) {
+    const foes = c.docs.world.combat?.enemies ?? {};
+    const foe = foes[matchName(who, Object.keys(foes)) ?? ''];
+    if (!foe) return null;
+    if (foe.damage && normalizeNotation(foe.damage)) return normalizeNotation(foe.damage);
+    const npc = (c.docs.npcs || []).find(n => nameKey(n.name) === nameKey(who));
+    const fromStats = /\b\d*d\d+(?:\s*[+-]\s*\d+)?/i.exec(String(npc?.stats || ''))?.[0];
+    return fromStats ? normalizeNotation(fromStats.replace(/\s+/g, '')) || null : null;
+}
+
 function attackDice(c, r) {
     const inWords = /\b\d*d\d+(?:\s*[+-]\s*\d+)?/i.exec(`${r.on_success} ${r.what}`)?.[0];
     if (inWords) return inWords.replace(/\s+/g, '');
@@ -1052,8 +1063,12 @@ function redrawSketch(c) {
         away: meta.party.map(p => p.name).filter(n => isAway(world, n)),
         previous: world.sketch,
         npcs: (c.docs.npcs || []).map(n => n.name),
+        carried: [...(world.items || []), ...Object.values(world.inventory || {}).flat()],
     });
 }
+
+/** The words that make a long clock skip a night's sleep (the player's line, the DM's aside or narration). */
+const SLEEP_WORDS = /\b(?:sleep|sleeps|sleeping|slept|asleep|bed|beds|bunk|turn(?:s|ed)? in|bed down|rest(?:s|ed)? (?:till|until|for the night|the night)|for the night|through the night|till (?:morning|dawn|first light)|until (?:morning|dawn|first light)|a night's rest|the night passes)\b/i;
 
 /** Apply everything the DM decided, in a sensible order. */
 export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [], quiet = false } = {}) {
@@ -1102,10 +1117,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     ensureClock(world);
     if (t.clock) {
         const before = clockText(world);
-        const r = t.clock.set ? skipTo(world, t.clock.set, { climate: climateHere(c) }) : t.clock.advance ? passTime(world, parseDuration(t.clock.advance) ?? 0, { climate: climateHere(c) }) : null;
+        const advance = t.clock.advance ? parseDuration(t.clock.advance) ?? 0 : 0;
+        const r = t.clock.set ? skipTo(world, t.clock.set, { climate: climateHere(c) }) : t.clock.advance ? passTime(world, advance, { climate: climateHere(c) }) : null;
         if (r) {
             status.note(`Clock: ${before} → ${clockText(world)}`);
             await postDiceCard(`🕰️ ${t.clock.set ? `Time passes until ${t.clock.set}` : `${t.clock.advance} pass${/^(a|an|one)\b/.test(t.clock.advance) ? 'es' : ''}`}: ${clockText(world)}.${r.weather ? ` The weather turns: ${WEATHER_WORDS[r.weather]}.` : ''}`, { state: true });
+            // A night slept through is a long rest: the clock skip alone left the player at 50/60 at dawn.
+            const skipped = t.clock.set ? r.skipped ?? 0 : advance;
+            if (!t.rest && skipped >= 6 * 60 && SLEEP_WORDS.test(`${lastPlayerMessage()} ${t.ooc || ''} ${t.narration || ''}`)) {
+                t.rest = 'long';
+                dmOnly.push(`The party slept ${Math.round(skipped / 60)} hours: that is a long rest, and the code took it (HP, hit dice, slots) since you sent only the clock. Sleeping through the night is "rest": "long", with the clock.`);
+                status.note('A night slept through: the long rest is the code\'s');
+            }
         } else status.note(`Clock: couldn't read "${t.clock.set || t.clock.advance}"`);
     }
     if (t.weather) {
@@ -1146,6 +1169,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     for (const who of Object.keys(t.state_changes?.hp || {})) if (!matchName(who, [...Object.keys(world.party), ...Object.keys(world.combat?.enemies ?? {})])) problems.push(`state_changes.hp for "${who}" was dropped: nobody by that name is tracked (the party: ${Object.keys(world.party).join(', ')}${world.combat ? `; in the fight: ${Object.keys(world.combat.enemies).join(', ') || 'nobody yet'}` : '; no fight is on, so nobody else has HP: start_combat first'})`);
     // State, combat, pacing, plot.
+    if (t.state_changes?.items_add && typeof t.state_changes.items_add === 'object' && !Array.isArray(t.state_changes.items_add)) {
+        for (const [who, items] of Object.entries(t.state_changes.items_add)) {
+            const owner = matchName(who, Object.keys(world.inventory || {}));
+            const had = (Array.isArray(items) ? items : [items]).filter(i => owner && (world.inventory[owner] || []).some(x => nameKey(x) === nameKey(i)));
+            if (had.length) dmOnly.push(`items_add ${had.map(i => `"${i}"`).join(', ')} for ${owner} was dropped: ${owner} already carries it (it went on the books when it was taken). Send an item once, the turn it changes hands; two of a kind is "2 torches".`);
+        }
+    }
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
     if (Number(t.state_changes?.gold)) meta.goldTurn = meta.turn;
     fallenInFight(c);
@@ -1451,7 +1481,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             await enemyHere(c, r.who, status);
             await enemyHere(c, r.target, status);
             if (r.dc === null && r.target) r.dc = armorOf(c, r.target);
-            if (!r.damage) r.damage = attackDice(c, r);
+            const roster = rosterDice(c, r.who);
+            if (roster && (!r.damage || normalizeNotation(r.damage) !== normalizeNotation(roster))) {
+                if (r.damage) dmOnly.push(`${r.who}'s damage ${r.damage} was replaced by their stat block's ${roster}: an enemy's dice never change between rolls.`);
+                r.damage = roster;
+            } else if (!r.damage) r.damage = attackDice(c, r);
             // Reach: a melee attack from more than a square off first walks the attacker up as far as a move allows; still out of reach, it's dropped.
             const close = closeToTarget(c, r.who, r.target, `${r.what} ${r.notation}`, status);
             if (close?.moved) mapChanged = true;

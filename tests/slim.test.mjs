@@ -122,6 +122,9 @@ test('the sketch: a room or open ground, the player at home, everyone in their z
     const s = buildSketch(card, { world, player: 'Amber', party: ['Judy Hopps'] });
     assert.ok(s, 'a sketch');
     assert.equal(s.map.theme, 'tavern');
+    // v0.74: a thing in someone's pack is not on the floor.
+    assert.ok(s.objects['a hooded lantern'], 'the lantern on its hook is drawn');
+    assert.equal(buildSketch(card, { world, player: 'Amber', party: ['Judy Hopps'], carried: ['A Hooded Lantern'] }).objects['a hooded lantern'], undefined, 'bought, it is in the pack, not on the floor');
     assert.equal(s.map.rows[s.map.h - 1][6], '+', 'a door at the bottom middle');
     const amber = parseCoord(s.positions.Amber, s.map), judy = parseCoord(s.positions['Judy Hopps'], s.map), hob = parseCoord(s.positions.Hob, s.map), scald = parseCoord(s.positions.Scald, s.map);
     assert.deepEqual(amber, { x: 6, y: 3 });
