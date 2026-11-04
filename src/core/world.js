@@ -467,7 +467,7 @@ export function combatSummary(world, player = '') {
     const fallen = Object.entries(world.combat.enemies || {}).filter(([, e]) => e.hp <= 0).map(([n]) => n);
     const lines = [`Round ${world.combat.round}. Initiative: ${world.combat.order.map(o => `${o.name} ${o.init}`).join(', ')}.${fallen.length ? ` DEAD (take no turns, never act or speak again, their bodies lie where they fell): ${fallen.join(', ')}.` : ''}`];
     const at = world.combat.order.findIndex(o => o.name === player);
-    if (player && at < 0) lines.push(`WAITING for ${player}'s initiative roll: nobody acts yet. Ask for it (player_roll kind "initiative") if it isn't already asked.`);
+    if (player && at < 0) lines.push(`WAITING for ${player}'s initiative roll: nobody acts yet. Ask for it (a roll of kind "initiative") if it isn't already asked.`);
     else if (player) {
         const before = world.combat.order.slice(0, at).map(o => o.name), after = world.combat.order.slice(at + 1).map(o => o.name);
         lines.push(`Order around the player: ${before.length ? before.join(', ') : 'nobody'} act before ${player}; ${after.length ? after.join(', ') : 'nobody'} after. Act only for those whose turn it is, then stop at ${player}'s turn.`);

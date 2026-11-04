@@ -3,7 +3,7 @@
 import { ST, MODULE } from './st.js';
 import { monthKey, nightKey } from '../core/budget.js';
 import { DEFAULT_TEMPLATES, DEFAULT_LENGTHS, OLD_DEFAULTS } from '../core/notes.js';
-import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, LIGHT_V25, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
+import { DEFAULT_MAIN_MODEL, DEFAULT_LIGHT_MODEL, LIGHT_V24, LIGHT_V25, PLAY_JOBS_V74, TASKS, defaultTaskModels, migrateModelSettings, pickModel } from '../core/models.js';
 
 /** Surprise types Claude may add, each with its own toggle. */
 export const SURPRISES = Object.freeze({
@@ -32,7 +32,6 @@ export const DEFAULTS = Object.freeze({
     helperMaxTokens: 160,
     useHelper: true,
     mapTier: 'some',            // 'off' (no map: the whole campaign stays in the chat) | 'some' (the sketch of the scene, and the battle map in fights)
-    bookkeeper: true,           // after each turn the helper checks the story against HP, conditions and items
 
     // Budget (USD) and Claude prices (USD per million tokens)
     monthlyCap: 20,
@@ -163,6 +162,17 @@ export function settings() {
     }
     // v0.70: the map tiers are off or on (the "always" tier built a place for every location; places are gone).
     if (s.mapTier === 'always') s.mapTier = 'some';
+    // v0.80: the per-reason play jobs became the referee and the storyteller. Someone who had moved
+    // every play job to one other model keeps it for both; anyone else gets the recommended light model.
+    if (!s.tableV80) {
+        if (s.taskModels) {
+            const chosen = [...new Set(PLAY_JOBS_V74.map(k => s.taskModels[k]).filter(Boolean))];
+            if (chosen.length === 1 && chosen[0] !== DEFAULT_LIGHT_MODEL) { s.taskModels.referee ??= chosen[0]; s.taskModels.storyteller ??= chosen[0]; }
+            for (const k of PLAY_JOBS_V74) delete s.taskModels[k];
+        }
+        delete s.bookkeeper;
+        s.tableV80 = true;
+    }
     // Per-job models (v0.4.2): start from the saved main model, or carry over v0.4.x choices.
     if (s.taskModels === undefined && migrateModelSettings(s)) ST.saveSettingsDebounced();
     for (const [k, v] of Object.entries(DEFAULTS)) {

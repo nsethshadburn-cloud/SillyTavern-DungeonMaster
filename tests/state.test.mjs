@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 
 import { normalizeSceneCard, applySceneCard, renderSceneCard, pushTimeline, renderTimeline, renderPeople, applyTableRules } from '../src/core/state.js';
 import { DEFAULT_TEMPLATES, renderTemplate } from '../src/core/notes.js';
-import { parseDmTurn, DM_RULES } from '../src/core/protocol.js';
+import { parseDmTurn, TABLE_RULES } from '../src/core/protocol.js';
 import { addNpcs, lookupModifier } from '../src/core/world.js';
 import { repeatedPhrases } from '../src/core/text.js';
 
@@ -109,8 +109,8 @@ test('DM turn: scene card, table rules, roles and roll bonus are read', () => {
     assert.equal(t.player_roll.bonus, 11);
     assert.equal(parseDmTurn('{"player_roll":{"skill":"Stealth"}}').player_roll.bonus, null);
     assert.equal(parseDmTurn('{}').scene_card, null);
-    for (const s of ['"scene_card"', 'TABLE RULES', 'table_rules_add', 'Never between a setup and its payoff', 'player_roll.bonus', '"role"', 'Never quote anyone in your narration who speaks this turn']) {
-        assert.ok(DM_RULES.includes(s), s);
+    for (const s of ['"scene_card"', 'TABLE RULES', 'table_rules_add', 'Never between a setup and its payoff', '"bonus"', '"role"', 'Never quote anyone in your narration who speaks this turn']) {
+        assert.ok(TABLE_RULES.includes(s), s);
     }
 });
 

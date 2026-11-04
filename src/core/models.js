@@ -1,5 +1,5 @@
 // Which Claude model does each job. With hybrid mode on, every job has its own model (Sonnet for
-// setup, story direction and combat; Haiku for everyday play by default). With it off, the main
+// the one-off setup; Haiku for the referee and the storyteller by default). With it off, the main
 // DM model does everything. Pure module.
 
 export const DEFAULT_MAIN_MODEL = 'claude-sonnet-5-5';
@@ -13,6 +13,8 @@ export const DEFAULT_LIGHT_MODEL = 'claude-haiku-5-5';
 export const LIGHT_V24 = Object.freeze(['checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'sprite']);
 /** Story direction during play moved to the light model in v0.25.2 (one-off setup the story builds on stays on the main model). */
 export const LIGHT_V25 = Object.freeze(['drift', 'stalled', 'deadlock', 'resync']);
+/** v0.80: the per-reason play jobs became two: the referee and the storyteller. These keys are gone from the table. */
+export const PLAY_JOBS_V74 = Object.freeze(['drift', 'stalled', 'deadlock', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'npc_addressed', 'ooc', 'manual', 'solo']);
 
 export const TASKS = Object.freeze([
     { key: 'campaign_design', group: 'Setup', label: 'Designing a new campaign', main: true },
@@ -21,22 +23,8 @@ export const TASKS = Object.freeze([
     { key: 'persona_sheet', group: 'Setup', label: 'Reading your PDF character sheet', main: true },
     { key: 'character_sheet', group: 'Setup', label: 'Writing sheets for party members', main: true },
     { key: 'sprite', group: 'Setup', label: 'Describing your party\'s little map figures', main: false },
-    { key: 'drift', group: 'Story direction', label: 'Steering back to the plot', main: false },
-    { key: 'stalled', group: 'Story direction', label: 'Unsticking a stuck scene', main: false },
-    { key: 'deadlock', group: 'Story direction', label: 'Breaking a deadlock (you keep refusing)', main: false },
-    { key: 'checkin', group: 'Story direction', label: 'The world moving on between your actions', main: false },
-    { key: 'combat_action', group: 'Combat', label: 'Starting fights and your combat actions', main: false },
-    { key: 'combat_round', group: 'Combat', label: 'Running combat rounds', main: false },
-    { key: 'risky_action', group: 'Everyday play', label: 'Risky actions (sneak, lie, climb)', main: false },
-    { key: 'roll_result', group: 'Everyday play', label: 'Narrating your roll results', main: false },
-    { key: 'scene_move', group: 'Everyday play', label: 'Travel, rests and time skips', main: false },
-    { key: 'event', group: 'Everyday play', label: 'Random events', main: false },
-    { key: 'companion_task', group: 'Everyday play', label: 'Things you tell a companion to do (search, scout)', main: false },
-    { key: 'companion_action', group: 'Everyday play', label: 'Ruling on a companion\'s risky attempt', main: false },
-    { key: 'npc_addressed', group: 'Everyday play', label: 'Talking to someone new', main: false },
-    { key: 'ooc', group: 'Everyday play', label: 'Out-of-character questions', main: false },
-    { key: 'manual', group: 'Everyday play', label: 'When you ask the DM to step in', main: false },
-    { key: 'solo', group: 'Everyday play', label: 'Your moments with no companion around', main: false },
+    { key: 'referee', group: 'The table', label: 'The referee: which roll, who acts, the books, the scene, fights', main: false },
+    { key: 'storyteller', group: 'The table', label: 'The storyteller: narration and the companions\' briefs', main: false },
     { key: 'recap', group: 'Housekeeping', label: '"Previously on…" recaps', main: false },
     { key: 'condense_notes', group: 'Housekeeping', label: 'Tidying the DM\'s notes', main: false },
     { key: 'resync', group: 'Housekeeping', label: 'Fixing a mismatch with the chat', main: false },
@@ -56,9 +44,8 @@ export function defaultTaskModels(main = DEFAULT_MAIN_MODEL, light = DEFAULT_LIG
  */
 export function pickModel(tasks, { hybrid, mainModel, taskModels, criticalModel = '', criticalRoll = false, rank = () => 0 }) {
     if (!hybrid) return mainModel;
-    // The turn prompts' names are the combat round's job; a job the settings don't know about (added in a later version) uses the main model.
-    const ALIAS = { player_turn: 'combat_round', end_turn: 'combat_round', reaction: 'combat_round' };
-    const models = tasks.map(t => taskModels?.[ALIAS[t] ?? t] || taskModels?.[t] || mainModel);
+    // A job the settings don't know about (added in a later version) uses the main model.
+    const models = tasks.map(t => taskModels?.[t] || mainModel);
     if (criticalRoll && criticalModel) models.push(criticalModel);
     if (!models.length) return mainModel;
     // Highest rank wins; on a tie the main model wins, then the first listed.

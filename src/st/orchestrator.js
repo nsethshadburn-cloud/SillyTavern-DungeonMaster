@@ -1,6 +1,8 @@
 // The turn loop: what happens after the player sends a message.
-// 1) triage (code, then the local helper)  2) dice  3) maybe a random event
-// 4) DM (Claude) only if needed  5) actors reply  6) bookkeeping.
+// 1) triage (code, then the local helper)  2) the player's dice  3) maybe a random event
+// 4) the table, only if needed: the REFEREE rules (Claude, mechanics only), the code does what the
+//    ruling says (dice, books, fight, scene), the STORYTELLER tells it (Claude, prose and briefs)
+// 5) actors reply.
 //
 // The story is the truth outside a fight: the DM narrates, the code keeps the books (HP, conditions,
 // gold, items, the clock, the dice) and draws a sketch of the scene from the DM's scene card. In a
@@ -10,8 +12,10 @@ import { ST } from './st.js';
 import { ensureAnimalFigures } from './figures.js';
 import { settings, currentSpend, modelFor, mapsOn } from './settings.js';
 import { campaign, saveMeta, saveDoc } from './campaign.js';
-import { callLocal, callClaude, BudgetError } from './llm.js';
-import { askDm, maybeCondenseNotes, resetStableCache } from './dm.js';
+import { callLocal, BudgetError } from './llm.js';
+import { maybeCondenseNotes, resetStableCache } from './dm.js';
+import { askReferee, dueToAct } from './referee.js';
+import { askStoryteller } from './storyteller.js';
 import { modelLabel } from '../core/models.js';
 import { rotateIdleNpcs, removeNpcsFromGroup, touchNpc } from './npccards.js';
 import { withDmThinking } from '../ui/thinking.js';
@@ -26,14 +30,13 @@ import { buildSketch } from '../core/sketch.js';
 import { ensureClock, passTime, skipTo, parseDuration, parseWeather, clockText, climateOf, WEATHER_WORDS } from '../core/clock.js';
 import { openMap, refreshMap, playAnim, setMapBusy } from '../ui/map.js';
 import { beginTurn } from '../ui/status.js';
-import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, attacksSomeone, isEndTurn } from '../core/triage.js';
+import { ruleTriage, helperTriagePrompt, parseHelperTriage, companionActionPrompt, parseCompanionAction, companionCombatPrompt, parseCompanionCombat, rollBelongsTo, isEndTurn } from '../core/triage.js';
 import { tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage } from '../core/pacing.js';
 import { eventChance, eligibleEvents, pickEvent, guessSetting, normalizeEvent } from '../core/deck.js';
 import { roll, judge, formatModifier, random01, saveDamage, diceText, doubleDice, diceMax, normalizeNotation } from '../core/dice.js';
 import { applyStateChanges, addNpcs, startCombat, addToInitiative, ensureEnemy, dropFallen, endCombat, lookupModifier, changeHp, worldFlags, ensureParty, applyPresence, isAway, conditionsOf, noteSeen, applyNoticed, attackDamage, moveBudget, spendMove, markDash, newRound } from '../core/world.js';
-import { tidyBookkeeping, bookkeeperPrompt, parseBookkeeping } from '../core/bookkeeper.js';
 import { budgetStatus, formatUsd } from '../core/budget.js';
-import { matchName, nameKey, trimToTokens, extractJson, repeatedPhrases } from '../core/text.js';
+import { matchName, nameKey, trimToTokens, repeatedPhrases } from '../core/text.js';
 import { turnPromptsOn, askEndTurn, askReaction } from './prompts.js';
 import { sfx } from '../ui/sound.js';
 import { applySceneCard, pushTimeline, applyTableRules, samePlace } from '../core/state.js';
@@ -123,13 +126,10 @@ export async function runTurn(opts = {}) {
     const onStop = () => controller.abort();
     ST.eventSource.on(ST.eventTypes.GENERATION_STOPPED, onStop);
     const status = beginTurn('Dungeon Master');
-    const turnStart = ST.chat.length;
     // The state before this turn, so deleting its narration can undo it (undo.js).
     const snap = snapshotTurn(c);
     try {
         await turnBody(c, opts, status, controller.signal);
-        // The books: in the background, so the next move never waits on them.
-        if (!controller.signal.aborted) queueBookkeeping(c, turnStart, { goldBooked: c.meta.goldTurn === c.meta.turn });
         sealTurn(snap);
         const left = await rotateIdleNpcs();
         if (left.length) status.note(`${left.join(', ')} left the scene`);
@@ -243,7 +243,7 @@ async function turnBody(c, opts, status, signal) {
                 triage.helperChoseSpeakers = true;
                 pacing.refusalStreak = h.refusing ? (pacing.refusalStreak ?? 0) + 1 : 0;
                 engaged = h.engaged;
-                // Who is the player talking to? A known NPC answers locally; a stranger needs the DM.
+                // Who is the player talking to? A known NPC answers locally; a stranger needs the table.
                 if (h.addressed && !/^(dm|dungeon master|narrator|everyone|nobody|none)$/i.test(h.addressed)) {
                     const npcNames = (c.docs.npcs || []).map(n => n.name);
                     const known = matchName(h.addressed, [...meta.party.map(p => p.name), ...npcNames, meta.persona.name]);
@@ -253,7 +253,7 @@ async function turnBody(c, opts, status, signal) {
                         touchNpc(c.docs.npcs.find(n => n.name === known));
                     }
                 }
-                step.done(`${triage.category}${triage.task ? ` · ${triage.task.who}: ${triage.task.what || 'a task'}${triage.task.dm ? ' (DM decides)' : ''}` : ''}${triage.unknownAddressee ? ` · talking to ${triage.unknownAddressee} (new)` : ''}${triage.speakers.length ? ` → ${triage.speakers.join(', ')}` : ''}`);
+                step.done(`${triage.category}${triage.task ? ` · ${triage.task.who}: ${triage.task.what || 'a task'}${triage.task.dm ? ' (the table decides)' : ''}` : ''}${triage.unknownAddressee ? ` · talking to ${triage.unknownAddressee} (new)` : ''}${triage.speakers.length ? ` → ${triage.speakers.join(', ')}` : ''}`);
             } catch (error) {
                 step.fail(error);
                 if (!triage.category) triage.category = 'banter';
@@ -274,6 +274,8 @@ async function turnBody(c, opts, status, signal) {
     let events = [];
 
     // ---------- 2. Player roll resolution ----------
+    // Everything the code posts from here (the player's roll, a hit's damage) is part of the table's ruling the storyteller reads.
+    const fromIndex = ST.chat.length;
     let rollResolution = '';
     let criticalRoll = false;
     if (triage.rollResult && meta.pendingRoll) {
@@ -282,13 +284,13 @@ async function turnBody(c, opts, status, signal) {
         criticalRoll = Boolean(last && last.kind !== 'damage' && (last.natural === 1 || last.natural === 20));
     }
 
-    // ---------- 3. Random event (Claude decides whether one fits) ----------
+    // ---------- 3. Random event (the storyteller decides whether one fits) ----------
     const b = budget();
     if (!pacing.inCombat && b.level !== 'blocked' && opts.force !== 'opening') {
         events = await maybeDrawEvents(c, status, b.level === 'tight');
     }
 
-    // ---------- 4. Does the DM step in? ----------
+    // ---------- 4. Does the table step in? ----------
     let reasons = dmReasons({
         pacing,
         triage,
@@ -303,33 +305,34 @@ async function turnBody(c, opts, status, signal) {
     if (c.docs.world.combat) reasons = reasons.filter(r => r !== 'checkin');
     // Calm turns after a fight or a capture: no random event, no pressure push; the player breathes.
     if (Number.isFinite(pacing.calmUntil) && meta.turn < pacing.calmUntil) reasons = reasons.filter(r => r !== 'event' && r !== 'drift' && r !== 'stalled');
-    // Turn prompts: the player's message in a fight is THEIR turn (the DM resolves only that); "end_turn" hands the round on.
+    // Turn prompts: the player's message in a fight is THEIR turn (the referee resolves only that); "end_turn" hands the round on.
+    const opening = meta.openingRound?.turn === meta.turn ? meta.openingRound : null;
     if (c.docs.world.combat && turnPromptsOn()) {
         const cb = c.docs.world.combat;
-        const opening = meta.openingRound?.turn === meta.turn ? meta.openingRound : null;
         if (opts.force === 'end_turn') cb.phase = 'others';
         else if (opening) cb.phase = 'others';
         else if (!opts.force && !autoRoll && !triage.ooc && cb.order?.some(o => o.name === meta.persona.name)) cb.phase = 'player';
         if (opening) reasons = reasons.map(r => r === 'combat_round' ? 'round_opens' : r);
         else if (cb.phase === 'player' && !opts.force) reasons = reasons.map(r => r === 'combat_round' ? 'player_turn' : r);
         if (opts.force === 'end_turn' || opts.force === 'reaction') reasons = reasons.filter(r => r !== 'combat_round' && r !== 'combat_action');
-    }
+    } else if (opening) reasons = reasons.map(r => r === 'combat_round' ? 'round_opens' : r);
+    // A roll's result in a fight settles that roll and nothing else: the round goes on with the player's next action.
+    if (reasons.includes('roll_result') && !opening) reasons = reasons.filter(r => r !== 'combat_round' && r !== 'combat_action');
     if (triage.task?.dm && !reasons.includes('companion_task')) reasons.push('companion_task');
     // Nobody would answer this locally (alone, or nobody nearby would reply): the world responds.
     if (!reasons.length && !opts.force && !triage.rollResult && !localSpeakers(c, triage, playerText).length) reasons = ['solo'];
     if (b.level === 'blocked' && reasons.length) {
-        status.note('Budget reached: the DM is resting (local-only)');
+        status.note('Budget reached: the table is resting (local-only)');
         reasons = [];
     }
 
     if (reasons.length) {
-        const model = modelFor(reasons, { criticalRoll });
-        const step = status.step(`DM is thinking (${modelLabel(model)}) · ${reasons.join(', ')}`);
         let result;
         try {
-            const opening = meta.openingRound?.turn === meta.turn ? meta.openingRound : null;
             const companionChoices = opts.force === 'end_turn' || opening ? await decideCompanionTurns(c, status, opening?.names).catch(error => { console.warn('[Dungeon Master] companion choices failed', error); return null; }) : null;
-            result = await withDmThinking('The Dungeon Master is thinking', () => askDm({
+            // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
+            const quiet = !triage.ooc && !triage.speakers?.length && ['action', 'risky_action', 'scene_move'].includes(triage.category);
+            result = await consultTable(c, {
                 reasons,
                 companionChoices,
                 playerMessage: playerText,
@@ -338,11 +341,11 @@ async function turnBody(c, opts, status, signal) {
                 oocText: opts.oocText || triage.oocText || '',
                 placeEvent,
                 companionTask: triage.task?.dm ? { name: triage.task.who, what: triage.task.what } : null,
-            }, { signal, model }));
-            step.done(`${summarizeTurn(result.turn)} · ${modelLabel(result.model)}${result.escalated ? ' (handed up)' : ''}`, result.usd);
+                mustAct: dueToAct(c, { reasons, opening }),
+                fromIndex,
+            }, { status, signal, criticalRoll, quiet });
             turnUsd += result.usd;
         } catch (error) {
-            step.fail(error);
             if (!signal.aborted) toastr.error(String(error?.message || error), 'Dungeon Master', { timeOut: 10000 });
             if (error instanceof BudgetError) throw error;
             // Fall back to a local reply so the scene doesn't stall.
@@ -355,56 +358,6 @@ async function turnBody(c, opts, status, signal) {
         }
         if (reasons.includes('stalled')) pacing.fillerStreak = 0;
         if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
-        // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
-        const quiet = !triage.ooc && !triage.speakers?.length && ['action', 'risky_action', 'scene_move'].includes(triage.category);
-        const dueToAct = enemiesDue(c, reasons, result.turn);
-        await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
-        // An enemy whose turn it was got no roll and no move: the DM skipped them (Scald stood by with a sword in hand). Both sides are told.
-        if (dueToAct && !result.turn.end_combat && !signal.aborted) {
-            const cb = c.docs.world.combat;
-            const skipped = dueToAct.foes.filter(n => !dueToAct.acted.has(nameKey(n)) && cb && !(cb.enemies?.[n]?.hp <= 0) && cb.order.some(o => o.name === n));
-            if (skipped.length) {
-                const where = skipped.map(n => `${n} (${cb.enemies[n].hp}/${cb.enemies[n].hp_max ?? cb.enemies[n].hp} HP${cb.positions?.[n] ? ` at ${cb.positions[n]}` : ''})`).join(', ');
-                meta.turnProblems = [...(meta.turnProblems || []), `${where} took no turn this round: your reply had no npc_roll and no "positions" move for them. Every living enemy in the order acts on their turn, every round: an attack (npc_rolls, both outcomes), a move ("positions"), or a "positions" entry at their square with a line saying why they hold. Never leave an armed enemy standing idle.`];
-                saveMeta();
-                status.note(`${skipped.join(', ')} took no turn: the DM has been told`);
-                await postNote(`⚠️ ${skipped.join(', ')} took no turn this round. The DM has been told.`);
-            }
-        }
-        // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
-        const toldHold = /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '');
-        const toldHit = result.turn.player_roll?.kind === 'attack' && /\b(?:bites?|sinks?|slides?|punches|drives?|buries|plunges?|tears?|rips?) (?:deep |home )?into\b|\bblood (?:wells|runs|sprays|spatters|flows)\b|\b(?:opens?|lays? open) (?:a|his|her|its|their) \w+\b|\bfinds? (?:flesh|its mark|the gap|a gap)\b|\b(?:turns?|glances?|skates?|skitters?|skids?) (?:off|aside|away)\b|\b(?:catches?|cuts?|hits?) only air\b|\bmisses? (?:by|him|her|them|it|wide|clean)\b/i.test(result.turn.narration || '');
-        if (result.turn.player_roll && !signal.aborted && (toldHold || toldHit)) {
-            meta.turnProblems = [...(meta.turnProblems || []), toldHit
-                ? `you asked ${meta.persona.name} for an attack roll and your narration told whether it landed before the dice were in: stop at the swing (the blade coming round, the thrust), never the bite or the miss; the roll says, and the next turn tells what came of it.`
-                : `you asked ${meta.persona.name} to roll and your narration told the outcome before the dice were in (a hand closing on them, a hold, a slip): stop at the moment before (the lunge, the strain on the links) and let the dice say; the next turn tells what came of it.`];
-            saveMeta();
-        }
-        // A grab in the line (the player's, or an aside asking for one) came back with no dice: a hold by say-so. Both sides are told.
-        if (reasons.includes('contest') && !result.turn.player_roll && !(result.turn.npc_rolls || []).length && !result.turn.start_combat && !signal.aborted) {
-            meta.turnProblems = [...(meta.turnProblems || []), `the line had a grab or a hold in it ("${trimToTokens(playerText, 40)}") and you asked for no roll: a contest is dice, never your say-so, and nothing holds anyone until the dice say. Ask it now (player_roll Athletics or Acrobatics against the grabber, or both sides in npc_rolls), with the narration stopping at the reaching hand; then conditions_add "grappled (held by X)" only when it lands.`];
-            saveMeta();
-            status.note('A grab with no roll: the DM has been told');
-            await postNote(`⚠️ The DM narrated a grab without the contested roll. It has been told; nothing holds you until the dice say.`);
-        }
-        // A companion's task came back with a brief and no result: she'd invent it. The DM is told.
-        if (reasons.includes('companion_task') && triage.task?.who && !String(result.turn.narration || '').trim() && !(result.turn.npc_rolls || []).length && !signal.aborted) {
-            meta.turnProblems = [...(meta.turnProblems || []), `${triage.task.who} was told to ${triage.task.what || 'do something'} and your reply had no result for it (no narration, no npc_roll), only a brief: she invents what she found. Next time: the roll in npc_rolls with both outcomes, or narration (and "happened") saying what she did and found, and her spot in scene_card.`];
-            saveMeta();
-            status.note(`${triage.task.who}'s task came back with no result: the DM has been told`);
-        }
-        // The player attacked (in character: an aside in double brackets isn't the player's blow) and the DM neither started a fight nor asked for a roll: say so, to both.
-        const attacked = attacksSomeone(playerText.replace(/\(\([\s\S]*?\)\)/g, ' '));
-        if (attacked && !c.docs.world.combat && !result.turn.start_combat && result.turn.player_roll && result.turn.player_roll.kind !== 'attack' && result.turn.player_roll.kind !== 'initiative' && !result.turn.end_combat && !signal.aborted) {
-            meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and you asked for a ${result.turn.player_roll.skill} check instead of an attack: an attack on someone is player_roll kind "attack" against their AC with start_combat (the enemies by name), never a skill check.`];
-            saveMeta();
-        }
-        if (attacked && !c.docs.world.combat && !result.turn.start_combat && !result.turn.player_roll && !result.turn.end_combat && !signal.aborted) {
-            meta.turnProblems = [...(meta.turnProblems || []), `the player attacked ("${trimToTokens(playerText, 40)}") and nothing happened: no start_combat, no player_roll. When the player attacks, that same turn: start_combat (the enemies by name) and player_roll "initiative". Never narrate the attack as pending.`];
-            saveMeta();
-            status.note('The DM let an attack go by: it has been told');
-            await postNote(`⚠️ The DM didn't resolve that attack (no fight started, no roll asked). It has been told; say it again or end your turn.`);
-        }
         // Their action is resolved: done with the turn, or more to do (movement, a bonus action)?
         const cb = c.docs.world.combat;
         if (cb && turnPromptsOn() && cb.phase === 'player' && !opts.force && !triage.ooc && !meta.pendingRoll && !signal.aborted && !(c.docs.world.party?.[meta.persona.name]?.hp <= 0) && !(meta.lastRoll?.kind === 'initiative' && meta.lastRoll.turn === meta.turn)) {
@@ -415,41 +368,65 @@ async function turnBody(c, opts, status, signal) {
             } else status.note('Your turn goes on: move or act, then end it');
         }
         // A beat landed: the pressure ladder starts over from the bottom.
-        if (result.turn.beats_completed.length) meta.lastDriftStageCalled = 0;
+        if (result.story?.beats_completed?.length) meta.lastDriftStageCalled = 0;
         meta.stats.lastTurnUsd = turnUsd;
         if (Math.random() < 0.15) {
             maybeCondenseNotes().catch(err => console.warn('[Dungeon Master] notes condense failed', err));
         }
     } else {
         if (rollResolution) {
-            // A roll without a DM call can't happen (roll_result always calls the DM), but be safe.
+            // A roll without a table call can't happen (roll_result always calls it), but be safe.
             await postNote(rollResolution);
         }
         await localReplies(c, triage, playerText, status, signal);
         await ruleOnCompanionAttempts(c, localReplies.lastSpeakers || [], status, signal);
     }
-    // The opening of round 1 is done with (whatever the DM made of it): from here the player's turn is theirs.
+    // The opening of round 1 is done with (whatever the table made of it): from here the player's turn is theirs.
     if (meta.openingRound) { delete meta.openingRound; if (c.docs.world.combat && turnPromptsOn()) c.docs.world.combat.phase = 'player'; saveMeta(); }
 }
 
 /**
- * Which enemies the DM's reply had to run, and who it ran. A whole round (combat_round with turn
- * prompts off, or the player's end_turn, which runs everyone after the player and then everyone
- * before them in the next round) is every living enemy in the order; the opening of round 1 is only
- * those who beat the player. A reply to the player's own roll, or on the player's turn, runs nobody.
- * Read before applyDmTurn (it trims the rolls it drops). Null when nobody was due.
+ * One turn at the table: the referee rules, the code does what the ruling says, the storyteller
+ * tells it. On a turn whose ruling only asks the player for a roll, the storyteller isn't called:
+ * the 🎲 card carries the referee's reason, and the story comes with the result.
+ * @returns {Promise<{usd: number, ruling: object, story: object|null, escalated: boolean}>}
  */
-function enemiesDue(c, reasons, t) {
-    const cb = c.docs.world.combat;
-    if (!cb || !t || reasons.includes('roll_result') || reasons.includes('reaction')) return null;
-    const opening = c.meta.openingRound?.turn === c.meta.turn ? c.meta.openingRound : null;
-    const whole = reasons.includes('end_turn') || (reasons.includes('combat_round') && !turnPromptsOn());
-    if (!whole && !(opening && reasons.includes('round_opens'))) return null;
-    const living = Object.keys(cb.enemies || {}).filter(n => !(cb.enemies[n].hp <= 0) && cb.order.some(o => o.name === n));
-    const foes = opening && !whole ? living.filter(n => (opening.names || []).some(x => nameKey(x) === nameKey(n))) : living;
-    if (!foes.length) return null;
-    const acted = new Set([...(t.npc_rolls || []).map(r => nameKey(r.who)), ...Object.keys(t.positions || {}).map(nameKey)]);
-    return { foes, acted };
+async function consultTable(c, args, { status, signal, criticalRoll = false, quiet = false } = {}) {
+    let usd = 0;
+    // 1. The referee rules on the mechanics.
+    const refModel = modelFor(['referee']);
+    const step = status.step(`Referee rules (${modelLabel(refModel)}) · ${args.reasons.join(', ')}`);
+    let ref;
+    try {
+        ref = await withDmThinking('The referee is ruling', () => askReferee(args, { signal, model: refModel }));
+        step.done(summarizeRuling(ref.turn), ref.usd);
+        usd += ref.usd;
+    } catch (error) {
+        step.fail(error);
+        throw error;
+    }
+    // 2. The code does what the ruling says: the dice, the books, the fight, the scene.
+    const ruled = await applyRuling(c, ref.turn, status, signal, { reasons: args.reasons, fromIndex: args.fromIndex ?? ST.chat.length });
+    // 3. The storyteller tells it, unless nothing is settled yet but a roll asked of the player.
+    const rollOnly = Boolean(ruled.request) && !ruled.forStory.settled.length && !ruled.newScene && !ruled.forStory.fact && !Object.keys(ruled.forStory.held).length;
+    let story = null;
+    if (rollOnly) status.note(`A roll is asked: the storyteller waits for it`);
+    else if (!signal.aborted) {
+        const model = modelFor(['storyteller'], { criticalRoll });
+        const step2 = status.step(`Storyteller (${modelLabel(model)})`);
+        try {
+            story = await withDmThinking('The storyteller is writing', () => askStoryteller({ ...args, ruling: ruled.forStory }, { signal, model }));
+            step2.done(`${summarizeStory(story.turn)} · ${modelLabel(story.model)}${story.escalated ? ' (handed up)' : ''}`, story.usd);
+            usd += story.usd;
+        } catch (error) {
+            // The ruling stands and its cards are posted; the roll request still goes up below.
+            step2.fail(error);
+            if (error instanceof BudgetError || signal.aborted) throw error;
+            toastr.error(String(error?.message || error), 'Dungeon Master', { timeOut: 10000 });
+        }
+    }
+    await applyStory(c, story?.turn ?? null, status, signal, { events: args.events || [], reasons: args.reasons, quiet, ruled, dropped: story?.dropped || [] });
+    return { usd, ruling: ref.turn, story: story?.turn ?? null, escalated: Boolean(story?.escalated) };
 }
 
 /**
@@ -633,56 +610,6 @@ function attackDice(c, r) {
     return weapon ? weapon.replace(/\s+/g, '') : '1d6';
 }
 
-let bookkeeping = Promise.resolve();
-function queueBookkeeping(c, fromIndex, { goldBooked = false } = {}) {
-    bookkeeping = bookkeeping.then(() => bookkeep(c, fromIndex, { goldBooked })).catch(error => console.warn('[Dungeon Master] bookkeeping failed', error));
-}
-
-/**
- * After a turn, the local model reads what was just said (the DM's narration) next to the tracked
- * status, and fills in what the story says happened that isn't on the books yet (someone passed out
- * or can't walk, an item changed hands, coin paid). Checked in code first (known conditions, people
- * who are here, nothing twice); shown on a 📜 card.
- */
-async function bookkeep(c, fromIndex, { goldBooked = false } = {}) {
-    const s = settings();
-    if (!s.useHelper || s.bookkeeper === false || campaign() !== c) return;
-    // Only the DM's narration is evidence: what companions and NPCs say is the local model's own guesswork.
-    const said = ST.chat.slice(fromIndex).filter(m => !m.is_user && m.mes && dmType(m) === 'narration');
-    if (!said.length) return;
-    const story = trimToTokens(said.map(m => `${m.name}: ${m.mes}`).join('\n\n'), 1200, true);
-    const w = c.docs.world;
-    const party = [c.meta.persona.name, ...c.meta.party.map(p => p.name)];
-    // The people of the scene are on the books too: knocked out, tied up or asleep in the narration.
-    const present = Object.keys(w.sceneCard?.people || {}).filter(n => !matchName(n, party));
-    const own = n => w.inventory?.[matchName(n, Object.keys(w.inventory || {})) ?? ''] ?? [];
-    const { system, user } = bookkeeperPrompt({
-        status: party.map(n => ({ name: n, hp: w.party[n] ? `${w.party[n].hp}/${w.party[n].hp_max}` : '', conditions: conditionsOf(w, n), items: own(n) })),
-        shared: w.items || [],
-        others: present.map(n => `${n}${conditionsOf(w, n).length ? ` (${conditionsOf(w, n).join(', ')})` : ''}`),
-        story,
-        gold: Number.isFinite(Number(w.gold)) ? Number(w.gold) : null,
-    });
-    const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 300, profileId: s.helperProfileId });
-    const changes = parseBookkeeping(raw, {
-        names: [...party, ...present],
-        itemNames: party,
-        story,
-        conditionsOf: n => conditionsOf(w, n),
-        itemsOf: n => [...own(n), ...(w.items || [])],
-        allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
-        goldBooked,
-    });
-    if (!changes) return;
-    const tidy = tidyBookkeeping(changes, { party });
-    if (!tidy) return;
-    const log = applyStateChanges(w, tidy, c.meta.party.map(p => p.name), { turn: c.meta.turn });
-    if (!log.length) return;
-    saveDoc('world');
-    await postDiceCard(`📜 Bookkeeping: ${log.join(' · ')}`, { state: true });
-    refreshMap();
-}
-
 /** Rewrite a companion's sheet for a new level and keep their HP in step. */
 export async function levelUp(c, member, level, status = null) {
     const step = status?.step(`Rewriting ${member.name}'s sheet for level ${level}`);
@@ -714,15 +641,28 @@ function isRetypedAutoRoll(meta, text) {
     return Boolean(m && [last.natural, last.total].includes(Number(m[1])));
 }
 
-function summarizeTurn(t) {
+function summarizeRuling(t) {
     const bits = [];
-    if (t.narration) bits.push('narration');
     if (t.player_roll) bits.push(`asks ${t.player_roll.skill}`);
     if (t.npc_rolls.length) bits.push(`${t.npc_rolls.length} roll(s)`);
+    if (Object.keys(t.held || {}).length) bits.push(`${Object.keys(t.held).join(', ')} hold`);
+    if (Object.keys(t.state_changes || {}).length) bits.push('books');
+    if (t.scene?.changed) bits.push(`→ ${t.scene.location}`);
+    if (t.start_combat) bits.push('fight starts');
+    if (t.end_combat) bits.push('fight ends');
+    if (t.rest) bits.push(`${t.rest} rest`);
+    if (t.clock) bits.push('clock');
+    if (t.fact) bits.push('fact');
+    return bits.join(' · ') || 'nothing to rule';
+}
+
+function summarizeStory(t) {
+    const bits = [];
+    if (t.narration) bits.push('narration');
     if (t.directions.length) bits.push(`→ ${t.directions.map(d => d.speaker).join(', ')}`);
     if (t.new_npcs.length) bits.push(`+${t.new_npcs.length} NPC`);
     if (t.beats_completed.length) bits.push(`beat ${t.beats_completed.join(', ')}`);
-    return bits.join(' · ') || 'no changes';
+    return bits.join(' · ') || 'silent';
 }
 
 /**
@@ -760,16 +700,13 @@ async function ruleOnCompanionAttempts(c, names, status, signal) {
             continue;
         }
         if (!attempt.attempt || signal.aborted) continue;
-        const reasons = ['companion_action'];
-        const model = modelFor(reasons);
-        const step = status.step(`DM rules on ${name}'s attempt (${modelLabel(model)}): ${attempt.what || 'something risky'}`);
+        status.note(`${name} attempts: ${attempt.what || 'something risky'}`);
         try {
-            const result = await withDmThinking(`The Dungeon Master is ruling on ${name}'s attempt`, () => askDm({ reasons, companionAction: { name, what: attempt.what, text: msg.mes } }, { signal, model }));
-            step.done(summarizeTurn(result.turn), result.usd);
-            await applyDmTurn(c, result.turn, status, signal);
+            const result = await consultTable(c, { reasons: ['companion_action'], companionAction: { name, what: attempt.what, text: msg.mes }, fromIndex: ST.chat.length }, { status, signal });
             c.meta.stats.lastTurnUsd = (c.meta.stats.lastTurnUsd || 0) + result.usd;
         } catch (error) {
-            step.fail(error);
+            if (error instanceof BudgetError) throw error;
+            console.warn('[Dungeon Master] ruling on a companion attempt failed', error);
         }
         return; // one ruling per turn
     }
@@ -860,7 +797,7 @@ async function resolvePlayerRoll(c, parsed, status) {
         if (turnPromptsOn()) c.docs.world.combat.phase = ahead.length ? 'others' : 'player';
         if (ahead.length) meta.openingRound = { turn: meta.turn, names: ahead };
         afterInit += ahead.length
-            ? ` ROUND 1 OPENS: ${ahead.join(', ')} beat ${meta.persona.name}'s ${total} and act now, in that order (npc_rolls for their attacks, "positions" for their moves); then STOP at ${meta.persona.name}'s turn and say it is theirs. Nobody below ${meta.persona.name} acts yet.`
+            ? ` ROUND 1 OPENS: ${ahead.join(', ')} beat ${meta.persona.name}'s ${total} and act now, in that order (an entry in "acts" for each); then it is ${meta.persona.name}'s turn. Nobody below ${meta.persona.name} acts yet.`
             : ` ${meta.persona.name} has the highest initiative: it is their turn first; nobody acts before them.`;
         saveDoc('world');
         // The attack that started the fight was put aside for initiative: it's asked for now, not lost.
@@ -875,7 +812,7 @@ async function resolvePlayerRoll(c, parsed, status) {
                 afterInit += ` The attack that started the fight was NOT rolled: ${again.target} is ${close.d} squares from ${meta.persona.name} (now at ${toCoord(close.at.x, close.at.y)}), out of reach. Say in words where ${again.target} stands; ${meta.persona.name} moves or changes weapon on their turn.`;
             } else {
                 await postRollRequest(c, again);
-                afterInit += ` The code has asked ${meta.persona.name} for the attack roll that started the fight (${again.skill}${again.target ? ` on ${again.target}` : ''}): don't ask again; wait for it, then resolve it as their first action.`;
+                afterInit += ` The code has asked ${meta.persona.name} for the attack roll that started the fight (${again.skill}${again.target ? ` on ${again.target}` : ''}): don't ask again; it is their first action.`;
             }
         }
     }
@@ -886,7 +823,7 @@ async function resolvePlayerRoll(c, parsed, status) {
         const dice = judged.critical ? (pr.damage ? doubleDice(pr.damage) : attackDamage(statsForName(meta.persona.name, meta), `${pr.reason || ''} ${pr.skill || ''}`, { critical: true })) : pr.damage;
         if (dice) {
             await postRollRequest(c, { kind: 'damage', skill: 'damage', ability: '', die: 100, dc: null, advantage: 'none', reason: `${pr.skill || 'Attack'} hit${judged.critical ? ' (critical: dice doubled)' : ''}`, damage: normalizeNotation(dice) || dice, half: false, bonus: null, spot: null, target: playerTarget(c, pr) });
-            saveHurt += ` The code has already asked ${meta.persona.name} to roll damage (${dice}): don't ask again; narrate the hit and wait for the total.`;
+            saveHurt += ` The code has already asked ${meta.persona.name} to roll damage (${dice}): don't ask again; the hit is a fact, the total comes next.`;
         }
     }
     // A save with damage: the code takes the HP off (all on a failure, half on a success if it says so).
@@ -915,11 +852,11 @@ async function resolvePlayerRoll(c, parsed, status) {
             const over = c.docs.world.combat && allEnemiesDown(c.docs.world);
             if (over) await finishCombat(c, status);
             refreshMap();
-            return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. The code already took it off ${who}: ${line || 'applied'}${/\(down\)/.test(line || '') ? ' (0 HP: dead; narrate the death)' : ''}. Don't apply it again (no state_changes.hp for this hit). Narrate it.${over ? ' Every enemy is down: the code has ended the fight (no end_combat needed); narrate the aftermath, and nobody rolls.' : ''}`;
+            return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. The code already took it off ${who}: ${line || 'applied'}${/\(down\)/.test(line || '') ? ' (0 HP: dead)' : ''}. Don't apply it again (no changes.hp for this hit).${over ? ' Every enemy is down: the code has ended the fight (no fight.end needed); nobody rolls.' : ''}`;
         }
-        return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
+        return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (changes.hp).`;
     }
-    return saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.${pr.kind === 'attack' && judged.success && pr.damage ? ` On a hit, ask the player to roll damage (${pr.damage}) with player_roll kind "damage".` : ''}`;
+    return saveHurt + `${meta.persona.name} rolled ${natural ?? '?'} on the d${pr.die || 20} ${formatModifier(mod)} (${source}) = ${total}${pr.dc !== null ? ` vs hidden DC ${pr.dc}: ${judged.success ? 'SUCCESS' : 'FAILURE'}` : ''}${natural === 20 ? ' (natural 20)' : natural === 1 ? ' (natural 1)' : ''}. Roll was for: ${pr.reason || pr.skill}.`;
 }
 
 /**
@@ -1067,22 +1004,44 @@ function redrawSketch(c) {
     });
 }
 
-/** The words that make a long clock skip a night's sleep (the player's line, the DM's aside or narration). */
+/** The words that make a long clock skip a night's sleep (the player's line, the referee's aside or fact). */
 const SLEEP_WORDS = /\b(?:sleep|sleeps|sleeping|slept|asleep|bed|beds|bunk|turn(?:s|ed)? in|bed down|rest(?:s|ed)? (?:till|until|for the night|the night)|for the night|through the night|till (?:morning|dawn|first light)|until (?:morning|dawn|first light)|a night's rest|the night passes)\b/i;
 
-/** Apply everything the DM decided, in a sensible order. */
-export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [], quiet = false } = {}) {
+/** The other side of a contest, rolled by the code: {who, skill, total, detail}, or null. */
+function contestRoll(c, vs) {
+    const meta = c.meta, world = c.docs.world;
+    if (!vs?.who) return null;
+    const party = [meta.persona.name, ...meta.party.map(p => p.name)];
+    const who = matchName(vs.who, [...party, ...Object.keys(world.combat?.enemies ?? {}), ...(c.docs.npcs || []).map(n => n.name)]) ?? vs.who;
+    let bonus = vs.bonus;
+    if (bonus === null || bonus === undefined) {
+        const stats = matchName(who, party) ? statsForName(who, meta) : null;
+        bonus = stats ? lookupModifier(stats, { kind: 'check', skill: vs.skill || '', ability: '' }).mod : 2;
+    }
+    const r = roll(`1d20${bonus >= 0 ? '+' : ''}${bonus}`);
+    return r ? { who, skill: vs.skill || 'contest', total: r.total, natural: r.natural, detail: r.detail } : null;
+}
+
+/** The cards the code posted since an index (the ruling's dice and books), as plain lines for the storyteller. */
+function cardsSince(fromIndex, { settledOnly = false } = {}) {
+    return ST.chat.slice(fromIndex).filter(m => !m.is_user && m.mes && (dmType(m) === 'roll' || dmType(m) === 'note') && !m.extra?.dungeon_master?.request && !(settledOnly && m.extra?.dungeon_master?.contest)).map(m => String(m.mes).replace(/\*\*/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+/**
+ * Do what the ruling says: the books, the clock, the scene, the fight, everyone's dice. Posts the
+ * cards (the player sees the dice before the story), prepares the player's roll request (posted after
+ * the story), and returns what the storyteller is told.
+ * @returns {Promise<{turn: object, problems: string[], dmOnly: string[], outcomesBySpeaker: Record<string,string>, request: object|null, newScene: boolean, forStory: {fact: string, cards: string[], request: object|null, held: Record<string,string>, moved: string, hp: string}}>}
+ */
+export async function applyRuling(c, t, status, signal, { reasons = [], fromIndex = ST.chat.length } = {}) {
     const meta = c.meta;
     const world = c.docs.world;
-    // What the DM asked for that the code had to drop (a name nobody has): the player sees it, and the
-    // DM is told next turn, instead of a claim the tracker doesn't show.
+    // What the referee asked for that the code had to drop (a name nobody has): the player sees it, and the
+    // referee is told next turn, instead of a claim the tracker doesn't show.
     const problems = [];
-    // Things the DM is told next turn without a warning to the player (the code already did the right thing).
-    const dmOnly = [];
-    // The DM's own tics ("wrists still locked behind you", nine turns running): named, so they stop.
-    const dmTics = repeatedPhrases(recentRepliesOf(DM_NAME, 6), { exclude: [meta.persona.name, ...meta.party.map(p => p.name)] });
-    if (dmTics.length) dmOnly.push(`You've repeated these in your last turns: ${dmTics.map(p => `"${p}"`).join(', ')}. Say it differently or leave it out: a standing fact (cuffed hands, the dark, a danger ahead) is stated once, when it changes or matters, not every turn.`);
-    // A roll the DM asked the player to make for a companion ("Judy's DEX save"): the code rolls it for
+    // Things the referee is told next turn without a warning to the player (the code already did the right thing).
+    const dmOnly = [...(t.dropped || [])];
+    // A roll the referee asked the player to make for a companion ("Judy's DEX save"): the code rolls it for
     // the companion, in the open, like any npc roll. The player rolls only their own.
     if (t.player_roll && (t.player_roll.kind === 'save' || t.player_roll.kind === 'check')) {
         const rawSaid = `${t.player_roll.reason} ${t.player_roll.skill}`.toLowerCase();
@@ -1090,30 +1049,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (forWhom) {
             const pr0 = t.player_roll;
             const mod = lookupModifier(statsForName(forWhom, meta), pr0).mod;
-            t.npc_rolls = [...(t.npc_rolls || []), { who: forWhom, what: pr0.reason || pr0.skill, notation: `1d20${mod >= 0 ? '+' : ''}${mod}`, dc: pr0.dc, kind: pr0.kind, target: '', damage: pr0.damage || '', half: Boolean(pr0.half), on_success: '', on_fail: '', spot: null }];
-            problems.push(`player_roll asked ${meta.persona.name} to roll ${forWhom}'s ${pr0.skill}: the code rolled it for ${forWhom} instead (a companion's roll goes in npc_rolls; the player rolls only their own)`);
+            t.npc_rolls = [...(t.npc_rolls || []), { who: forWhom, what: pr0.reason || pr0.skill, notation: `1d20${mod >= 0 ? '+' : ''}${mod}`, dc: pr0.dc, kind: pr0.kind, target: '', damage: pr0.damage || '', half: Boolean(pr0.half), on_success: '', on_fail: '', spot: null, vs: pr0.vs }];
+            problems.push(`a roll asked of ${meta.persona.name} was ${forWhom}'s ${pr0.skill}: the code rolled it for ${forWhom} instead (a companion's roll goes in "rolls" with their name; the player rolls only their own)`);
             t.player_roll = null;
         }
     }
-    // Maps off: nothing about squares in the DM's answer is used (the story stays in the chat).
+    // Maps off: nothing about squares in the ruling is used (the story stays in the chat).
     if (!mapsOn()) {
         Object.assign(t, { positions: {}, dashing: [], free_move: [] });
         if (t.start_combat) t.start_combat.map = null;
     }
 
-    // New NPCs (with voices). A shop or a candlestick is never one.
-    if (t.new_npcs.length) {
-        const things = t.new_npcs.filter(n => notAPersonEntry(n));
-        if (things.length) { status.note(`Not people, not added: ${things.map(n => n.name).join(', ')}`); problems.push(`new_npcs dropped ${things.map(n => `"${n.name}"`).join(', ')}: a place or a thing is never an NPC (it belongs in the scene card's place or objects)`); }
-        const added = addNpcs(c.docs.npcs, t.new_npcs.filter(n => !things.includes(n)), t.scene?.location || world.location);
-        for (const npc of added) {
-            npc.voice = pickNpcVoice(npc, c.docs.npcs);
-        }
-        if (added.length) status.note(`New: ${added.map(n => n.name).join(', ')}`);
-        saveDoc('npcs');
-    }
-
-    // The clock and the weather are the code's: the DM moves them only on purpose (a time skip, a change in the story).
+    // The clock and the weather are the code's: the referee moves them only on purpose (a time skip, a change in the story).
     ensureClock(world);
     if (t.clock) {
         const before = clockText(world);
@@ -1124,7 +1071,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             await postDiceCard(`🕰️ ${t.clock.set ? `Time passes until ${t.clock.set}` : `${t.clock.advance} pass${/^(a|an|one)\b/.test(t.clock.advance) ? 'es' : ''}`}: ${clockText(world)}.${r.weather ? ` The weather turns: ${WEATHER_WORDS[r.weather]}.` : ''}`, { state: true });
             // A night slept through is a long rest: the clock skip alone left the player at 50/60 at dawn.
             const skipped = t.clock.set ? r.skipped ?? 0 : advance;
-            if (!t.rest && skipped >= 6 * 60 && SLEEP_WORDS.test(`${lastPlayerMessage()} ${t.ooc || ''} ${t.narration || ''}`)) {
+            if (!t.rest && skipped >= 6 * 60 && SLEEP_WORDS.test(`${lastPlayerMessage()} ${t.ooc || ''} ${t.fact || ''}`)) {
                 t.rest = 'long';
                 dmOnly.push(`The party slept ${Math.round(skipped / 60)} hours: that is a long rest, and the code took it (HP, hit dice, slots) since you sent only the clock. Sleeping through the night is "rest": "long", with the clock.`);
                 status.note('A night slept through: the long rest is the code\'s');
@@ -1140,35 +1087,28 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (t.scene) {
         if (t.scene.location) world.location = t.scene.location;
         if (t.scene.setting) world.setting = guessSetting(world.location, t.scene.setting);
-        // The time of day is the clock's, not the scene's: a DM that says "morning" at night is ignored (it skips time with "clock").
-        if (t.scene.time && !new RegExp(String(world.time), 'i').test(t.scene.time)) status.note(`Time stays ${world.time} (the clock keeps it; use "clock" to skip ahead)`);
     }
     // A new place: the old scene card no longer applies. A new scene: NPCs forget the last one.
     // A reworded name ("Eel Street" for "Eel Street, Marrow Ford") is the same place, not a move.
     const newPlace = Boolean(t.scene?.location && prevLocation && !samePlace(t.scene.location, prevLocation));
     const newScene = newPlace || Boolean(t.scene?.changed);
-    // The card is replaced by the DM's card for the new place; with no card the old one stays (and the DM is told): never an
+    // The card is replaced by the referee's card for the new place; with no card the old one stays (and the referee is told): never an
     // empty picture. The card that then comes for the new place replaces it whole.
     const cardOwed = Boolean(meta.sceneCardOwed);
     world.sceneCard = applySceneCard(world.sceneCard, t.scene_card, { newPlace: (newPlace || cardOwed) && Boolean(t.scene_card), partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
-    if (newPlace && !t.scene_card) { meta.sceneCardOwed = true; dmOnly.push(`the party moved to "${t.scene.location}" and you sent no scene_card: send the full card for the new place (place, people with spots, objects) so the companions and the sketch know where everyone is.`); }
+    if (newPlace && !t.scene_card) { meta.sceneCardOwed = true; dmOnly.push(`the party moved to "${t.scene.location}" and you sent no card for it: send the full "scene" for the new place (place, people with spots, objects) so the companions and the sketch know where everyone is.`); }
     else if (t.scene_card) meta.sceneCardOwed = false;
     // Who split off from the player, and who is back.
     applyPresence(world, meta.party.map(p => p.name), t.party_away, t.party_back);
-    // NPCs who get briefs are "here".
-    for (const d of t.directions) {
-        const npc = c.docs.npcs.find(n => nameKey(n.name) === nameKey(d.speaker));
-        if (npc) npc.lastSeen = world.location;
-    }
 
-    // Anyone the DM hurts, or who attacks or is attacked, is on the fight's roster (HP tracked, a turn in
-    // the order) even when start_combat never named them: a raider who swoops in halfway through.
+    // Anyone the referee hurts, or who attacks or is attacked, is on the fight's roster (HP tracked, a turn in
+    // the order) even when the fight's start never named them: a raider who swoops in halfway through.
     if (world.combat) {
         for (const who of Object.keys(t.state_changes?.hp || {})) await enemyHere(c, who, status);
         for (const r of t.npc_rolls || []) if (r.kind === 'attack') { await enemyHere(c, r.who, status); if (r.target) await enemyHere(c, r.target, status); }
     }
-    for (const who of Object.keys(t.state_changes?.hp || {})) if (!matchName(who, [...Object.keys(world.party), ...Object.keys(world.combat?.enemies ?? {})])) problems.push(`state_changes.hp for "${who}" was dropped: nobody by that name is tracked (the party: ${Object.keys(world.party).join(', ')}${world.combat ? `; in the fight: ${Object.keys(world.combat.enemies).join(', ') || 'nobody yet'}` : '; no fight is on, so nobody else has HP: start_combat first'})`);
-    // State, combat, pacing, plot.
+    for (const who of Object.keys(t.state_changes?.hp || {})) if (!matchName(who, [...Object.keys(world.party), ...Object.keys(world.combat?.enemies ?? {})])) problems.push(`changes.hp for "${who}" was dropped: nobody by that name is tracked (the party: ${Object.keys(world.party).join(', ')}${world.combat ? `; in the fight: ${Object.keys(world.combat.enemies).join(', ') || 'nobody yet'}` : '; no fight is on, so nobody else has HP: fight.start first'})`);
+    // State, combat.
     if (t.state_changes?.items_add && typeof t.state_changes.items_add === 'object' && !Array.isArray(t.state_changes.items_add)) {
         for (const [who, items] of Object.entries(t.state_changes.items_add)) {
             const owner = matchName(who, Object.keys(world.inventory || {}));
@@ -1177,11 +1117,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
     }
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
-    if (Number(t.state_changes?.gold)) meta.goldTurn = meta.turn;
     fallenInFight(c);
     let initiativeCard = '';
     let mapChanged = false;
-    // An attack rolled outside a fight starts one, so moves are limited even when the DM forgot start_combat.
+    // An attack rolled outside a fight starts one, so moves are limited even when the referee forgot fight.start.
     if (!world.combat && !t.start_combat && !t.end_combat) {
         const auto = combatFromAttacks(c, t);
         if (auto) {
@@ -1202,7 +1141,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         combat.dash = {};
         if (mapsOn()) {
             if (t.start_combat.map) {
-                // The DM drew the field: its squares, its starting positions.
+                // The referee drew the field: its squares, its starting positions.
                 combat.map = normalizeMap({ ...t.start_combat.map, theme: t.start_combat.map.theme || themeFor(world.setting, world.location) });
                 combat.positions = {};
             } else if (world.sketch?.map) {
@@ -1210,7 +1149,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 combat.map = JSON.parse(JSON.stringify(world.sketch.map));
                 combat.positions = { ...world.sketch.positions };
                 combat.onSketch = true;
-                // The DM's starting squares are for a drawn field; on the sketch everyone starts where they stand.
+                // The referee's starting squares are for a drawn field; on the sketch everyone starts where they stand.
                 t.positions = {};
             } else {
                 combat.map = normalizeMap({ theme: themeFor(world.setting, world.location), width: 10, height: 8, rows: [] });
@@ -1223,7 +1162,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (world.combat?.map) {
         const friends = fightParty(c);
         const foes = Object.keys(world.combat.enemies || {});
-        // A fighter the DM never put on the board (swooped in, named for the first time) stands near the party, not nowhere.
+        // A fighter the referee never put on the board (swooped in, named for the first time) stands near the party, not nowhere.
         const lead = parseCoord(world.combat.positions?.[meta.persona.name], world.combat.map);
         const nowhere = foes.filter(n => !world.combat.positions?.[n] && !(t.positions || {})[n] && !(world.combat.enemies[n].hp <= 0));
         if (nowhere.length && lead) { world.combat.positions = placeNear(world.combat.map, world.combat.positions, nowhere, lead, 3); status.note(`${nowhere.join(', ')} had no square: placed near the party`); mapChanged = true; }
@@ -1247,7 +1186,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // Enemies walk too: their speed a round (twice when dashing), never across the map in one go; the dead stay put.
         for (const name of foes) {
             if (!moves[name]) continue;
-            if (world.combat.enemies[name]?.hp <= 0) { delete moves[name]; problems.push(`positions for ${name} ignored: they're dead`); continue; }
+            if (world.combat.enemies[name]?.hp <= 0) { delete moves[name]; problems.push(`a move for ${name} was ignored: they're dead`); continue; }
             const from = parseCoord(world.combat.positions?.[name], world.combat.map), to = parseCoord(moves[name], world.combat.map);
             if (!from || !to) continue;
             if (t.start_combat) continue;
@@ -1263,7 +1202,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (rejected.length) console.warn('[Dungeon Master] Ignored invalid map moves:', rejected);
         mapChanged = true;
     }
-    // Each DM combat turn is a new round (a roll's result finishes the round it was asked in).
+    // Each round of the fight is a new round (a roll's result finishes the round it was asked in).
     const roundOver = turnPromptsOn() ? reasons.includes('end_turn') : (reasons.includes('combat_round') && !reasons.includes('roll_result'));
     if (world.combat && !t.start_combat && roundOver) {
         newRound(world);
@@ -1274,7 +1213,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
         await deathSaves(c);
     }
-    // A rest: HP, hit dice, spell slots and abilities in code (the DM only says it happened).
+    // A rest: HP, hit dice, spell slots and abilities in code (the referee only says it happened).
     if (t.rest) {
         const rested = takeRest(world, t.rest, [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))], n => statsForName(n, meta), roll);
         // A rest takes its time: an hour, or the night.
@@ -1313,70 +1252,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         // The dead leave the scene card too.
         if (world.sceneCard) for (const n of Object.keys(world.sceneCard.people || {})) if (dead.has(n.toLowerCase())) { delete world.sceneCard.people[n]; delete world.sceneCard.spots?.[n]; }
     }
-    applyDmPacing(meta.pacing, t, { worldEvery: Number(settings().checkinEvery) || 5 });
-    if (t.beats_completed.length) {
-        meta.lastDriftStageCalled = 0;
-        for (const beat of t.beats_completed) {
-            const re = new RegExp(`- \\[ \\] (${beat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`);
-            c.docs.plot = c.docs.plot.replace(re, '- [x] $1');
-        }
-        saveDoc('plot');
-        status.note(`Plot beat done: ${t.beats_completed.join(', ')}`);
-    }
-    if (t.notes_add) {
-        c.docs.notes = `${c.docs.notes ? c.docs.notes + '\n' : ''}- (turn ${meta.turn}) ${t.notes_add}`;
-        saveDoc('notes');
-    }
-    if (t.story_add) {
-        c.docs.story = `${c.docs.story ? c.docs.story + '\n\n' : ''}${t.story_add}`;
-        saveDoc('story');
-    }
-    if (events.length) {
-        const use = t.event?.use || '';
-        const chosen = events.find(e => e.id === use);
-        if (chosen) {
-            recordEvent(c, chosen, 'used');
-            status.note(`Random event: ${chosen.title}`);
-        } else if (use === 'custom') {
-            recordEvent(c, { title: t.event.text || 'Custom event', type: 'custom' }, 'custom');
-            status.note('Random event: the DM made one up to fit');
-        } else {
-            // Nothing fit right now. Reset the clock so we don't ask again next turn.
-            recordEvent(c, { title: `(declined: ${events.map(e => e.title).join(', ')})` }, 'declined');
-            status.note('No random event: nothing fit the moment');
-        }
-    }
-    // What just visibly changed: companions see it until the DM's next turn, so they don't redo it,
-    // and then in their timeline with when and where it happened.
-    meta.happened = t.happened || '';
-    const oocNow = reasons.includes('ooc') || /^\s*(?:\*?\(\s*ooc\s*\)\*?|\(\(|ooc\s*[:\-]|@?dm\s*[,:\-]|\/rule\b)/i.test(lastPlayerMessage());
-    if (t.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: t.happened });
-    // Table rules come only from the player's own out-of-character words: the premise and the plot are the DM's private plan, and companions read the rules.
-    if (t.table_rules_add.length) {
-        if (!oocNow) { problems.push(`table_rules_add dropped (${t.table_rules_add.length}): table rules are only what the player settled out of character, in their own OOC words. Your plot, the premise's secrets and what is going to happen stay in your own plan; companions and NPCs read the rules, so a rule would give the story away.`); t.table_rules_add = []; }
-    }
-    if (t.table_rules_add.length || t.table_rules_remove.length) {
-        meta.tableRules = applyTableRules(meta.tableRules, t.table_rules_add, t.table_rules_remove);
-        status.note('Table rules updated');
-    }
-    if (t.standing_direction) meta.standing = t.standing_direction;
-    if (t.objective) meta.objective = t.objective;
-    // What each companion knows (rare, full-text updates).
-    for (const [name, text] of Object.entries(t.knowledge_update || {})) {
-        const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
-        if (member) {
-            meta.knowledge ??= {};
-            meta.knowledge[member.name] = text;
-        }
-    }
-    // Their inner state: only the fields the DM sent change.
-    for (const [name, update] of Object.entries(t.mind_update || {})) {
-        const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
-        if (!member) continue;
-        meta.minds ??= {};
-        meta.minds[member.name] = mergeMind(meta.minds[member.name], update);
-        status.note(`${member.name}'s mind: ${Object.keys(update).join(', ')}`);
-    }
     // Level a companion up or down when the player asked for it.
     for (const [name, level] of Object.entries(t.level_change || {})) {
         const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
@@ -1384,26 +1259,18 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     }
     // The sketch follows the scene card (outside a fight; a fight has its own board).
     if (!world.combat) { redrawSketch(c); mapChanged = true; }
-    refreshStandingPrompt();
     saveDoc('world');
 
-    // What the player sees, in order.
+    // What the player sees, in order: the referee's answer, then the dice.
     if (t.ooc) await postOoc(t.ooc);
-    if (t.narration) {
-        const id = await postNarration(t.narration);
-        if (newScene && id !== null) await markSceneStart(id);
-        voiceLine({ kind: 'dm', text: t.narration });
-    } else if (newScene) {
-        await markSceneStart(ST.chat.findLastIndex(m => !m.is_system));
-    }
     // A fight is on but the player hasn't rolled initiative yet: nobody acts before that. Anyone's
-    // rolls the DM sent anyway wait (the DM runs them in order once the player's number is in).
+    // rolls the referee sent anyway wait (it runs them in order once the player's number is in).
     if (world.combat && !world.combat.order.some(o => o.name === meta.persona.name)) {
         if (t.npc_rolls.length) { status.note(`Held back ${t.npc_rolls.length} roll(s): initiative first`); t.npc_rolls = []; }
         if (t.player_roll && t.player_roll.kind !== 'initiative') { meta.afterInitiative = t.player_roll; status.note(`${t.player_roll.skill} roll kept for after initiative`); }
-        if (t.player_roll?.kind !== 'initiative') t.player_roll = { kind: 'initiative', skill: 'Initiative', ability: 'DEX', die: 20, dc: null, advantage: 'none', reason: 'The fight is on: roll initiative. Nobody acts until you have.', damage: '', half: false, bonus: null, spot: null };
+        if (t.player_roll?.kind !== 'initiative') t.player_roll = { kind: 'initiative', skill: 'Initiative', ability: 'DEX', die: 20, dc: null, advantage: 'none', reason: 'The fight is on: roll initiative. Nobody acts until you have.', damage: '', half: false, bonus: null, spot: null, vs: null };
     }
-    // Who has noticed whom, when the DM says so outright.
+    // Who has noticed whom, when the referee says so outright.
     if (t.noticed) {
         const seen = applyNoticed(world, t.noticed);
         if (seen.length) status.note(seen.join('; '));
@@ -1412,28 +1279,28 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     if (changeLog.length) await postDiceCard(`📜 ${changeLog.join(' · ')}`, { state: true });
 
     // The player's turn is the player's: an enemy's attack sent in the middle of it waits for end_turn
-    // (the DM is told); and the dead roll nothing.
+    // (the referee is told); and the dead roll nothing.
     if (world.combat && t.npc_rolls.length) {
         const partyNow = [meta.persona.name, ...meta.party.map(p => p.name)];
         const dead = t.npc_rolls.filter(r => world.combat.enemies?.[matchName(r.who, Object.keys(world.combat.enemies || {})) ?? '']?.hp <= 0);
-        if (dead.length) { problems.push(`npc_rolls for ${[...new Set(dead.map(r => r.who))].join(', ')} were dropped: they're dead (0 HP) and never act again`); t.npc_rolls = t.npc_rolls.filter(r => !dead.includes(r)); }
+        if (dead.length) { problems.push(`rolls for ${[...new Set(dead.map(r => r.who))].join(', ')} were dropped: they're dead (0 HP) and never act again`); t.npc_rolls = t.npc_rolls.filter(r => !dead.includes(r)); }
         if (turnPromptsOn() && world.combat.phase === 'player' && !reasons.includes('end_turn') && !reasons.includes('reaction') && world.combat.order.some(o => o.name === meta.persona.name)) {
             const early = t.npc_rolls.filter(r => r.kind === 'attack' && !matchName(r.who, partyNow));
-            if (early.length) { problems.push(`${[...new Set(early.map(r => r.who))].join(', ')} attacked during ${meta.persona.name}'s turn: dropped. Nobody else acts until the code says the turn has ended (end_turn); then those after the player act.`); t.npc_rolls = t.npc_rolls.filter(r => !early.includes(r)); }
+            if (early.length) { problems.push(`${[...new Set(early.map(r => r.who))].join(', ')} attacked during ${meta.persona.name}'s turn: dropped. Nobody else acts until the code says the turn has ended; then those after the player act.`); t.npc_rolls = t.npc_rolls.filter(r => !early.includes(r)); }
         }
     }
     // Companion/NPC/enemy rolls: code-rolled, shown openly WITH what happened.
     const outcomesBySpeaker = {};
     const reactions = [];
-    // The companions' own choices this round: a roll the DM gave them goes on the target they chose (with their weapon's dice); an attack the DM forgot is made for them.
+    // The companions' own choices this round: a roll the referee gave them goes on the target they chose (with their weapon's dice); an attack the referee forgot is made for them.
     const choices = world.combat && meta.combatChoices?.turn === meta.turn ? meta.combatChoices.choices : null;
     if (choices) {
         for (const [n, ch] of Object.entries(choices)) {
             if (ch.action === 'use' && ch.item && /potion|elixir|philt|draught|salve|tonic/i.test(ch.item) && !(world.party[n]?.hp <= 0) && !meta.combatChoices.used?.[n]) {
-                // The DM already had her drink it (HP up, or the potion taken from her pack): once is enough.
+                // The referee already had her drink it (HP up, or the potion taken from her pack): once is enough.
                 const hpKey = matchName(n, Object.keys(t.state_changes?.hp || {})), rmKey = matchName(n, Object.keys(t.state_changes?.items_remove || {}));
                 const dmDid = (hpKey && !/^\s*-/.test(String(t.state_changes.hp[hpKey]))) || (rmKey && (Array.isArray(t.state_changes.items_remove[rmKey]) ? t.state_changes.items_remove[rmKey] : [t.state_changes.items_remove[rmKey]]).some(x => /potion|elixir|philt|draught|salve|tonic/i.test(String(x))));
-                if (dmDid) { (meta.combatChoices.used ??= {})[n] = true; status.note(`${n}'s ${ch.item}: the DM applied it`); continue; }
+                if (dmDid) { (meta.combatChoices.used ??= {})[n] = true; status.note(`${n}'s ${ch.item}: the referee applied it`); continue; }
                 const dice = /superior/i.test(ch.item) ? '8d4+8' : /greater/i.test(ch.item) ? '4d4+4' : '2d4+2';
                 const r = roll(dice);
                 if (r) {
@@ -1447,12 +1314,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (ch.action !== 'attack' || !ch.target || world.combat.enemies[ch.target]?.hp <= 0 || world.party[n]?.hp <= 0) continue;
             const mine = t.npc_rolls.filter(r => r.kind === 'attack' && matchName(r.who, [n]));
             for (const r of mine) { if (r.target && !matchName(r.target, [ch.target])) status.note(`${n}'s attack goes on ${ch.target} (their choice), not ${r.target}`); r.target = ch.target; if (ch.damage) r.damage = ch.damage; }
-            // The DM acted for her some other way this round (a brief, a line of narration): no second action from the code.
-            const actedFor = t.directions.some(d => matchName(d.speaker, [n])) || new RegExp(`\\b${n.split(' ')[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(t.narration || '');
-            if (!mine.length && !actedFor) { t.npc_rolls.push({ who: n, what: `attacks ${ch.target}${ch.weapon ? ` with ${ch.weapon}` : ''}`, notation: `1d20${ch.toHit >= 0 ? '+' : ''}${ch.toHit}`, dc: null, kind: 'attack', target: ch.target, damage: ch.damage || '', half: false, on_success: '', on_fail: '', spot: null }); status.note(`${n}'s attack on ${ch.target} (their choice) added: the DM left it out`); }
+            // The referee had her do something else this round (a check, a hold): no second action from the code.
+            const actedFor = t.npc_rolls.some(r => matchName(r.who, [n])) || Object.keys(t.held || {}).some(h => matchName(h, [n]));
+            if (!mine.length && !actedFor) { t.npc_rolls.push({ who: n, what: `attacks ${ch.target}${ch.weapon ? ` with ${ch.weapon}` : ''}`, notation: `1d20${ch.toHit >= 0 ? '+' : ''}${ch.toHit}`, dc: null, kind: 'attack', target: ch.target, damage: ch.damage || '', half: false, on_success: '', on_fail: '', spot: null, vs: null }); status.note(`${n}'s attack on ${ch.target} (their choice) added: the referee left it out`); }
         }
     }
-    // In a fight, everyone's rolls go in initiative order, whatever order the DM wrote them in.
+    // In a fight, everyone's rolls go in initiative order, whatever order the referee wrote them in.
     if (world.combat?.order?.length && t.npc_rolls.length > 1) {
         const place = n => { const i = world.combat.order.findIndex(o => matchName(n, [o.name])); return i < 0 ? 99 : i; };
         t.npc_rolls = t.npc_rolls.map((r, i) => [r, i]).sort((a, b) => place(a[0].who) - place(b[0].who) || a[1] - b[1]).map(([r]) => r);
@@ -1464,8 +1331,13 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             const who = matchName(r.who, meta.party.map(p => p.name)) ?? r.who;
             const conds = conditionsOf(world, who);
             if (conds.some(x => /^prone\b/i.test(String(x))) && !/cuff|tied|bound|restrain|rope|grappled|pinned/i.test(conds.join(' '))) { applyStateChanges(world, { conditions_remove: { [who]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); saveDoc('world'); await postNote(`📜 ${who} gets up (−prone): no roll for that.`); }
-            problems.push(`npc_rolls "${r.what}" for ${r.who} was dropped: standing up is never a roll (it costs the move; the code removed "prone"). Roll only what's contested or uncertain.`);
+            problems.push(`the roll "${r.what}" for ${r.who} was dropped: standing up is never a roll (it costs the move; the code removed "prone"). Roll only what's contested or uncertain.`);
             continue;
+        }
+        // A contest: the other side rolls first, in the open, and sets the DC.
+        if (r.vs) {
+            const other = contestRoll(c, r.vs);
+            if (other) { await postDiceCard(`🎲 **${other.who}** · ${other.skill} (contest): ${other.detail} = **${other.total}**`, { roll: { who: other.who, what: other.skill, total: other.total, natural: other.natural } }); r.dc = other.total; }
         }
         const result = roll(r.notation);
         if (!result) continue;
@@ -1475,7 +1347,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (k && world.combat.enemies[k]?.hp <= 0) { problems.push(`${r.who}'s ${r.what || 'attack'} was dropped: they went down to 0 HP before it this turn and never act again`); continue; }
         }
         // An attack always lands on someone and always does damage: who it's at (named, or read from
-        // its own words), against their AC when the DM left it out, with the DM's dice or the attacker's.
+        // its own words), against their AC when the referee left it out, with the roster's dice.
         if (r.kind === 'attack') {
             r.target = attackTarget(c, r);
             await enemyHere(c, r.who, status);
@@ -1489,7 +1361,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             // Reach: a melee attack from more than a square off first walks the attacker up as far as a move allows; still out of reach, it's dropped.
             const close = closeToTarget(c, r.who, r.target, `${r.what} ${r.notation}`, status);
             if (close?.moved) mapChanged = true;
-            if (close && close.d > close.reach) { problems.push(`${r.who}'s ${r.what || 'attack'} on ${r.target} was dropped: ${close.d} squares apart after moving as far as a turn allows (now at ${toCoord(close.at.x, close.at.y)}), out of reach. Move them adjacent with "positions" first, or make it a thrown or ranged attack.`); continue; }
+            if (close && close.d > close.reach) { problems.push(`${r.who}'s ${r.what || 'attack'} on ${r.target} was dropped: ${close.d} squares apart after moving as far as a turn allows (now at ${toCoord(close.at.x, close.at.y)}), out of reach. Give them a "move" to an adjacent square first, or make it a thrown or ranged attack.`); continue; }
         }
         const judged = judge(result.total, r.dc, result.natural, r.kind);
         let damageText = '';
@@ -1500,12 +1372,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 const extra = roll(r.damage.replace(/[+-]\s*\d+\s*$/, ''));
                 if (extra) dmg = { ...dmg, total: dmg.total + extra.total, detail: `${dmg.detail} + crit ${extra.detail}` };
             }
-            // The player's say before an enemy's hit lands: halve it (Uncanny Dodge and the like), or react another way (the DM rules; the damage waits).
+            // The player's say before an enemy's hit lands: halve it (Uncanny Dodge and the like), or react another way (the referee rules; the damage waits).
             if (dmg && turnPromptsOn() && nameKey(r.target) === nameKey(meta.persona.name) && !signal.aborted) {
                 const re = await askReaction({ who: r.who, what: r.what, total: result.total, dc: r.dc, damage: dmg.total, detail: dmg.detail });
                 if (re.kind === 'half') dmg = { ...dmg, total: Math.floor(dmg.total / 2), detail: `${dmg.detail}, halved by a reaction` };
                 else if (re.kind === 'other') {
-                    reactions.push(`REACTION: ${meta.persona.name} reacts to ${r.who}'s ${r.what || 'attack'} (${result.total}${r.dc !== null ? ` vs AC ${r.dc}` : ''}, ${dmg.total} damage NOT applied yet): "${re.text}". Rule on it now: if it works, apply what damage is left (or none) with state_changes hp; if it doesn't, apply the full ${dmg.total}. Then carry on from where the round stopped.`);
+                    reactions.push(`REACTION: ${meta.persona.name} reacts to ${r.who}'s ${r.what || 'attack'} (${result.total}${r.dc !== null ? ` vs AC ${r.dc}` : ''}, ${dmg.total} damage NOT applied yet): "${re.text}". Rule on it now: if it works, apply what damage is left (or none) with changes.hp; if it doesn't, apply the full ${dmg.total}. Then carry on from where the round stopped.`);
                     damageText = ` · **${dmg.total}** damage waits: ${meta.persona.name} reacts`;
                     dmg = null;
                 }
@@ -1535,7 +1407,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
                 playAnim(r.who, 'hurt');
             }
         }
-        // Getting up: a check that works puts them on their feet (the DM forgets conditions_remove).
+        // Getting up: a check that works puts them on their feet (the referee forgets conditions_remove).
         const roller = r.kind === 'save' || r.kind === 'check' ? matchName(r.who, [meta.persona.name, ...meta.party.map(p => p.name)]) : null;
         if (roller && judged.success === true && /\b(?:get(?:s|ting)? (?:back )?up|stand(?:s|ing)? up|(?:back )?(?:on|to) (?:his|her|their) feet|rises?|scrambles?)\b/i.test(`${r.what} ${r.on_success}`) && conditionsOf(world, roller).some(x => /^prone\b/i.test(String(x)))) { applyStateChanges(world, { conditions_remove: { [roller]: ['prone'] } }, meta.party.map(p => p.name), { turn: meta.turn }); damageText += ' · up on their feet'; }
         const mark = judged.success === true ? '✔' : judged.success === false ? '✘' : '';
@@ -1552,10 +1424,10 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
     }
     fallenInFight(c);
-    // The last enemy went down to a companion's blow: the fight is over, whatever the DM sent.
+    // The last enemy went down to a companion's blow: the fight is over, whatever the referee sent.
     if (world.combat && allEnemiesDown(world)) {
         await finishCombat(c, status);
-        dmOnly.push('Every enemy is down: the code has ended the fight (no end_combat needed). Narrate the aftermath; nobody rolls.');
+        dmOnly.push('Every enemy is down: the code has ended the fight (no fight.end needed).');
         mapChanged = true;
     }
     if (reactions.length) setTimeout(() => runTurn({ force: 'reaction', placeEvent: reactions.join(' ') }), 50);
@@ -1568,8 +1440,9 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         else refreshMap();
     }
 
-    // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
-    if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`player_roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
+    // The player's roll request: prepared here, posted after the story so the companions answer with it on the table.
+    let request = null;
+    if (t.player_roll && meta.pendingRoll && meta.pendingRoll.turn === meta.turn && !meta.pendingRoll.autoResult) { dmOnly.push(`a roll (${t.player_roll.skill || t.player_roll.kind}) was dropped: the code had already asked ${meta.persona.name} to roll ${meta.pendingRoll.skill || meta.pendingRoll.kind} this turn. Never ask for a roll the code has asked for; wait for the total.`); status.note('Roll already asked for by the code'); }
     else if (t.player_roll) {
         const pr = t.player_roll;
         let outOfReach = false;
@@ -1591,27 +1464,167 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             if (pr.kind !== 'attack' && pr.kind !== 'damage' && (getUp || wriggle) && /pinned|grappled|held down|cuff|shackl|manacle/.test(conds) && pr.advantage !== 'disadvantage') { pr.advantage = 'disadvantage'; status.note(`${/pinned|grappled|held down/.test(conds) ? 'Held down' : 'Cuffed'}: the ${pr.skill || 'roll'} is at disadvantage`); }
             if (getUp && /pinned|grappled|held down/.test(conds) && (pr.dc === null || pr.dc < 15)) { pr.dc = 15; status.note('Getting up from under someone: DC 15'); }
         }
+        // A contest: the other side rolls now, in the open, and their total is the number to beat.
+        if (pr.vs && pr.kind !== 'attack' && pr.kind !== 'damage' && pr.kind !== 'initiative') {
+            const other = contestRoll(c, pr.vs);
+            if (other) { await postDiceCard(`🎲 **${other.who}** · ${other.skill} (contest): ${other.detail} = **${other.total}**`, { roll: { who: other.who, what: other.skill, total: other.total, natural: other.natural }, contest: true }); pr.dc = other.total; status.note(`${other.who}'s side of the contest: ${other.total}`); }
+        }
         if (pr.kind === 'attack') {
             pr.target = playerTarget(c, pr);
             const foe = world.combat?.enemies?.[pr.target];
             const sheetAc = pr.target && !foe ? statsForName(pr.target, meta)?.ac : null;
             const ac = foe && Number.isFinite(Number(foe.ac)) ? Number(foe.ac) : Number.isFinite(Number(sheetAc)) ? Number(sheetAc) : null;
-            if (ac !== null && pr.dc !== ac) { if (pr.dc !== null) problems.push(`player_roll.dc ${pr.dc} for the attack on ${pr.target} was replaced by their AC ${ac} (the roster's; it never changes between rolls)`); pr.dc = ac; }
+            if (ac !== null && pr.dc !== ac) { if (pr.dc !== null) dmOnly.push(`the DC ${pr.dc} for the attack on ${pr.target} was replaced by their AC ${ac} (the roster's; it never changes between rolls)`); pr.dc = ac; }
             if (/cuff|shackl|manacle|bound|tied|restrained/i.test(conditionsOf(world, meta.persona.name).join(' ')) && pr.advantage !== 'disadvantage') { pr.advantage = 'disadvantage'; status.note('Cuffed: the attack is at disadvantage'); }
             // Reach holds for the player too: they walk up as far as their move allows; still out of reach, no roll is asked and both sides are told.
             const close = closeToTarget(c, meta.persona.name, pr.target, `${pr.reason || ''} ${pr.skill || ''}`, status);
             if (close?.moved) mapChanged = true;
             if (close && close.d > close.reach) {
                 outOfReach = true;
-                problems.push(`${meta.persona.name}'s attack on ${pr.target} was not rolled: ${pr.target} is ${close.d} squares off even after moving as far as a turn allows (${meta.persona.name} now at ${toCoord(close.at.x, close.at.y)}), out of reach. ${meta.persona.name}: say where you move, or use a ranged weapon. DM: say in words where ${pr.target} stands.`);
+                problems.push(`${meta.persona.name}'s attack on ${pr.target} was not rolled: ${pr.target} is ${close.d} squares off even after moving as far as a turn allows (${meta.persona.name} now at ${toCoord(close.at.x, close.at.y)}), out of reach. ${meta.persona.name}: say where you move, or use a ranged weapon.`);
             }
         }
-        if (!outOfReach) await postRollRequest(c, pr);
+        if (!outOfReach) request = pr;
     }
-    for (const d of t.directions) {
+    saveMeta();
+    saveDoc('world');
+    const hpNow = [...[meta.persona.name, ...meta.party.map(p => p.name)].filter(n => world.party?.[n]).map(n => `${n} ${world.party[n].hp}/${world.party[n].hp_max}${world.party[n].conditions?.length ? ` [${world.party[n].conditions.join(', ')}]` : ''}`), ...Object.entries(world.combat?.enemies || {}).map(([n, e]) => `${n} ${e.hp}/${e.hp_max ?? e.hp}${e.hp <= 0 ? ' (dead)' : ''}`)].join('; ');
+    const forStory = {
+        fact: t.fact || '',
+        cards: cardsSince(fromIndex),
+        settled: cardsSince(fromIndex, { settledOnly: true }),
+        request,
+        held: t.held || {},
+        moved: newScene ? `${world.location}${world.sceneCard?.place ? `: ${world.sceneCard.place}` : ''}` : '',
+        hp: hpNow,
+    };
+    return { turn: t, problems, dmOnly, outcomesBySpeaker, request, newScene, forStory };
+}
+
+/**
+ * Tell it: the storyteller's narration, briefs and story updates, after the ruling. With no story
+ * (a roll-only turn, or the storyteller failed), the roll request still goes up and the books'
+ * warnings are posted.
+ * @param {object|null} s the storyteller's turn
+ */
+export async function applyStory(c, s, status, signal, { events = [], reasons = [], quiet = false, ruled, dropped = [] } = {}) {
+    const meta = c.meta;
+    const world = c.docs.world;
+    const t = ruled.turn;
+    const storyProblems = [];
+    // The storyteller's own tics ("wrists still locked behind you", nine turns running): named, so they stop.
+    const dmTics = repeatedPhrases(recentRepliesOf(DM_NAME, 6), { exclude: [meta.persona.name, ...meta.party.map(p => p.name)] });
+    if (dmTics.length) storyProblems.push(`You've repeated these in your last turns: ${dmTics.map(p => `"${p}"`).join(', ')}. Say it differently or leave it out: a standing fact (cuffed hands, the dark, a danger ahead) is stated once, when it changes or matters, not every turn.`);
+    if (dropped.length) storyProblems.push(`your reply carried ${dropped.map(k => `"${k}"`).join(', ')}: dropped. The referee rules on dice, the books, moves, fights and the scene; you tell what it settled. Anything the story needs ruled, say in narration or a brief what is attempted, and the referee rules it next turn.`);
+    if (s) {
+        // New NPCs (with voices). A shop or a candlestick is never one.
+        if (s.new_npcs.length) {
+            const things = s.new_npcs.filter(n => notAPersonEntry(n));
+            if (things.length) { status.note(`Not people, not added: ${things.map(n => n.name).join(', ')}`); ruled.problems.push(`new_npcs dropped ${things.map(n => `"${n.name}"`).join(', ')}: a place or a thing is never an NPC (it belongs in the scene's place or objects)`); }
+            const added = addNpcs(c.docs.npcs, s.new_npcs.filter(n => !things.includes(n)), world.location);
+            for (const npc of added) {
+                npc.voice = pickNpcVoice(npc, c.docs.npcs);
+            }
+            if (added.length) status.note(`New: ${added.map(n => n.name).join(', ')}`);
+            saveDoc('npcs');
+        }
+        // Who and what arrived in the story this turn goes on the card (never the place: the referee says where the party is).
+        if (s.scene_card) {
+            world.sceneCard = applySceneCard(world.sceneCard, s.scene_card, { newPlace: false, partyNames: [meta.persona.name, ...meta.party.map(p => p.name)] });
+            if (!world.combat) redrawSketch(c);
+            saveDoc('world');
+        }
+        // NPCs who get briefs are "here".
+        for (const d of s.directions) {
+            const npc = c.docs.npcs.find(n => nameKey(n.name) === nameKey(d.speaker));
+            if (npc) npc.lastSeen = world.location;
+        }
+        if (s.beats_completed.length) {
+            meta.lastDriftStageCalled = 0;
+            for (const beat of s.beats_completed) {
+                const re = new RegExp(`- \\[ \\] (${beat.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`);
+                c.docs.plot = c.docs.plot.replace(re, '- [x] $1');
+            }
+            saveDoc('plot');
+            status.note(`Plot beat done: ${s.beats_completed.join(', ')}`);
+        }
+        if (s.notes_add) {
+            c.docs.notes = `${c.docs.notes ? c.docs.notes + '\n' : ''}- (turn ${meta.turn}) ${s.notes_add}`;
+            saveDoc('notes');
+        }
+        if (s.story_add) {
+            c.docs.story = `${c.docs.story ? c.docs.story + '\n\n' : ''}${s.story_add}`;
+            saveDoc('story');
+        }
+    }
+    if (events.length) {
+        const use = s?.event?.use || '';
+        const chosen = events.find(e => e.id === use);
+        if (chosen) {
+            recordEvent(c, chosen, 'used');
+            status.note(`Random event: ${chosen.title}`);
+        } else if (use === 'custom') {
+            recordEvent(c, { title: s.event.text || 'Custom event', type: 'custom' }, 'custom');
+            status.note('Random event: the storyteller made one up to fit');
+        } else {
+            // Nothing fit right now. Reset the clock so we don't ask again next turn.
+            recordEvent(c, { title: `(declined: ${events.map(e => e.title).join(', ')})` }, 'declined');
+            status.note('No random event: nothing fit the moment');
+        }
+    }
+    // Pacing: the story's scene type, tension and pace; the ruling's fight.
+    applyDmPacing(meta.pacing, { world_next: s?.world_next ?? null, scene: { type: s?.scene?.type ?? t.scene?.type ?? (t.start_combat ? 'combat' : null), changed: ruled.newScene }, tension: s?.tension ?? null, beats_completed: s?.beats_completed || [], start_combat: t.start_combat, end_combat: t.end_combat }, { worldEvery: Number(settings().checkinEvery) || 5 });
+    const oocNow = reasons.includes('ooc') || /^\s*(?:\*?\(\s*ooc\s*\)\*?|\(\(|ooc\s*[:\-]|@?dm\s*[,:\-]|\/rule\b)/i.test(lastPlayerMessage());
+    if (s) {
+        // What just visibly changed: companions see it until the next story turn, so they don't redo it,
+        // and then in their timeline with when and where it happened.
+        meta.happened = s.happened || '';
+        if (s.happened) meta.timeline = pushTimeline(meta.timeline, { day: world.day, time: world.time, place: world.location, text: s.happened });
+        // Table rules come only from the player's own out-of-character words: the premise and the plot are the storyteller's private plan, and companions read the rules.
+        if (s.table_rules_add.length) {
+            if (!oocNow) { ruled.problems.push(`table_rules_add dropped (${s.table_rules_add.length}): table rules are only what the player settled out of character, in their own OOC words. Your plot, the premise's secrets and what is going to happen stay in your own plan; companions and NPCs read the rules, so a rule would give the story away.`); s.table_rules_add = []; }
+        }
+        if (s.table_rules_add.length || s.table_rules_remove.length) {
+            meta.tableRules = applyTableRules(meta.tableRules, s.table_rules_add, s.table_rules_remove);
+            status.note('Table rules updated');
+        }
+        if (s.standing_direction) meta.standing = s.standing_direction;
+        if (s.objective) meta.objective = s.objective;
+        // What each companion knows (rare, full-text updates).
+        for (const [name, text] of Object.entries(s.knowledge_update || {})) {
+            const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
+            if (member) {
+                meta.knowledge ??= {};
+                meta.knowledge[member.name] = text;
+            }
+        }
+        // Their inner state: only the fields the storyteller sent change.
+        for (const [name, update] of Object.entries(s.mind_update || {})) {
+            const member = meta.party.find(p => p.name.toLowerCase() === name.toLowerCase());
+            if (!member) continue;
+            meta.minds ??= {};
+            meta.minds[member.name] = mergeMind(meta.minds[member.name], update);
+            status.note(`${member.name}'s mind: ${Object.keys(update).join(', ')}`);
+        }
+    }
+    refreshStandingPrompt();
+    saveDoc('world');
+
+    // What the player sees, in order: the story, then the roll it asks for, then the companions.
+    if (s?.ooc) await postOoc(s.ooc);
+    if (s?.narration) {
+        const id = await postNarration(s.narration);
+        if (ruled.newScene && id !== null) await markSceneStart(id);
+        voiceLine({ kind: 'dm', text: s.narration });
+    } else if (ruled.newScene) {
+        await markSceneStart(ST.chat.findLastIndex(m => !m.is_system));
+    }
+    // The player's roll request goes up before the companions speak: they answer with it on the table, and nobody settles a roll that isn't there yet.
+    if (ruled.request) await postRollRequest(c, ruled.request);
+    for (const d of s?.directions || []) {
         if (signal.aborted) throw new Error('aborted');
         const speaker = d.speaker;
-        // A trap, a chest or a ledger can't be briefed to speak, whatever the DM called it.
+        // A trap, a chest or a ledger can't be briefed to speak, whatever the storyteller called it.
         if (notAPerson(speaker) && !c.meta.party.some(p => p.name === speaker)) { status.note(`${speaker} is a thing, not someone: no line`); continue; }
         const deadNpc = (c.docs.npcs || []).find(n => n.dead && nameKey(n.name) === nameKey(speaker));
         if (deadNpc) {
@@ -1622,10 +1635,11 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
             status.note(`${speaker} isn't with you right now`);
             continue;
         }
-        const extra = outcomesBySpeaker[matchName(speaker, Object.keys(outcomesBySpeaker)) ?? ''] ?? '';
+        const extra = ruled.outcomesBySpeaker[matchName(speaker, Object.keys(ruled.outcomesBySpeaker)) ?? ''] ?? '';
         // A roll the player is about to make: the speaker doesn't settle it or act on them first.
         // In her words, not the table's: she doesn't know what a roll is.
-        const pendingLine = t.player_roll && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is in the middle of ${t.player_roll.kind === 'initiative' ? 'the first moment of a fight that is just breaking out; nobody has struck yet' : t.player_roll.kind === 'attack' ? 'a swing at someone, not yet landed' : 'trying something, not yet done'}. Don't settle how it goes, and don't act on ${meta.persona.name} until it has; ${speaker} speaks of what she sees, never of dice, rolls or turns.)` : '';
+        const pr = ruled.request;
+        const pendingLine = pr && c.meta.party.some(p => p.name === speaker) ? `(${meta.persona.name} is in the middle of ${pr.kind === 'initiative' ? 'the first moment of a fight that is just breaking out; nobody has struck yet' : pr.kind === 'attack' ? 'a swing at someone, not yet landed' : 'trying something, not yet done'}. Don't settle how it goes, and don't act on ${meta.persona.name} until it has; ${speaker} speaks of what she sees, never of dice, rolls or turns.)` : '';
         // In a fight, or while just exploring (nobody talking to them): one short line.
         const length = meta.pacing.inCombat || quiet ? 'short' : d.length;
         const step = status.step(`${speaker} is responding`);
@@ -1642,13 +1656,20 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     refreshMap();
     // Animals the library can't draw (a parrot, a monkey) get a figure from Claude, in the background.
     ensureAnimalFigures(c, c.docs.npcs || []).catch(() => { });
-    // Loud failure: what was dropped is shown to the player now and to the DM next turn.
-    meta.turnProblems = [...problems, ...dmOnly];
-    if (problems.length) {
-        status.note(`Dropped: ${problems.join(' · ')}`);
-        await postNote(`⚠️ The DM asked for something the code couldn't do: ${problems.join(' · ')}`);
+    // Loud failure: what was dropped is shown to the player now and to the table next turn.
+    meta.turnProblems = [...ruled.problems, ...ruled.dmOnly];
+    meta.storyProblems = storyProblems;
+    if (ruled.problems.length) {
+        status.note(`Dropped: ${ruled.problems.join(' · ')}`);
+        await postNote(`⚠️ The table asked for something the code couldn't do: ${ruled.problems.join(' · ')}`);
     }
     saveMeta();
+}
+
+/** Apply a whole turn (both halves in one object: the wizard's opening). */
+export async function applyDmTurn(c, t, status, signal, { events = [], reasons = [], quiet = false } = {}) {
+    const ruled = await applyRuling(c, t, status, signal, { reasons });
+    await applyStory(c, t, status, signal, { events, reasons, quiet, ruled, dropped: [] });
 }
 
 /** Opening scene after the wizard built the campaign. */
@@ -1662,10 +1683,10 @@ export async function runOpening(openingIn) {
     try {
         if (!String(opening?.narration || '').trim()) {
             // The design came without an opening: the DM writes one now; failing that, the chat still says how to begin.
-            status.note('No opening narration in the design: asking the DM for one');
+            status.note('No opening narration in the design: asking the storyteller for one');
             try {
-                const r = await askDm({ reasons: ['opening'], placeEvent: 'The campaign starts now. Write the opening scene: where the party is, what they see, and what is happening, so the player can act.' }, { model: modelFor(['opening']) });
-                if (r.turn?.narration) opening = { ...r.turn, new_npcs: [...(opening?.new_npcs || []), ...(r.turn.new_npcs || [])], scene: r.turn.scene || opening?.scene, scene_card: r.turn.scene_card || opening?.scene_card, standing_direction: r.turn.standing_direction || opening?.standing_direction, directions: r.turn.directions?.length ? r.turn.directions : opening?.directions || [], state_changes: { ...(opening?.state_changes || {}), ...(r.turn.state_changes || {}) } };
+                const r = await askStoryteller({ reasons: ['opening'], placeEvent: 'The campaign starts now. Write the opening scene: where the party is, what they see, and what is happening, so the player can act.' }, { model: modelFor(['opening']) });
+                if (r.turn?.narration) opening = { ...(opening || {}), narration: r.turn.narration, happened: r.turn.happened, new_npcs: [...(opening?.new_npcs || []), ...(r.turn.new_npcs || [])], standing_direction: r.turn.standing_direction || opening?.standing_direction, directions: r.turn.directions?.length ? r.turn.directions : opening?.directions || [], scene_card: opening?.scene_card ? applySceneCard(opening.scene_card, r.turn.scene_card, { partyNames: [c.meta.persona.name, ...c.meta.party.map(p => p.name)] }) : opening?.scene_card };
             } catch (error) { console.warn('[Dungeon Master] opening narration failed', error); }
             if (!String(opening?.narration || '').trim()) opening = { ...(opening || {}), narration: 'The adventure begins. Say what you do, or ask the DM to set the scene.' };
         }

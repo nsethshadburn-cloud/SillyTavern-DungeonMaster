@@ -8,7 +8,6 @@ import { normalizeDmTurn } from '../src/core/protocol.js';
 import { applyStateChanges } from '../src/core/world.js';
 import { expireConditions, untilWords } from '../src/core/upkeep.js';
 import { whenLabel } from '../src/core/state.js';
-import { parseBookkeeping } from '../src/core/bookkeeper.js';
 
 test('the time of day in words follows the hour', () => {
     assert.equal(wordFor(0), 'night');
@@ -147,10 +146,10 @@ test('timeline labels follow the clock: a night entry remembered by day is "last
     assert.equal(whenLabel({ day: 1, time: 'noon' }, { day: 4, time: 'morning' }), '3 days ago');
 });
 
-test('the books cover the people on the map: the narration knocks a guard out', () => {
-    const story = 'Dungeon Master: Amber\'s cudgel cracks across the turnkey\'s skull and Turnkey Wren slumps to the floor, out cold.';
-    const changes = parseBookkeeping('{"conditions_add": {"Turnkey Wren": ["unconscious"]}, "conditions_remove": {}, "items_add": {}, "items_remove": {}}', {
-        names: ['Amber', 'Turnkey Wren'], itemNames: ['Amber'], story, conditionsOf: () => [], itemsOf: () => [], allItems: [],
-    });
-    assert.deepEqual(changes, { conditions_add: { 'Turnkey Wren': ['unconscious'] } });
+test('the books cover the people of the scene: the referee knocks a guard out', () => {
+    const w = createWorldState();
+    w.party.Amber = { hp: 10, hp_max: 20, conditions: [] };
+    const log = applyStateChanges(w, { conditions_add: { 'Turnkey Wren': ['unconscious'] } }, ['Amber']);
+    assert.deepEqual(log, ['Turnkey Wren: +unconscious, prone'], 'out cold is on the ground');
+    assert.deepEqual(w.others['Turnkey Wren'].conditions, ['unconscious', 'prone']);
 });

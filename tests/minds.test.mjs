@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeMind, mergeMind, renderMind, renderMinds, mindIsEmpty } from '../src/core/minds.js';
-import { normalizeDmTurn, DM_RULES, BIBLE_INSTRUCTIONS } from '../src/core/protocol.js';
+import { normalizeDmTurn, STORY_RULES, BIBLE_INSTRUCTIONS } from '../src/core/protocol.js';
 
 test('a companion mind: checked, merged a field at a time, cleared with "", rendered for the DM', () => {
     assert.equal(normalizeMind(null), null);
@@ -32,7 +32,7 @@ test('the DM protocol carries mind_update and the rules ask for briefs written f
     const t = normalizeDmTurn({ scene: { type: 'social' }, mind_update: { 'Judy Hopps': { mood: 'wary', feelings: { Brask: 'afraid of him' } }, '': { mood: 'x' }, Amber: 'not an object' } });
     assert.deepEqual(Object.keys(t.mind_update), ['Judy Hopps']);
     assert.equal(t.mind_update['Judy Hopps'].mood, 'wary');
-    assert.match(DM_RULES, /"mind_update"/);
-    assert.match(DM_RULES, /unprompted/i);
+    assert.match(STORY_RULES, /"mind_update"/);
+    assert.match(STORY_RULES, /unprompted/i);
     assert.match(BIBLE_INSTRUCTIONS, /"minds"/);
 });

@@ -6,7 +6,7 @@ import { parseNotation, roll, rollDie, judge, parsePlayerRoll, abilityModifier }
 import { normalizeEvent, eventChance, eligibleEvents, pickEvent, guessSetting } from '../src/core/deck.js';
 import { createPacingState, tickPlayerTurn, dmReasons, applyDmPacing, updateFun, isFillerMessage, nextBeat, pacingReport, PRESSURE_STAGES } from '../src/core/pacing.js';
 import { parseRollMessage, damageDice, collectRoll } from '../src/core/rollmsg.js';
-import { DM_RULES } from '../src/core/protocol.js';
+import { TABLE_RULES, REFEREE_RULES, STORY_RULES } from '../src/core/protocol.js';
 import { ruleTriage, parseHelperTriage } from '../src/core/triage.js';
 import { extractJson, stripThinking, stripSpeakerPrefix, matchName, slug } from '../src/core/text.js';
 import { parseDmTurn } from '../src/core/protocol.js';
@@ -192,19 +192,20 @@ test('per-job models: Sonnet for setup and story direction, Haiku for everyday p
     for (const k of ['campaign_design', 'pitches', 'opening', 'persona_sheet', 'character_sheet']) {
         assert.equal(pickModel([k], o), S, k);
     }
-    for (const k of ['npc_addressed', 'ooc', 'manual', 'recap', 'condense_notes', 'checkin', 'combat_action', 'combat_round', 'risky_action', 'roll_result', 'scene_move', 'event', 'companion_task', 'companion_action', 'drift', 'stalled', 'deadlock', 'resync']) {
+    for (const k of ['referee', 'storyteller', 'sprite', 'recap', 'condense_notes', 'resync']) {
         assert.equal(pickModel([k], o), H, k);
     }
-    assert.equal(pickModel(['ooc', 'opening'], o), S, 'the more capable model wins when jobs disagree');
-    assert.equal(pickModel(['ooc'], { ...o, criticalRoll: true }), H, 'criticals unchanged by default');
-    assert.equal(pickModel(['ooc'], { ...o, criticalRoll: true, criticalModel: S }), S);
-    assert.equal(pickModel(['ooc'], { ...o, hybrid: false }), S, 'hybrid off = main model for everything');
+    assert.equal(pickModel(['storyteller', 'opening'], o), S, 'the more capable model wins when jobs disagree');
+    assert.equal(pickModel(['storyteller'], { ...o, criticalRoll: true }), H, 'criticals unchanged by default');
+    assert.equal(pickModel(['storyteller'], { ...o, criticalRoll: true, criticalModel: S }), S);
+    assert.equal(pickModel(['storyteller'], { ...o, hybrid: false }), S, 'hybrid off = main model for everything');
     assert.equal(pickModel(['some_future_job'], o), S, 'unknown jobs use the main model');
-    assert.equal(pickModel(['event'], { ...o, taskModels: { ...taskModels, event: 'claude-opus-5-5' } }), 'claude-opus-5-5', 'any model per job');
+    assert.equal(pickModel(['referee'], { ...o, taskModels: { ...taskModels, referee: 'claude-opus-5-5' } }), 'claude-opus-5-5', 'any model per job');
     assert.equal(new Set(TASKS.map(t => t.key)).size, TASKS.length, 'job keys are unique');
-    for (const r of ['ooc', 'roll_result', 'risky_action', 'scene_move', 'combat_action', 'combat_round', 'event', 'stalled', 'npc_addressed', 'drift', 'checkin', 'opening', 'manual']) {
-        assert.ok(TASKS.some(t => t.key === r), `DM reason ${r} has a job`);
+    for (const r of ['referee', 'storyteller', 'opening', 'recap', 'resync', 'condense_notes']) {
+        assert.ok(TASKS.some(t => t.key === r), `${r} has a job`);
     }
+    for (const r of ['ooc', 'roll_result', 'combat_round', 'drift', 'checkin']) assert.ok(!TASKS.some(t => t.key === r), `${r} is no job of its own any more (v0.80: the referee and the storyteller)`);
     assert.equal(modelLabel(H), 'Haiku');
     assert.equal(modelLabel(S), 'Sonnet');
 });
@@ -222,8 +223,9 @@ test('older model settings move to per-job models', () => {
 
     const custom = { dmModel: S, dmModelRoutine: H, autoModel: false, bigReasons: { ...v040, roll_result: true }, bigOnCritical: true, modelDefaultsVersion: 2 };
     migrateModelSettings(custom);
-    assert.equal(custom.taskModels.roll_result, S, 'customized choices kept');
-    assert.equal(custom.taskModels.ooc, H);
+    assert.equal(custom.taskModels.roll_result, undefined, 'the per-reason play jobs are gone (v0.80)');
+    assert.equal(custom.taskModels.storyteller, H);
+    assert.equal(custom.taskModels.referee, H);
     assert.equal(custom.taskModels.persona_sheet, S, 'new jobs get the recommended model');
     assert.equal(custom.criticalModel, S);
     assert.equal(custom.hybridModels, false, 'auto off → hybrid off');
@@ -231,7 +233,7 @@ test('older model settings move to per-job models', () => {
     const neverHadModels = { dmModel: 'claude-opus-5-5' };
     migrateModelSettings(neverHadModels);
     assert.equal(neverHadModels.taskModels.opening, 'claude-opus-5-5', 'main jobs follow the saved main model');
-    assert.equal(neverHadModels.taskModels.ooc, H);
+    assert.equal(neverHadModels.taskModels.referee, H);
 });
 
 test('DM can hand a turn up', () => {
@@ -312,16 +314,16 @@ test('SillyTavern dice messages are read for pending rolls', () => {
 });
 
 test('DM rules: forward motion, arrivals, sensible rolls, pressure ladder', () => {
-    assert.doesNotMatch(DM_RULES, /Never rush/);
-    assert.doesNotMatch(DM_RULES, /Usually 1-3 sentences/);
-    assert.match(DM_RULES, /"narration" is EMPTY by default/);
-    assert.match(DM_RULES, /No fluff and no recaps/);
-    assert.match(DM_RULES, /Never turn what they SAY into something they DO/);
-    assert.match(DM_RULES, /never repeats the same demand/);
-    assert.match(DM_RULES, /Arrivals:/);
-    assert.match(DM_RULES, /Conversation is never filler/);
-    assert.match(DM_RULES, /stage 4 force/);
-    assert.match(DM_RULES, /just narrate the success/);
+    assert.doesNotMatch(TABLE_RULES, /Never rush/);
+    assert.doesNotMatch(TABLE_RULES, /Usually 1-3 sentences/);
+    assert.match(STORY_RULES, /"narration" is EMPTY by default/);
+    assert.match(STORY_RULES, /No fluff and no recaps/);
+    assert.match(STORY_RULES, /Never turn what they SAY into something they DO/);
+    assert.match(STORY_RULES, /never repeats the same demand/);
+    assert.match(STORY_RULES, /Arrivals:/);
+    assert.match(STORY_RULES, /Conversation is never filler/);
+    assert.match(STORY_RULES, /stage 4 force/);
+    assert.match(REFEREE_RULES, /rule it a success in "fact" with no roll/);
 });
 
 test('companions can split off, rejoin, and choose not to answer', async () => {
@@ -346,8 +348,8 @@ test('companions can split off, rejoin, and choose not to answer', async () => {
     assert.match(alone, /nobody is with the player/);
     assert.match(alone, /Not with the player.*Judy Hopps \(at the camp\)/);
     assert.deepEqual(parseHelperTriage('{"category":"action","speakers":[]}', ['Judy Hopps']).speakers, []);
-    assert.match(DM_RULES, /Companions don't have to speak every turn/);
-    assert.match(DM_RULES, /party_away/);
+    assert.match(STORY_RULES, /Companions don't have to speak every turn/);
+    assert.match(REFEREE_RULES, /party_away/);
 });
 
 test('the world keeps its own clock, set by the DM, and does not freeze during conversation', () => {
@@ -380,8 +382,8 @@ test('the world keeps its own clock, set by the DM, and does not freeze during c
     assert.equal(parseDmTurn('{"world_next": 2}').world_next, 2);
     assert.equal(parseDmTurn('{"world_next": 99}').world_next, 10);
     assert.equal(parseDmTurn('{"narration": "x"}').world_next, null);
-    assert.match(DM_RULES, /the world doesn't freeze while people talk/);
-    assert.match(DM_RULES, /"world_next"/);
+    assert.match(STORY_RULES, /the world doesn't freeze while people talk/);
+    assert.match(STORY_RULES, /"world_next"/);
 });
 
 test('companion knowledge, level changes, group-check rules, chatty scenes slow the clock', async () => {
@@ -393,9 +395,9 @@ test('companion knowledge, level changes, group-check rules, chatty scenes slow 
     assert.match(note, /What \{\{char\}\} knows/);
     assert.match(note, /You were arrested\.\]/);
     assert.equal(renderTemplate(DEFAULT_TEMPLATES.knowledge, { knowledge: '' }).includes('{{knowledge}}'), false);
-    assert.match(DM_RULES, /Group checks/);
-    assert.match(DM_RULES, /Companions are players too/);
-    assert.match(DM_RULES, /knowledge_update/);
+    assert.match(REFEREE_RULES, /Group checks/);
+    assert.match(STORY_RULES, /Companions are players too/);
+    assert.match(STORY_RULES, /knowledge_update/);
     assert.ok(TASKS.some(x => x.key === 'resync' && !x.main), 'resync runs on the light model (v0.25.2)');
     // Real conversation: the world's clock runs at half speed.
     const p = createPacingState();
@@ -413,10 +415,10 @@ test('v0.7: no secret rolls, companions roll covert actions, version stamp match
     const index = fsm.readFileSync(new URL('../index.js', import.meta.url), 'utf8');
     assert.ok(index.includes(`LOADED_VERSION = '${manifest.version}'`), 'index.js LOADED_VERSION must equal manifest.json version');
     assert.equal('hidden' in parseDmTurn('{"npc_rolls":[{"who":"X","what":"Insight","notation":"1d20","hidden":true}]}').npc_rolls[0], false);
-    assert.match(DM_RULES, /There are no secret rolls/);
-    assert.match(DM_RULES, /PASSIVE Perception/);
-    assert.match(DM_RULES, /Never re-roll/);
-    assert.match(DM_RULES, /never narrate what a companion chooses to do/);
+    assert.match(REFEREE_RULES, /there are no secret rolls/);
+    assert.match(REFEREE_RULES, /PASSIVE Perception/);
+    assert.match(REFEREE_RULES, /never re-roll/);
+    assert.match(STORY_RULES, /never narrate what a companion chooses to do/);
     const { companionActionPrompt, parseCompanionAction } = await import('../src/core/triage.js');
     assert.match(companionActionPrompt({ name: 'Judy Hopps', message: 'x', scene: 'y' }).user, /ATTEMPT/);
     assert.deepEqual(parseCompanionAction('{"attempt": true, "what": "slip the cuff key from his pouch"}'), { attempt: true, what: 'slip the cuff key from his pouch' });
@@ -473,7 +475,7 @@ test('v0.10: refusals become a deadlock, "just happened" reaches companions', as
     assert.equal(parseDmTurn('{"happened":"The bolt is out and Amber\'s leg is bandaged."}').happened, "The bolt is out and Amber's leg is bandaged.");
     assert.match(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: 'The bolt is out.' }), /already done.*The bolt is out\.\]/);
     assert.equal(renderTemplate(DEFAULT_TEMPLATES.happened, { happened: '' }).includes('{{happened}}'), false);
-    assert.ok(TASKS.some(t => t.key === 'deadlock' && !t.main), 'deadlocks run on the light model (v0.25.2)');
+    assert.ok(TASKS.some(t => t.key === 'storyteller' && !t.main), 'the storyteller (deadlocks are its) runs on the light model');
 });
 
 test('v0.10.1 fixes: 2d20kh1 has a natural die', () => {
@@ -514,13 +516,13 @@ test('v0.19.1: damage from a save: all on a failure, half on a success when it s
     assert.equal(t.player_roll.half, true);
 });
 
-test('v0.21: map tiers shape the rules (v0.70: off, or the sketch and the battle map)', async () => {
-    const { dmRules, DM_RULES } = await import('../src/core/protocol.js');
-    assert.equal(dmRules('some'), DM_RULES);
-    assert.equal(dmRules('always'), DM_RULES, 'the old "always" tier is plain on');
-    const off = dmRules('off');
-    assert.doesNotMatch(off, /^ {2}"(positions|dashing|free_move)":/m);
+test('v0.21: map tiers shape the rules (v0.70: off, or the sketch and the battle map; v0.80: the referee\'s)', async () => {
+    const { refereeRules, REFEREE_RULES } = await import('../src/core/protocol.js');
+    assert.equal(refereeRules('some'), REFEREE_RULES);
+    assert.equal(refereeRules('always'), REFEREE_RULES, 'the old "always" tier is plain on');
+    const off = refereeRules('off');
+    assert.doesNotMatch(off, /^ {2}"moves":/m);
     assert.doesNotMatch(off, /^- Maps: a grid/m);
     assert.match(off, /NO MAPS/);
-    assert.match(off, /## Combat/, 'combat itself stays');
+    assert.match(off, /## Fights/, 'fights themselves stay');
 });

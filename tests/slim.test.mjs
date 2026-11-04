@@ -7,8 +7,7 @@ import { looksLikePlace, looksLikeThing, notAPerson } from '../src/core/people.j
 import { buildSketch, propForObject, zoneOf, moveOnSketch, sketchMap, ZONES } from '../src/core/sketch.js';
 import { normalizeSceneCard, applySceneCard, emptySceneCard, samePlace } from '../src/core/state.js';
 import { normalizeNotation, parsePlayerRoll } from '../src/core/dice.js';
-import { parseBookkeeping, bookkeeperPrompt, tidyBookkeeping } from '../src/core/bookkeeper.js';
-import { BIBLE_INSTRUCTIONS, DM_RULES, normalizeDmTurn, parseDmTurn } from '../src/core/protocol.js';
+import { BIBLE_INSTRUCTIONS, TABLE_RULES, REFEREE_RULES, normalizeDmTurn, parseDmTurn } from '../src/core/protocol.js';
 import { createWorldState } from '../src/core/world.js';
 import { isWalkable, parseCoord } from '../src/core/grid.js';
 import { TASKS, defaultTaskModels } from '../src/core/models.js';
@@ -178,17 +177,18 @@ test('the DM\'s contract has no places: the keys that moved the world by op are 
     for (const k of ['build_place', 'enter_place', 'leave_place', 'place_changes', 'escort', 'map_effects', 'scene_map']) assert.equal(k in t, false, k);
     assert.deepEqual(t.positions, { Amber: 'd4' }, 'positions stay for fights');
     assert.equal(t.scene_card.spots.Amber, 'beside');
-    assert.doesNotMatch(DM_RULES, /place_changes|build_place|enter_place|CUSTODY:|KEPT:|TRIGGERS:|HOSTILES SEE/);
-    assert.match(DM_RULES, /"spots"/);
-    assert.match(DM_RULES, /Contests between people are rolls/);
-    assert.match(DM_RULES, /Going in and out is the story's/);
-    assert.match(DM_RULES, /leave out start_combat\.map to fight on the sketch/);
-    assert.ok(DM_RULES.length < 45000, `the rules are far shorter than the 74k they were (${DM_RULES.length} chars)`);
+    assert.doesNotMatch(TABLE_RULES, /place_changes|build_place|enter_place|CUSTODY:|KEPT:|TRIGGERS:|HOSTILES SEE/);
+    assert.match(REFEREE_RULES, /"spots"/);
+    assert.match(REFEREE_RULES, /CONTESTS between people are rolls/);
+    assert.match(REFEREE_RULES, /Going in and out is the story's/);
+    assert.match(REFEREE_RULES, /leave the map out to fight on the sketch/);
+    assert.ok(TABLE_RULES.length < 45000, `both halves together are shorter than the 74k the one DM's were (${TABLE_RULES.length} chars)`);
     assert.match(BIBLE_INSTRUCTIONS, /"start": \{"gold"/);
     assert.match(BIBLE_INSTRUCTIONS, /"conditions": \{/);
     assert.match(BIBLE_INSTRUCTIONS, /"spots"/);
-    assert.ok(!TASKS.some(t => ['referee', 'build_place', 'map_brief', 'map_sync', 'explore'].includes(t.key)));
-    assert.equal(Object.keys(defaultTaskModels()).includes('referee'), false);
+    assert.ok(!TASKS.some(t => ['build_place', 'map_brief', 'map_sync', 'explore'].includes(t.key)));
+    assert.ok(TASKS.some(t => t.key === 'referee') && TASKS.some(t => t.key === 'storyteller'), 'v0.80: the table has two jobs');
+    assert.equal(Object.keys(defaultTaskModels()).includes('referee'), true);
     const sc = parseDmTurn('{"start_combat": {"enemies": [{"name": "Hob", "ac": 12, "hp": 11}]}}');
     assert.equal(sc.start_combat.map, null, 'no rows, no map: the fight is on the sketch');
 });
@@ -202,19 +202,4 @@ test('a damage formula is merged for the card; a dice notation typed is never a 
     assert.equal(parsePlayerRoll('/roll 1d20', 20), null);
     assert.deepEqual(parsePlayerRoll('17', 20), { natural: 17, total: null });
     assert.equal(parsePlayerRoll('rolled 4d6+11 for a total of 23', 100)?.total, 23, 'said as a result, with the total named, it counts');
-});
-
-test('coin changes hands: the bookkeeper\'s gold, only when the story has coin in it; restraints are its to fill in now', () => {
-    const known = { names: ['Amber', 'Olwen Tusk'], itemNames: ['Amber'], conditionsOf: () => [], itemsOf: () => [], allItems: [] };
-    assert.deepEqual(parseBookkeeping('{"items_add": {"Amber": ["hooded lantern"]}, "gold": -0.5}', { ...known, story: 'Amber pays five silver and takes the hooded lantern.' }), { items_add: { Amber: ['hooded lantern'] }, gold: -0.5 });
-    assert.equal(parseBookkeeping('{"gold": -3}', { ...known, story: 'Amber looks at the lantern and leaves.' }), null, 'no coin in the story, no change');
-    assert.equal(parseBookkeeping('{"gold": 9000}', { ...known, story: 'Amber pays for the room.' }), null, 'a fortune from a mention is no change');
-    assert.match(bookkeeperPrompt({ status: [], story: 'x' }).user, /"gold": 0/);
-    // v0.73: the DM booked the lantern this turn; the bookkeeper's same coin is not a second charge.
-    assert.equal(parseBookkeeping('{"gold": -0.5}', { ...known, story: 'Amber pays five silver for the lantern.', goldBooked: true }), null, 'coin the DM already booked is skipped');
-    assert.deepEqual(parseBookkeeping('{"items_add": {"Amber": ["hooded lantern"]}, "gold": -0.5}', { ...known, story: 'Amber pays five silver and takes the hooded lantern.', goldBooked: true }), { items_add: { Amber: ['hooded lantern'] } }, 'the item still lands');
-    assert.match(bookkeeperPrompt({ status: [], story: 'x', gold: 39.5 }).user, /^Party gold: 39\.5/m, 'the bookkeeper sees the gold');
-    assert.doesNotMatch(bookkeeperPrompt({ status: [], story: 'x' }).user, /^Party gold:/m);
-    const tidy = tidyBookkeeping({ conditions_add: { Amber: ['cuffed', 'unconscious', 'prone'] } }, { party: ['Amber'] });
-    assert.deepEqual(tidy.conditions_add, { Amber: ['cuffed', 'prone'] }, 'cuffs and prone from the narration; out cold stays the dice\'s and the DM\'s');
 });

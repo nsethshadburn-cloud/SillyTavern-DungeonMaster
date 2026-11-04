@@ -3,6 +3,6 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "test": "node tests/check-syntax.mjs && node --test tests/core.test.mjs tests/sound.test.mjs tests/slim.test.mjs tests/notes-grid.test.mjs tests/state.test.mjs tests/sprites.test.mjs tests/restraints.test.mjs tests/bookkeeper.test.mjs tests/upkeep.test.mjs tests/minds.test.mjs tests/speech.test.mjs tests/clock.test.mjs tests/smoke.test.mjs"
+        "test": "node tests/check-syntax.mjs && node --test tests/core.test.mjs tests/sound.test.mjs tests/slim.test.mjs tests/notes-grid.test.mjs tests/state.test.mjs tests/sprites.test.mjs tests/restraints.test.mjs tests/referee.test.mjs tests/upkeep.test.mjs tests/minds.test.mjs tests/speech.test.mjs tests/clock.test.mjs tests/smoke.test.mjs"
     }
 }
