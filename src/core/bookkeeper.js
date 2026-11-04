@@ -38,14 +38,15 @@ export function conditionWord(text) {
 
 /**
  * The prompt for the local model.
- * @param {{status: {name:string, hp?:string, conditions:string[], items:string[]}[], shared:string[], others:string[], story:string}} p
+ * @param {{status: {name:string, hp?:string, conditions:string[], items:string[]}[], shared:string[], others:string[], story:string, gold?: number|null}} p
  */
-export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
+export function bookkeeperPrompt({ status, shared = [], others = [], story, gold = null }) {
     const system = 'You keep the books for a tabletop roleplaying game. Reply with ONE line of JSON and nothing else.';
     const user = [
         'Tracked right now:',
         ...status.map(s => `- ${s.name}:${s.hp ? ` HP ${s.hp};` : ''} conditions: ${s.conditions.length ? s.conditions.join(', ') : 'none'}; carries: ${s.items.length ? s.items.join(', ') : 'nothing noted'}`),
         `Shared pack: ${shared.length ? shared.join(', ') : 'nothing noted'}`,
+        Number.isFinite(Number(gold)) && gold !== null ? `Party gold: ${gold} (already counting anything paid or received just now)` : '',
         others.length ? `Other people here: ${others.join(', ')}` : '',
         '',
         'What just happened in the story:',
@@ -54,7 +55,7 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
         'Which changes does the story say ACTUALLY happened just now that the tracked list does not show yet? Only clear facts the story states, never guesses, plans, threats or things that might happen.',
         `- conditions someone gained, from this list only: ${CONDITIONS.map(([c]) => c).join(', ')}; or lost (woke up, got up, was untied, was cured)`,
         '- items someone picked up, was given or now carries; items someone lost, dropped, handed over or used up',
-        '- coin the party paid or was paid: "gold" is the change to the party\'s gold, minus when they paid (10 silver = 1 gold, 100 copper = 1 gold); 0 when no coin changed hands',
+        '- coin the party paid or was paid: "gold" is the change to the party\'s gold, minus when they paid (10 silver = 1 gold, 100 copper = 1 gold); 0 when no coin changed hands, and 0 when "Party gold" above already shows the payment',
         'JSON: {"conditions_add": {"Name": ["condition"]}, "conditions_remove": {"Name": ["condition"]}, "items_add": {"Name": ["item"]}, "items_remove": {"Name": ["item"]}, "gold": 0} with empty objects and 0 when nothing changed.',
     ].filter(Boolean).join('\n');
     return { system, user };
@@ -63,9 +64,10 @@ export function bookkeeperPrompt({ status, shared = [], others = [], story }) {
 /**
  * Check the model's answer against what's tracked and return the state_changes to apply (or null).
  * @param {string} text the model's reply
- * @param {{names:string[], itemNames?:string[], conditionsOf:(name:string)=>string[], itemsOf:(name:string)=>string[], allItems:string[]}} known
+ * @param {{names:string[], itemNames?:string[], conditionsOf:(name:string)=>string[], itemsOf:(name:string)=>string[], allItems:string[], story?:string, goldBooked?:boolean}} known
  *   names = whose conditions may change (the party and the people here); itemNames = who carries tracked
- *   items (the party); itemsOf = what someone carries (their own and the shared pack)
+ *   items (the party); itemsOf = what someone carries (their own and the shared pack); goldBooked = the
+ *   DM already moved the gold this turn (the bookkeeper's coin would be the same payment twice)
  */
 /** States the bookkeeper may never set or clear: the dice and the DM own these (restraints and prone it may fill in from the narration). */
 const NOT_THE_BOOKKEEPERS = /unconscious|incapacitated|out cold|senseless|dead|dying|asleep|sleeping|conscious|awake|alive|paraly|stunned/i;
@@ -92,7 +94,7 @@ export function tidyBookkeeping(changes, { party = [] } = {}) {
     return Object.keys(out).length ? out : null;
 }
 
-export function parseBookkeeping(text, { names, itemNames = names, conditionsOf, itemsOf, allItems, story = '' }) {
+export function parseBookkeeping(text, { names, itemNames = names, conditionsOf, itemsOf, allItems, story = '', goldBooked = false }) {
     const data = extractJson(text);
     if (!data || typeof data !== 'object') return null;
     // Only someone the text actually names can have changed (no guessing who "the watchman" was).
@@ -133,8 +135,9 @@ export function parseBookkeeping(text, { names, itemNames = names, conditionsOf,
         if (add.length) out.items_add[name] = [...new Set(add)];
     }
     for (const k of Object.keys(out)) if (!Object.keys(out[k]).length) delete out[k];
-    // Coin: only when the story plainly has coin change hands, and never a fortune from a mention.
+    // Coin: only when the story plainly has coin change hands, never a fortune from a mention, and never
+    // a payment the DM booked this same turn (the lantern was charged twice: once by each).
     const gold = Number(data.gold);
-    if (Number.isFinite(gold) && gold !== 0 && Math.abs(gold) <= 500 && /\b(?:pays?|paid|paying|coins?|gold|silver|copper|price|costs?|buys?|bought|sells?|sold|purse|hands? over|handed over|counts? out|change)\b/i.test(story)) out.gold = Math.round(gold * 100) / 100;
+    if (!goldBooked && Number.isFinite(gold) && gold !== 0 && Math.abs(gold) <= 500 && /\b(?:pays?|paid|paying|coins?|gold|silver|copper|price|costs?|buys?|bought|sells?|sold|purse|hands? over|handed over|counts? out|change)\b/i.test(story)) out.gold = Math.round(gold * 100) / 100;
     return Object.keys(out).length ? out : null;
 }

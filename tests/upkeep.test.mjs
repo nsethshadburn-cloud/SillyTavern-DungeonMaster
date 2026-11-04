@@ -58,6 +58,12 @@ test('spell slots, hit dice and limited abilities: counted, refused when gone, b
     takeRest(w, 'long', ['Amber', 'Judy Hopps'], n => (n === 'Amber' ? wiz : lock), () => ({ total: 6 }));
     assert.equal(w.party.Amber.hp, 30);
     assert.match(resourcesLine(w, 'Amber', wiz), /3rd 2\/2/);
+    // v0.73: the short-rest card speaks for everyone, the unhurt included (two runs read the silence as a bug).
+    const unhurt = takeRest(w, 'short', ['Amber', 'Judy Hopps'], n => (n === 'Amber' ? wiz : lock), () => ({ total: 6 }));
+    assert.ok(unhurt.some(l => /^Amber: unhurt \(30\/30\), no hit die needed$/.test(l)), unhurt.join(' | '));
+    w.party.Amber.hp = 0;
+    assert.ok(takeRest(w, 'short', ['Amber'], () => wiz, () => ({ total: 6 })).some(l => /Amber: at 0 HP, a short rest heals nothing/.test(l)));
+    w.party.Amber.hp = 30;
 });
 
 test('dying: death saves, hits while down, a natural 20, stable, dead', () => {

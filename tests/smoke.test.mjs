@@ -237,6 +237,41 @@ test('v0.72: a grab with no roll is told off; a companion task with no result is
     assert.ok(c.meta.turnProblems.some(p => /no result for it/.test(p)), 'a brief alone is told off');
 });
 
+test('v0.73: the fight ends by itself when the last enemy drops, and the downed leave the sketch', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    const w = c.docs.world;
+    await playerSays('((Hob comes at Amber with his club))', [turn({ narration: 'Hob swings the club up.', scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, start_combat: { enemies: [{ name: 'Hob', ac: 12, hp: 5, dex: 1, damage: '1d6+2' }] }, player_roll: { kind: 'initiative', skill: 'Initiative', reason: 'roll initiative' } })]);
+    assert.ok(w.combat && w.combat.enemies.Hob, 'a fight with Hob alone');
+    await playerSays('15', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'You go first.', player_roll: { kind: 'attack', skill: 'Short sword', target: 'Hob', dc: 12, damage: '1d6+4', reason: 'the stab at Hob' } })]);
+    assert.equal(c.meta.pendingRoll?.kind, 'attack');
+    await playerSays('18', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'The blade comes round.' })]);
+    assert.equal(c.meta.pendingRoll?.kind, 'damage');
+    await playerSays('7', [turn({ narration: 'Hob folds and drops the club.' })]);
+    assert.equal(w.combat, null, 'the last enemy down: the code ended the fight');
+    assert.ok(cards('roll').some(t => /⚔️ \*\*The fight is over\.\*\* Amber \d+\/\d+/.test(t)), 'the end card');
+    assert.match(llm.calls.at(-1).user, /code has ended the fight/, 'the DM is told it is over');
+    assert.equal(w.sketch.positions.Hob, undefined, 'the downed leave the sketch instead of standing on a new square');
+    assert.equal(w.sceneCard.people.Hob, undefined);
+    assert.ok(w.sketch.positions.Amber && w.sketch.positions['Judy Hopps'], 'the party is drawn again from the card');
+    assert.ok(c.meta.pacing.calmUntil > c.meta.turn, 'the story breathes');
+});
+
+test('v0.73: an enemy whose turn it was and who got no roll and no move is told off; one moved or rolled is not', async () => {
+    const c = await freshCampaign();
+    await orchestrator.runOpening(opening());
+    const w = c.docs.world;
+    await playerSays('((a fight breaks out with Hob and Scald))', [turn({ narration: 'Hob draws a club.', scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, start_combat: { enemies: [{ name: 'Hob', ac: 12, hp: 11, dex: 1, damage: '1d6+2' }, { name: 'Scald', ac: 11, hp: 9, dex: 2 }] }, player_roll: { kind: 'initiative', skill: 'Initiative', reason: 'roll initiative' } })]);
+    await playerSays('15', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'You have the jump on them.' })]);
+    assert.ok(!cards('note').some(t => /took no turn/.test(t)), 'a reply to the player\'s own roll runs nobody');
+    await playerSays('*Amber steps back along the wall.*', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'Hob comes at you; Scald is already moving.', positions: { Amber: 'e4' }, npc_rolls: [{ who: 'Hob', what: 'club swing at Amber', notation: '1d20+4', kind: 'attack', target: 'Amber', damage: '1d6+2', on_success: 'the club lands', on_fail: 'it whistles past' }] })]);
+    assert.ok(c.meta.turnProblems.some(p => /^Scald \(9\/9 HP at [a-l]\d+\) took no turn this round/.test(p)), c.meta.turnProblems.join(' | '));
+    assert.ok(cards('note').some(t => /⚠️ Scald took no turn this round/.test(t)), 'the player sees it');
+    const notes = cards('note').length;
+    await playerSays('*Amber holds her ground.*', [turn({ scene: { type: 'combat', location: 'Marrow Ford', setting: 'town', changed: false }, narration: 'Scald circles; Hob swings again.', positions: { Scald: w.combat.positions.Scald }, npc_rolls: [{ who: 'Hob', what: 'club swing at Amber', notation: '1d20+4', kind: 'attack', target: 'Amber', damage: '1d6+2', on_success: 'the club lands', on_fail: 'it whistles past' }] })]);
+    assert.equal(cards('note').filter(t => /took no turn/.test(t)).length, notes === 0 ? 0 : cards('note').slice(0, notes).filter(t => /took no turn/.test(t)).length, 'a "positions" entry at his square counts as his turn');
+});
+
 test('a dropped roll: the code asked first; a roll for a companion is rolled by the code', async () => {
     const c = await freshCampaign();
     await orchestrator.runOpening(opening());

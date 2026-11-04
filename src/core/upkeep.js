@@ -255,7 +255,9 @@ export function takeRest(world, kind, names, statsOf, roll) {
                 healed += gain;
             }
             if (healed) log.push(`${name}: spent hit dice, +${healed} HP (now ${ref.hp}/${ref.hp_max})`);
-            else if (ref.hp > 0 && ref.hp < ref.hp_max) log.push(`${name}: ${ref.hp}/${ref.hp_max}, ${(res.hitDice ?? 0) >= level ? 'no hit dice left' : 'not hurt enough to spend a hit die (under three-quarters)'}`);
+            else if (ref.hp <= 0) log.push(`${name}: at 0 HP, a short rest heals nothing`);
+            else if (ref.hp < ref.hp_max) log.push(`${name}: ${ref.hp}/${ref.hp_max}, ${(res.hitDice ?? 0) >= level ? 'no hit dice left' : 'not hurt enough to spend a hit die (under three-quarters)'}`);
+            else log.push(`${name}: unhurt (${ref.hp}/${ref.hp_max}), no hit die needed`);
         }
     }
     log.push(...expireConditions(world, { rest: kind }));

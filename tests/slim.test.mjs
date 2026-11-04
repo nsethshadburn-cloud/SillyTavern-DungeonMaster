@@ -207,6 +207,11 @@ test('coin changes hands: the bookkeeper\'s gold, only when the story has coin i
     assert.equal(parseBookkeeping('{"gold": -3}', { ...known, story: 'Amber looks at the lantern and leaves.' }), null, 'no coin in the story, no change');
     assert.equal(parseBookkeeping('{"gold": 9000}', { ...known, story: 'Amber pays for the room.' }), null, 'a fortune from a mention is no change');
     assert.match(bookkeeperPrompt({ status: [], story: 'x' }).user, /"gold": 0/);
+    // v0.73: the DM booked the lantern this turn; the bookkeeper's same coin is not a second charge.
+    assert.equal(parseBookkeeping('{"gold": -0.5}', { ...known, story: 'Amber pays five silver for the lantern.', goldBooked: true }), null, 'coin the DM already booked is skipped');
+    assert.deepEqual(parseBookkeeping('{"items_add": {"Amber": ["hooded lantern"]}, "gold": -0.5}', { ...known, story: 'Amber pays five silver and takes the hooded lantern.', goldBooked: true }), { items_add: { Amber: ['hooded lantern'] } }, 'the item still lands');
+    assert.match(bookkeeperPrompt({ status: [], story: 'x', gold: 39.5 }).user, /^Party gold: 39\.5/m, 'the bookkeeper sees the gold');
+    assert.doesNotMatch(bookkeeperPrompt({ status: [], story: 'x' }).user, /^Party gold:/m);
     const tidy = tidyBookkeeping({ conditions_add: { Amber: ['cuffed', 'unconscious', 'prone'] } }, { party: ['Amber'] });
     assert.deepEqual(tidy.conditions_add, { Amber: ['cuffed', 'prone'] }, 'cuffs and prone from the narration; out cold stays the dice\'s and the DM\'s');
 });

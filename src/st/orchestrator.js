@@ -129,7 +129,7 @@ export async function runTurn(opts = {}) {
     try {
         await turnBody(c, opts, status, controller.signal);
         // The books: in the background, so the next move never waits on them.
-        if (!controller.signal.aborted) queueBookkeeping(c, turnStart);
+        if (!controller.signal.aborted) queueBookkeeping(c, turnStart, { goldBooked: c.meta.goldTurn === c.meta.turn });
         sealTurn(snap);
         const left = await rotateIdleNpcs();
         if (left.length) status.note(`${left.join(', ')} left the scene`);
@@ -357,7 +357,20 @@ async function turnBody(c, opts, status, signal) {
         if (reasons.includes('deadlock')) pacing.refusalStreak = 0;
         // Quiet exploring: the player is moving, searching or working a lock, not talking to anyone.
         const quiet = !triage.ooc && !triage.speakers?.length && ['action', 'risky_action', 'scene_move'].includes(triage.category);
+        const dueToAct = enemiesDue(c, reasons, result.turn);
         await applyDmTurn(c, result.turn, status, signal, { events, reasons, quiet });
+        // An enemy whose turn it was got no roll and no move: the DM skipped them (Scald stood by with a sword in hand). Both sides are told.
+        if (dueToAct && !result.turn.end_combat && !signal.aborted) {
+            const cb = c.docs.world.combat;
+            const skipped = dueToAct.foes.filter(n => !dueToAct.acted.has(nameKey(n)) && cb && !(cb.enemies?.[n]?.hp <= 0) && cb.order.some(o => o.name === n));
+            if (skipped.length) {
+                const where = skipped.map(n => `${n} (${cb.enemies[n].hp}/${cb.enemies[n].hp_max ?? cb.enemies[n].hp} HP${cb.positions?.[n] ? ` at ${cb.positions[n]}` : ''})`).join(', ');
+                meta.turnProblems = [...(meta.turnProblems || []), `${where} took no turn this round: your reply had no npc_roll and no "positions" move for them. Every living enemy in the order acts on their turn, every round: an attack (npc_rolls, both outcomes), a move ("positions"), or a "positions" entry at their square with a line saying why they hold. Never leave an armed enemy standing idle.`];
+                saveMeta();
+                status.note(`${skipped.join(', ')} took no turn: the DM has been told`);
+                await postNote(`⚠️ ${skipped.join(', ')} took no turn this round. The DM has been told.`);
+            }
+        }
         // The DM asked for a roll and told the outcome in the same breath: told off, so the dice get to say.
         const toldHold = /\b(?:hands? closes? on|paws? closes? on|closes? on (?:the chain|your)|has you(?: now| fast)?|holds? you fast|you(?:'re| are) (?:caught|held|pinned|free|loose)|(?:twist|tear|slip|wrench|pull)(?:s|ed)? free|the links? (?:hold|bend|give)|catches? (?:you|your (?:wrist|arm|collar))|wrists? are caught|grip closes)\b/i.test(result.turn.narration || '');
         const toldHit = result.turn.player_roll?.kind === 'attack' && /\b(?:bites?|sinks?|slides?|punches|drives?|buries|plunges?|tears?|rips?) (?:deep |home )?into\b|\bblood (?:wells|runs|sprays|spatters|flows)\b|\b(?:opens?|lays? open) (?:a|his|her|its|their) \w+\b|\bfinds? (?:flesh|its mark|the gap|a gap)\b|\b(?:turns?|glances?|skates?|skitters?|skids?) (?:off|aside|away)\b|\b(?:catches?|cuts?|hits?) only air\b|\bmisses? (?:by|him|her|them|it|wide|clean)\b/i.test(result.turn.narration || '');
@@ -417,6 +430,26 @@ async function turnBody(c, opts, status, signal) {
     }
     // The opening of round 1 is done with (whatever the DM made of it): from here the player's turn is theirs.
     if (meta.openingRound) { delete meta.openingRound; if (c.docs.world.combat && turnPromptsOn()) c.docs.world.combat.phase = 'player'; saveMeta(); }
+}
+
+/**
+ * Which enemies the DM's reply had to run, and who it ran. A whole round (combat_round with turn
+ * prompts off, or the player's end_turn, which runs everyone after the player and then everyone
+ * before them in the next round) is every living enemy in the order; the opening of round 1 is only
+ * those who beat the player. A reply to the player's own roll, or on the player's turn, runs nobody.
+ * Read before applyDmTurn (it trims the rolls it drops). Null when nobody was due.
+ */
+function enemiesDue(c, reasons, t) {
+    const cb = c.docs.world.combat;
+    if (!cb || !t || reasons.includes('roll_result') || reasons.includes('reaction')) return null;
+    const opening = c.meta.openingRound?.turn === c.meta.turn ? c.meta.openingRound : null;
+    const whole = reasons.includes('end_turn') || (reasons.includes('combat_round') && !turnPromptsOn());
+    if (!whole && !(opening && reasons.includes('round_opens'))) return null;
+    const living = Object.keys(cb.enemies || {}).filter(n => !(cb.enemies[n].hp <= 0) && cb.order.some(o => o.name === n));
+    const foes = opening && !whole ? living.filter(n => (opening.names || []).some(x => nameKey(x) === nameKey(n))) : living;
+    if (!foes.length) return null;
+    const acted = new Set([...(t.npc_rolls || []).map(r => nameKey(r.who)), ...Object.keys(t.positions || {}).map(nameKey)]);
+    return { foes, acted };
 }
 
 /**
@@ -590,8 +623,8 @@ function attackDice(c, r) {
 }
 
 let bookkeeping = Promise.resolve();
-function queueBookkeeping(c, fromIndex) {
-    bookkeeping = bookkeeping.then(() => bookkeep(c, fromIndex)).catch(error => console.warn('[Dungeon Master] bookkeeping failed', error));
+function queueBookkeeping(c, fromIndex, { goldBooked = false } = {}) {
+    bookkeeping = bookkeeping.then(() => bookkeep(c, fromIndex, { goldBooked })).catch(error => console.warn('[Dungeon Master] bookkeeping failed', error));
 }
 
 /**
@@ -600,7 +633,7 @@ function queueBookkeeping(c, fromIndex) {
  * or can't walk, an item changed hands, coin paid). Checked in code first (known conditions, people
  * who are here, nothing twice); shown on a 📜 card.
  */
-async function bookkeep(c, fromIndex) {
+async function bookkeep(c, fromIndex, { goldBooked = false } = {}) {
     const s = settings();
     if (!s.useHelper || s.bookkeeper === false || campaign() !== c) return;
     // Only the DM's narration is evidence: what companions and NPCs say is the local model's own guesswork.
@@ -617,6 +650,7 @@ async function bookkeep(c, fromIndex) {
         shared: w.items || [],
         others: present.map(n => `${n}${conditionsOf(w, n).length ? ` (${conditionsOf(w, n).join(', ')})` : ''}`),
         story,
+        gold: Number.isFinite(Number(w.gold)) ? Number(w.gold) : null,
     });
     const raw = await callLocal({ system, messages: [{ role: 'user', content: user }], maxTokens: 300, profileId: s.helperProfileId });
     const changes = parseBookkeeping(raw, {
@@ -626,6 +660,7 @@ async function bookkeep(c, fromIndex) {
         conditionsOf: n => conditionsOf(w, n),
         itemsOf: n => [...own(n), ...(w.items || [])],
         allItems: [...(w.items || []), ...Object.values(w.inventory || {}).flat()],
+        goldBooked,
     });
     if (!changes) return;
     const tidy = tidyBookkeeping(changes, { party });
@@ -864,9 +899,12 @@ async function resolvePlayerRoll(c, parsed, status) {
             saveDoc('world');
             fallenInFight(c);
             playAnim(who, 'hurt');
-            refreshMap();
             await postDiceCard(`💥 **${who}** takes **${total}** damage${line ? ` (${line})` : ''}.`, { state: true });
-            return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. The code already took it off ${who}: ${line || 'applied'}${/\(down\)/.test(line || '') ? ' (0 HP: dead; narrate the death)' : ''}. Don't apply it again (no state_changes.hp for this hit). Narrate it.`;
+            // The last enemy down: the fight is over here and now, not when the DM remembers end_combat.
+            const over = c.docs.world.combat && allEnemiesDown(c.docs.world);
+            if (over) await finishCombat(c, status);
+            refreshMap();
+            return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. The code already took it off ${who}: ${line || 'applied'}${/\(down\)/.test(line || '') ? ' (0 HP: dead; narrate the death)' : ''}. Don't apply it again (no state_changes.hp for this hit). Narrate it.${over ? ' Every enemy is down: the code has ended the fight (no end_combat needed); narrate the aftermath, and nobody rolls.' : ''}`;
         }
         return `${meta.persona.name} rolled ${total} damage for: ${pr.reason || pr.skill}. Apply it (state_changes.hp) and narrate.`;
     }
@@ -936,6 +974,37 @@ function outcomeText(r, judged, noticed = null) {
 }
 
 /** Anyone in the fight at 0 HP is dead: out of the order, dead in the roster. The DM narrates a death, never a knockout. */
+/** Every enemy in the fight is at 0 HP (none means no: a fight with nobody registered yet is the DM's to end). */
+function allEnemiesDown(world) {
+    const foes = Object.values(world.combat?.enemies || {});
+    return foes.length > 0 && foes.every(e => e.hp <= 0);
+}
+
+/**
+ * The fight is over, by the DM's end_combat or because the last enemy went down: what lasts only
+ * the fight ends, the downed leave the scene card (they were drawn standing on new squares after a
+ * fight: a body is the DM's next card to place), the board goes, the sketch is drawn again from the
+ * card, and the story breathes for a few turns.
+ */
+async function finishCombat(c, status) {
+    const world = c.docs.world, meta = c.meta;
+    if (!world.combat) return;
+    const ended = expireConditions(world, { combatOver: true });
+    if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
+    const down = Object.entries(world.combat.enemies || {}).filter(([, e]) => e.hp <= 0).map(([n]) => n);
+    if (world.sceneCard) for (const n of down) {
+        const k = matchName(n, Object.keys(world.sceneCard.people || {}));
+        if (k) { delete world.sceneCard.people[k]; if (world.sceneCard.spots) delete world.sceneCard.spots[k]; }
+    }
+    endCombat(world);
+    status.note('Combat over');
+    await postDiceCard(`⚔️ **The fight is over.** ${[meta.persona.name, ...meta.party.map(p => p.name)].filter(n => world.party?.[n]).map(n => `${n} ${world.party[n].hp}/${world.party[n].hp_max}`).join(' · ')}`, { combat: true });
+    // After a fight the story breathes: a few turns with no new people, no alarms, no next guard.
+    meta.pacing.calmUntil = (meta.turn || 0) + 3;
+    redrawSketch(c);
+    saveDoc('world');
+}
+
 function fallenInFight(c) {
     const world = c.docs.world;
     if (!world.combat) return;
@@ -1078,6 +1147,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
     for (const who of Object.keys(t.state_changes?.hp || {})) if (!matchName(who, [...Object.keys(world.party), ...Object.keys(world.combat?.enemies ?? {})])) problems.push(`state_changes.hp for "${who}" was dropped: nobody by that name is tracked (the party: ${Object.keys(world.party).join(', ')}${world.combat ? `; in the fight: ${Object.keys(world.combat.enemies).join(', ') || 'nobody yet'}` : '; no fight is on, so nobody else has HP: start_combat first'})`);
     // State, combat, pacing, plot.
     const changeLog = applyStateChanges(world, t.state_changes, c.meta.party.map(p => p.name), { turn: meta.turn });
+    if (Number(t.state_changes?.gold)) meta.goldTurn = meta.turn;
     fallenInFight(c);
     let initiativeCard = '';
     let mapChanged = false;
@@ -1174,11 +1244,6 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
         await deathSaves(c);
     }
-    // A fight over: what lasts only the fight ends.
-    if (t.end_combat) {
-        const ended = expireConditions(world, { combatOver: true });
-        if (ended.length) await postDiceCard(`📜 ${ended.join(' · ')}`, { state: true });
-    }
     // A rest: HP, hit dice, spell slots and abilities in code (the DM only says it happened).
     if (t.rest) {
         const rested = takeRest(world, t.rest, [meta.persona.name, ...meta.party.map(p => p.name).filter(n => !isAway(world, n))], n => statsForName(n, meta), roll);
@@ -1203,12 +1268,7 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         if (lines.length) await postDiceCard(`📜 ${lines.join(' · ')}`, { state: true });
     }
     if (t.end_combat && world.combat) {
-        // Back to the story: the sketch is drawn again from the scene card (the fight's squares were the fight's).
-        endCombat(world);
-        status.note('Combat over');
-        await postDiceCard(`⚔️ **The fight is over.** ${[meta.persona.name, ...meta.party.map(p => p.name)].filter(n => world.party?.[n]).map(n => `${n} ${world.party[n].hp}/${world.party[n].hp_max}`).join(' · ')}`, { combat: true });
-        // After a fight the story breathes: a few turns with no new people, no alarms, no next guard.
-        meta.pacing.calmUntil = (meta.turn || 0) + 3;
+        await finishCombat(c, status);
         mapChanged = true;
     }
     // NPCs who died leave the group chat.
@@ -1458,6 +1518,12 @@ export async function applyDmTurn(c, t, status, signal, { events = [], reasons =
         }
     }
     fallenInFight(c);
+    // The last enemy went down to a companion's blow: the fight is over, whatever the DM sent.
+    if (world.combat && allEnemiesDown(world)) {
+        await finishCombat(c, status);
+        dmOnly.push('Every enemy is down: the code has ended the fight (no end_combat needed). Narrate the aftermath; nobody rolls.');
+        mapChanged = true;
+    }
     if (reactions.length) setTimeout(() => runTurn({ force: 'reaction', placeEvent: reactions.join(' ') }), 50);
     if (t.npc_rolls.length) {
         saveDoc('rolls_log');

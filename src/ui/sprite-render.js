@@ -3,7 +3,7 @@
 
 import { buildSprite, ANIM_TIMING, SIZE } from '../core/sprites.js';
 
-const sheets = new Map(); // key -> {canvas, red, index: {anim: [start, count]}, alpha}
+const sheets = new Map(); // key -> {canvas, red, ctx, rctx, img, rimg, probe, index: {anim: [start, count]}, alpha, checked}
 const MAX_SHEETS = 80;
 
 function hexToRgb(hex) {
@@ -19,17 +19,18 @@ function makeSheet(look) {
     canvas.width = SIZE * total; canvas.height = SIZE;
     const red = document.createElement('canvas');
     red.width = canvas.width; red.height = SIZE;
-    const ctx = canvas.getContext('2d'), rctx = red.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }), rctx = red.getContext('2d', { willReadFrequently: true });
     const img = ctx.createImageData(canvas.width, SIZE), rimg = rctx.createImageData(canvas.width, SIZE);
     const rgb = sprite.palette.map(c => (c ? hexToRgb(c) : null));
     const index = {};
-    let col = 0;
+    let col = 0, probe = null;
     for (const name of order) {
         index[name] = [col, sprite.anims[name].length];
         for (const frame of sprite.anims[name]) {
             for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
                 const c = rgb[frame[y * SIZE + x]];
                 if (!c) continue;
+                probe ??= { x: col * SIZE + x, y };
                 const o = (y * canvas.width + col * SIZE + x) * 4;
                 img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
                 // The "hurt" flash: the same figure washed in red.
@@ -40,7 +41,21 @@ function makeSheet(look) {
     }
     ctx.putImageData(img, 0, 0);
     rctx.putImageData(rimg, 0, 0);
-    return { canvas, red, index, alpha: sprite.alpha };
+    return { canvas, red, ctx, rctx, img, rimg, probe, index, alpha: sprite.alpha, checked: 0 };
+}
+
+/**
+ * Chrome drops a canvas's pixels under memory pressure (a background tab, a window resize) and
+ * hands it back blank, with no error and no lost-context event for a 2D canvas: the figures
+ * vanished from the map part-way through a run, leaving their rings. A sheet whose first painted
+ * pixel has gone clear is painted again from the pixels kept in memory (checked at most twice a second).
+ */
+function keepPainted(s, now) {
+    if (!s.probe || now - s.checked < 500) return;
+    s.checked = now;
+    if (s.ctx.getImageData(s.probe.x, s.probe.y, 1, 1).data[3] !== 0) return;
+    s.ctx.putImageData(s.img, 0, 0);
+    s.rctx.putImageData(s.rimg, 0, 0);
 }
 
 export function sheetFor(look) {
@@ -50,7 +65,7 @@ export function sheetFor(look) {
         s = makeSheet(look);
         if (sheets.size >= MAX_SHEETS) sheets.delete(sheets.keys().next().value);
         sheets.set(key, s);
-    }
+    } else keepPainted(s, typeof performance !== 'undefined' ? performance.now() : Date.now());
     return s;
 }
 
